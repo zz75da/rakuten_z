@@ -1,0 +1,77 @@
+# === Environment files ===
+/.env
+.env
+.env.*
+*.env
+.env.template  # keep template for reference
+.venv*/
+venv*/
+.dagshub_tokens
+/.aws
+
+# === Backup files ===
+/backup_*
+backup*/
+*.tmp
+*.temp
+*.bak
+*.log
+*.pid
+tmp/
+
+# === DVC cache & temp files ===
+.dvc/cache/
+.dvc/tmp/
+# Do NOT ignore .dvc metafiles
+!.dvc
+!.dvc/*.dvc
+
+# === Data files ===
+/data-file.bin
+# DVC-tracked intermediate files
+data/text_features.npy
+data/image_features.npy
+data/text_vectorizer.pkl
+data/X_reduced.npy
+data/pca_image.pkl
+data/pca_text.pkl
+data/images/
+data/artifacts/
+data/artifacts_from_container/
+# DVC-tracked final artifacts
+artifacts/
+metrics.json
+plots/
+*.bin
+# Ignore raw/untracked data artifacts but keep DVC-tracked outputs
+data/artifacts/
+data/*.npy
+#artifacts/
+
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# === Airflow ===
+airflow/logs/
+airflow-webserver.pid
+airflow/airflow_init.sh
+airflow/__pycache__/
+airflow/dags/__pycache__/
+
+# === OS / editor files ===
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === Docker ===
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# === Logs / temp folders ===
+logs/

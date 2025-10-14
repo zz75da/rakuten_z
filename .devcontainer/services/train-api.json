@@ -1,0 +1,14 @@
+{
+  "name": "train-api",
+  "service": "train-api",
+  "workspaceFolder": "/app",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.analysis.extraPaths": ["/app"],
+        "python.analysis.autoImportCompletions": true
+      }
+    }
+  }
+}

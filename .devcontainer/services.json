@@ -1,0 +1,11 @@
+{
+  "services": {
+    "train-api": "Main ML training API (FastAPI + TensorFlow)",
+    "predict-api": "Prediction API (FastAPI + OpenCV + TensorFlow)",
+    "gate-api": "Gateway & Auth API",
+    "streamlit": "UI Dashboard for Model Monitoring",
+    "airflow": "Workflow Orchestration",
+    "mlflow": "Experiment Tracking"
+  }
+}
+    

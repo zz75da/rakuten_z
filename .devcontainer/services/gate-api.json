@@ -1,0 +1,13 @@
+{
+  "name": "gate-api",
+  "service": "gate-api",
+  "workspaceFolder": "/app",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.analysis.extraPaths": ["/app"]
+      }
+    }
+  }
+}

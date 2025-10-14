@@ -1,0 +1,12 @@
+preprocess:
+  image_size: [224, 224]
+  batch_size: 16
+  text_features_limit: 5000
+  pca_components: 300
+  pca_batch_size: 512
+  
+
+train:
+  epochs: 10
+  batch_size: 32
+  random_seed: 42

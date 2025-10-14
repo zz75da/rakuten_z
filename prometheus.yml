@@ -1,0 +1,67 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+# optional external labels for multi-cluster / multi-prometheus setups
+external_labels:
+  monitor: "rakuten"
+  env: "local"
+
+scrape_configs:
+  # --- Monitor all APIs (we add namespace/service labels at scrape time) ---
+  - job_name: 'train-api'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['train-api:5002']
+    metric_relabel_configs:
+      # add stable namespace label so queries can target only our metrics
+      - target_label: 'namespace'
+        replacement: 'rakuten'
+      # add service label with the job name
+      - target_label: 'service'
+        replacement: 'train-api'
+
+  - job_name: 'predict-api'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['predict-api:5003']
+    metric_relabel_configs:
+      - target_label: 'namespace'
+        replacement: 'rakuten'
+      - target_label: 'service'
+        replacement: 'predict-api'
+
+  - job_name: 'gate-api'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['gate-api:5000']
+    metric_relabel_configs:
+      - target_label: 'namespace'
+        replacement: 'rakuten'
+      - target_label: 'service'
+        replacement: 'gate-api'
+
+  - job_name: 'mlflow'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['mlflow:5000']
+    # don't prefix/override mlflow metrics — keep them default for compatibility
+    # but you can uncomment the metric_relabel_configs below if you want to tag mlflow with namespace
+    # metric_relabel_configs:
+    #   - target_label: 'namespace'
+    #     replacement: 'rakuten'
+    #   - target_label: 'service'
+    #     replacement: 'mlflow'
+
+  # --- Pushgateway for batch jobs ---
+  - job_name: 'pushgateway'
+    honor_labels: true
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['pushgateway:9091']
+    metric_relabel_configs:
+      - target_label: 'namespace'
+        replacement: 'rakuten'
+      - target_label: 'service'
+        replacement: 'pushgateway'

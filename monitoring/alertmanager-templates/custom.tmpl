@@ -1,0 +1,12 @@
+{{ define "slack.custom.title" }}{{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ end }}
+
+{{ define "slack.custom.text" }}
+*Alert:* {{ .CommonLabels.alertname }}
+*Status:* {{ .Status }}
+*Severity:* {{ .CommonLabels.severity }}
+*Service:* {{ .CommonLabels.service }}
+*Description:* {{ .CommonAnnotations.description }}
+*Value:* {{ .CommonAnnotations.value }}
+*Time:* {{ .StartsAt }}
+{{ if eq .Status "firing" }}*Graph:* <http://localhost:3000/dashboard/db/mlops-monitoring|View Dashboard>{{ end }}
+{{ end }}

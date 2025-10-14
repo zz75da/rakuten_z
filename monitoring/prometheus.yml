@@ -1,0 +1,53 @@
+# global scrape settings
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  # Scrape the Prometheus server itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Scrape the Pushgateway for batch job metrics
+  - job_name: 'pushgateway'
+    honor_labels: true
+    static_configs:
+      - targets: ['pushgateway:9091']
+
+  # Scrape the Preprocess API metrics
+  - job_name: 'preprocess-api'
+    static_configs:
+      - targets: ['preprocess-api:5001']
+
+  # Scrape the Train API metrics
+  - job_name: 'train-api'
+    static_configs:
+      - targets: ['train-api:5002']
+
+  # Scrape the Predict API metrics
+  - job_name: 'predict-api'
+    static_configs:
+      - targets: ['predict-api:5003']
+
+  # Scrape the Gate API metrics
+  - job_name: 'gate-api'
+    static_configs:
+      - targets: ['gate-api:5000']
+
+  # Scrape the Airflow Webserver's internal metrics
+  - job_name: 'airflow-webserver'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['airflow:8080']
+
+  # Scrape the MinIO server's internal metrics
+  - job_name: 'minio'
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets: ['minio:9000']
+      
+  # Scrape the Grafana's internal metrics
+  - job_name: 'grafana'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['grafana:3000']

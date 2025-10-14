@@ -1,0 +1,58 @@
+# === Streamlit Dockerfile optimized for BuildKit ===
+# Use slim Python 3.10 base image
+FROM python:3.10-slim AS base
+
+# --- Set working directory ---
+WORKDIR /app
+
+# --- Install OS dependencies in one layer ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libglib2.0-0 libsm6 libxrender1 libxext6 \
+    tesseract-ocr \
+    curl \
+    libcairo2 libcairo2-dev \
+    libpango-1.0-0 libpango1.0-dev \
+    fonts-dejavu-core \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# === Stage 1: Install Python dependencies separately for caching ===
+FROM base AS builder
+
+WORKDIR /app
+
+# Copy requirements only to leverage Docker cache
+COPY streamlit/requirements.txt .
+
+# Upgrade pip first
+RUN pip install --no-cache-dir --upgrade pip
+
+# Install Python packages
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install SpaCy French model
+RUN python -m spacy download fr_core_news_sm
+
+# === Stage 2: Final image ===
+FROM base AS final
+
+WORKDIR /app
+
+# Copy installed Python packages from builder
+COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy Streamlit app code
+COPY streamlit/app_streamlit.py .
+
+# --- Environment variables ---
+ENV STREAMLIT_SERVER_HEADLESS=true
+ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+ENV MODEL_API_URL=http://predict-api:5003
+
+# Expose Streamlit port
+EXPOSE 8501
+
+# Run Streamlit
+CMD ["streamlit", "run", "app_streamlit.py", "--server.port=8501", "--server.address=0.0.0.0"]

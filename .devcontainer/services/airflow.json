@@ -1,0 +1,13 @@
+{
+  "name": "airflow",
+  "service": "airflow",
+  "workspaceFolder": "/opt/airflow",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/airflow/venv/bin/python",
+        "python.analysis.extraPaths": ["/opt/airflow/dags"]
+      }
+    }
+  }
+}

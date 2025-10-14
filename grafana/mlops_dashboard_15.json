@@ -1,0 +1,91 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Rakuten Multimodal Training Metrics",
+    "uid": "rakuten-multimodal",
+    "timezone": "browser",
+    "panels": [
+      {
+        "type": "graph",
+        "title": "Train vs Validation Loss",
+        "gridPos": {"x":0,"y":0,"w":12,"h":6},
+        "targets":[
+          {"expr":"ml_train_loss","legendFormat":"train_loss"},
+          {"expr":"ml_val_loss","legendFormat":"val_loss"}
+        ],
+        "yaxes":[{"format":"short"},{"format":"short"}]
+      },
+      {
+        "type": "graph",
+        "title": "Train vs Validation Accuracy",
+        "gridPos": {"x":12,"y":0,"w":12,"h":6},
+        "targets":[
+          {"expr":"ml_train_accuracy","legendFormat":"train_acc"},
+          {"expr":"ml_val_accuracy","legendFormat":"val_acc"}
+        ],
+        "yaxes":[{"format":"percent"},{"format":"percent"}]
+      },
+      {
+        "type": "graph",
+        "title": "Validation F1 Score",
+        "gridPos": {"x":0,"y":6,"w":12,"h":6},
+        "targets":[
+          {"expr":"ml_f1_score","legendFormat":"f1_weighted"}
+        ],
+        "yaxes":[{"format":"percent"},{"format":"percent"}]
+      },
+      {
+        "type": "graph",
+        "title": "Epoch Time (seconds)",
+        "gridPos": {"x":12,"y":6,"w":12,"h":6},
+        "targets":[
+          {"expr":"ml_epoch_time_seconds","legendFormat":"epoch_time"}
+        ],
+        "yaxes":[{"format":"s"},{"format":"short"}]
+      },
+      {
+        "type": "graph",
+        "title": "Dataset Size",
+        "gridPos": {"x":0,"y":12,"w":6,"h":4},
+        "targets":[
+          {"expr":"ml_dataset_size","legendFormat":"dataset_size"}
+        ]
+      },
+      {
+        "type": "graph",
+        "title": "Text / Image Features Count",
+        "gridPos": {"x":6,"y":12,"w":6,"h":4},
+        "targets":[
+          {"expr":"ml_features_text","legendFormat":"text_features"},
+          {"expr":"ml_features_image","legendFormat":"image_features"}
+        ]
+      },
+      {
+        "type": "graph",
+        "title": "Epochs Completed",
+        "gridPos": {"x":12,"y":12,"w":6,"h":4},
+        "targets":[
+          {"expr":"ml_epochs_completed","legendFormat":"epochs_done"}
+        ]
+      },
+      {
+        "type": "heatmap",
+        "title": "Top 50 Feature Contributions (SHAP / Permutation)",
+        "gridPos": {"x":0,"y":16,"w":24,"h":8},
+        "targets":[
+          {
+            "expr":"ml_feature_shap_top50",
+            "legendFormat":"{{feature}}",
+            "refId":"A"
+          }
+        ],
+        "yaxes":[{"format":"short","label":"Feature"},{"format":"short"}],
+        "xaxis":{"show":true,"mode":"time"},
+        "color": {"mode":"spectrum"},
+        "tooltip":{"show":true,"showHistogram":true}
+      }
+    ],
+    "schemaVersion": 36,
+    "version": 1
+  }
+}

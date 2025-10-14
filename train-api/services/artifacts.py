@@ -1,0 +1,61 @@
+import pickle
+import os
+from time import time
+
+# Path to store all artifacts
+ARTIFACTS_PATH = os.path.join("/app", "data", "artifacts")
+
+
+# --- Utility: track execution time ---
+def track_time(func):
+    def wrapper(*args, **kwargs):
+        start_time = time()
+        result = func(*args, **kwargs)
+        end_time = time()
+        print(f"[Artifacts] Execution time for {func.__name__}: {end_time - start_time:.2f} seconds")
+        return result
+    return wrapper
+
+
+@track_time
+def save_artifacts(model, vectorizer, pca_models, label_encoder, skip_existing=True):
+    """
+    Save model, vectorizer, PCA objects, and label encoder to ARTIFACTS_PATH.
+    Safe, robust, and includes per-artifact timing.
+
+    Parameters:
+        skip_existing (bool): if True, skip saving files that already exist (useful with DVC).
+    """
+    os.makedirs(ARTIFACTS_PATH, exist_ok=True)
+
+    artifacts_to_save = {
+        "neural_network_model.h5": model,
+        "text_vectorizer.pkl": vectorizer,
+        "pca_image.pkl": pca_models["image"],
+        "pca_text.pkl": pca_models["text"],
+        "label_encoder.pkl": label_encoder,
+    }
+
+    for filename, obj in artifacts_to_save.items():
+        path = os.path.join(ARTIFACTS_PATH, filename)
+        if skip_existing and os.path.exists(path):
+            print(f"[Artifacts] Skipping existing file {path}")
+            continue
+
+        start_artifact_time = time()
+        print(f"[Artifacts] Saving {filename} to {path} ...")
+
+        try:
+            if filename.endswith(".h5"):
+                # Keras model
+                obj.save(path)
+            else:
+                # Pickle for everything else
+                with open(path, "wb") as f:
+                    pickle.dump(obj, f)
+            end_artifact_time = time()
+            print(f"[Artifacts] Saved {filename} in {end_artifact_time - start_artifact_time:.2f} seconds")
+        except Exception as e:
+            print(f"[Artifacts] ERROR saving {filename}: {e}")
+
+    print(f"[Artifacts] All artifacts processed successfully in {ARTIFACTS_PATH}")

@@ -1,0 +1,117 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Training vs Validation Loss",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "ml_train_loss",
+          "legendFormat": "Train Loss",
+          "refId": "A"
+        },
+        {
+          "expr": "ml_val_loss",
+          "legendFormat": "Validation Loss",
+          "refId": "B"
+        }
+      ],
+      "yaxes": [{"format":"short","label":"Loss"},{"format":"short","label":""}],
+      "xaxis": {"show": true}
+    },
+    {
+      "title": "Training vs Validation Accuracy",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "ml_train_accuracy",
+          "legendFormat": "Train Acc",
+          "refId": "A"
+        },
+        {
+          "expr": "ml_val_accuracy",
+          "legendFormat": "Validation Acc",
+          "refId": "B"
+        }
+      ],
+      "yaxes": [{"format":"percent","label":"Accuracy"},{"format":"short","label":""}],
+      "xaxis": {"show": true}
+    },
+    {
+      "title": "Validation Metrics (F1, Precision, Recall)",
+      "type": "graph",
+      "targets": [
+        {"expr":"ml_val_f1_weighted","legendFormat":"Weighted F1","refId":"A"},
+        {"expr":"ml_val_precision_weighted","legendFormat":"Weighted Precision","refId":"B"},
+        {"expr":"ml_val_recall_weighted","legendFormat":"Weighted Recall","refId":"C"}
+      ],
+      "yaxes":[{"format":"percent","label":"Score"},{"format":"short","label":""}],
+      "xaxis":{"show":true}
+    },
+    {
+      "title": "Dataset & Feature Stats",
+      "type": "stat",
+      "targets": [
+        {"expr":"ml_dataset_size","legendFormat":"Dataset Size","refId":"A"},
+        {"expr":"ml_features_text","legendFormat":"Text Features","refId":"B"},
+        {"expr":"ml_features_image","legendFormat":"Image Features","refId":"C"}
+      ]
+    },
+    {
+      "title": "Feature Importance",
+      "type": "graph",
+      "targets": [
+        {
+          "expr":"ml_feature_importance",
+          "legendFormat":"{{feature_name}}",
+          "refId":"A"
+        }
+      ],
+      "yaxes":[{"format":"short","label":"Importance"},{"format":"short","label":""}],
+      "xaxis":{"show":true}
+    },
+    {
+      "title": "Epoch Timing",
+      "type": "graph",
+      "targets": [
+        {"expr":"ml_epoch_time_seconds","legendFormat":"Epoch Duration","refId":"A"}
+      ],
+      "yaxes":[{"format":"s","label":"Seconds"},{"format":"short","label":""}],
+      "xaxis":{"show":true}
+    ]
+  ],
+  "schemaVersion": 30,
+  "style": "dark",
+  "tags": ["ml_training","rakuten_project"],
+  "templating": {"list":[]},
+  "time": {"from":"now-1h","to":"now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Rakuten ML Training Dashboard",
+  "version": 1
+}
+
+{
+  "title": "Top 50 Feature Contributions",
+  "type": "heatmap",
+  "gridPos": {"h":8,"w":24,"x":0,"y":20},
+  "targets": [
+    {
+      "expr": "ml_feature_shap_top50",
+      "legendFormat": "{{feature_name}}",
+      "refId": "A"
+    }
+  ],
+  "yaxes":[{"format":"short","label":"Feature"},{"format":"short","label":""}],
+  "xaxis":{"show":true,"mode":"time"},
+  "color": {"mode":"spectrum"},
+  "tooltip":{"show":true,"showHistogram":true}
+}
+

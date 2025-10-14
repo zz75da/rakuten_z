@@ -1,0 +1,166 @@
+from datetime import datetime, timedelta
+from airflow import DAG
+from airflow.operators.bash import BashOperator
+from airflow.providers.http.operators.http import SimpleHttpOperator
+from airflow.providers.http.sensors.http import HttpSensor
+from airflow.operators.python import PythonOperator
+import json
+import requests
+import os
+
+default_args = {
+    "owner": "airflow",
+    "depends_on_past": False,
+    "email_on_failure": False,
+    "email_on_retry": False,
+    "retries": 1,
+    "retry_delay": timedelta(minutes=2),
+}
+
+# ---------------- Python Callables ---------------- #
+
+def get_auth_token(**context):
+    """Authenticate against gate-api and push JWT token to XCom."""
+    response = requests.post(
+        "http://gate-api:5000/login",
+        json={"username": "admin", "password": "admin_pass"},
+        timeout=10
+    )
+    response.raise_for_status()
+    token = response.json()["token"]
+    context["ti"].xcom_push(key="auth_token", value=token)
+    return token
+
+def run_preprocess(**context):
+    """Trigger preprocess-api for dataset (sample/train)."""
+    dataset = context["dag_run"].conf.get("dataset", "sample")
+    url = f"http://preprocess-api:5001/preprocess?dataset={dataset}"
+    response = requests.post(url, timeout=3600)  # allow long preprocessing
+    response.raise_for_status()
+    return f"Preprocessing completed for dataset={dataset}"
+
+def run_training(**context):
+    """Trigger train-api for dataset (sample/train)."""
+    dataset = context["dag_run"].conf.get("dataset", "sample")
+    url = f"http://train-api:5002/train?dataset={dataset}"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {context['ti'].xcom_pull(task_ids='get_auth_token', key='auth_token')}"
+    }
+    payload = {
+        "epochs": 10,
+        "batch_size": 64,
+        "experiment_name": f"train_{dataset}_{datetime.now().strftime('%Y%m%d_%H%M')}",
+        "enable_mlflow_tracking": True,
+        "mlflow_tracking_uri": "http://mlflow:5000"
+    }
+    response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=7200)
+    response.raise_for_status()
+    return f"Training completed for dataset={dataset}"
+
+def push_training_metrics(**context):
+    """Push training metrics placeholder to Prometheus Pushgateway."""
+    push_url = "http://pushgateway:9091/metrics/job/rakuten_mlops"
+    metrics = {
+        "training_accuracy": 0.90,
+        "validation_accuracy": 0.87,
+        "training_loss": 0.2,
+        "validation_loss": 0.25,
+        "epochs_completed": 10,
+        "training_time_seconds": 400
+    }
+    data = "\n".join([f"{k} {v}" for k, v in metrics.items()])
+    r = requests.post(push_url, data=data)
+    r.raise_for_status()
+    return "Metrics pushed to Prometheus successfully"
+
+# ---------------- DAG Definition ---------------- #
+
+with DAG(
+    dag_id="rakuten_multimodal_pipeline",
+    default_args=default_args,
+    description="End-to-end preprocessing + training pipeline with MLflow & Prometheus",
+    schedule_interval=None,
+    start_date=datetime(2024, 1, 1),
+    catchup=False,
+    tags=["mlops", "training", "production", "monitoring"],
+) as dag:
+
+    # Verify input data & images exist
+    check_data = BashOperator(
+        task_id="check_training_data",
+        bash_command=(
+            "echo '=== Checking data availability ===' && "
+            "ls -lh /opt/airflow/data/ && "
+            "[ -d /opt/airflow/data/images/image_train ] || (echo 'Missing image_train dir' && exit 1) && "
+            "[ -d /opt/airflow/data/images/image_sample ] || (echo 'Missing image_sample dir' && exit 1) && "
+            "echo '✓ All expected data present'"
+        ),
+    )
+
+    # Wait for APIs to be ready
+    wait_for_gate_api = HttpSensor(
+        task_id="wait_for_gate_api",
+        http_conn_id="gate_api",
+        endpoint="/health",
+        method="GET",
+        response_check=lambda r: r.status_code == 200,
+        timeout=300,
+        poke_interval=15,
+        mode="reschedule",
+    )
+
+    wait_for_preprocess_api = HttpSensor(
+        task_id="wait_for_preprocess_api",
+        http_conn_id="preprocess_api",
+        endpoint="/health",
+        method="GET",
+        response_check=lambda r: r.status_code == 200,
+        timeout=300,
+        poke_interval=15,
+        mode="reschedule",
+    )
+
+    wait_for_train_api = HttpSensor(
+        task_id="wait_for_train_api",
+        http_conn_id="train_api",
+        endpoint="/health",
+        method="GET",
+        response_check=lambda r: r.status_code == 200,
+        timeout=300,
+        poke_interval=15,
+        mode="reschedule",
+    )
+
+    # API Calls
+    get_token = PythonOperator(
+        task_id="get_auth_token",
+        python_callable=get_auth_token,
+        provide_context=True,
+    )
+
+    preprocess_task = PythonOperator(
+        task_id="preprocess_data",
+        python_callable=run_preprocess,
+        provide_context=True,
+    )
+
+    train_task = PythonOperator(
+        task_id="train_model",
+        python_callable=run_training,
+        provide_context=True,
+    )
+
+    push_metrics = PythonOperator(
+        task_id="push_metrics",
+        python_callable=push_training_metrics,
+        provide_context=True,
+    )
+
+    success_message = BashOperator(
+        task_id="success_message",
+        bash_command=(
+            "echo '=== Pipeline Completed Successfully ===' && "
+            "echo 'Check MLflow at http://localhost:5000' && "
+            "echo 'Grafana at http://localhost:3000' && "
+            "echo 'Streamlit UI at http://localhost:8

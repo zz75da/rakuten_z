@@ -1,0 +1,51 @@
+# .dockerignore
+# Python
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+
+# Virtualenv / venvs
+env/
+venv/
+.venv/
+*.egg-info/
+.eggs/
+.Python
+
+# System
+.DS_Store
+.env
+*.log
+
+# Git
+.git/
+.gitignore
+
+# Airflow
+airflow/logs/
+airflow/tmp/
+airflow/__pycache__/
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Project artifacts
+images/*
+datasets/
+notebooks/
+data/*
+logs/*
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.DS_Store
+
+# Build
+dist/
+build/
+__pycache__/

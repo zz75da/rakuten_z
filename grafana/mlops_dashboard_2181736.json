@@ -1,0 +1,51 @@
+{
+  "id": null,
+  "uid": "mlops-dashboard",
+  "title": "MLOps Training Dashboard",
+  "tags": ["mlops", "training"],
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "5s",
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Validation Accuracy",
+      "targets": [
+        {
+          "expr": "ml_training_val_accuracy",
+          "legendFormat": "Val Accuracy"
+        }
+      ],
+      "id": 1,
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "type": "graph",
+      "title": "Validation F1 (Weighted)",
+      "targets": [
+        {
+          "expr": "ml_training_val_f1_weighted",
+          "legendFormat": "Val F1"
+        }
+      ],
+      "id": 2,
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "type": "graph",
+      "title": "Training Time (seconds)",
+      "targets": [
+        {
+          "expr": "ml_training_time_seconds",
+          "legendFormat": "Training Time"
+        }
+      ],
+      "id": 3,
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 }
+    }
+  ],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {}
+}

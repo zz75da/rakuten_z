@@ -1,0 +1,78 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "MLOps Training Dashboard",
+    "tags": ["mlops", "training", "prometheus"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "title": "Validation Accuracy",
+        "type": "graph",
+        "targets": [
+          { "expr": "ml_val_accuracy", "legendFormat": "val_acc" }
+        ],
+        "id": 1
+      },
+      {
+        "title": "Training Accuracy",
+        "type": "graph",
+        "targets": [
+          { "expr": "ml_train_accuracy", "legendFormat": "train_acc" }
+        ],
+        "id": 2
+      },
+      {
+        "title": "Training vs Validation Loss",
+        "type": "graph",
+        "targets": [
+          { "expr": "ml_train_loss", "legendFormat": "train_loss" },
+          { "expr": "ml_val_loss", "legendFormat": "val_loss" }
+        ],
+        "id": 3
+      },
+      {
+        "title": "Validation F1 Score",
+        "type": "graph",
+        "targets": [
+          { "expr": "ml_f1_score", "legendFormat": "f1" }
+        ],
+        "id": 4
+      },
+      {
+        "title": "Dataset Size",
+        "type": "stat",
+        "targets": [
+          { "expr": "ml_dataset_size" }
+        ],
+        "id": 5
+      },
+      {
+        "title": "Extracted Features",
+        "type": "graph",
+        "targets": [
+          { "expr": "ml_features_text", "legendFormat": "Text features" },
+          { "expr": "ml_features_image", "legendFormat": "Image features" }
+        ],
+        "id": 6
+      },
+      {
+        "title": "Epoch Duration (s)",
+        "type": "graph",
+        "targets": [
+          { "expr": "rate(ml_epoch_time_seconds_sum[1m]) / rate(ml_epoch_time_seconds_count[1m])", "legendFormat": "avg_epoch_time" }
+        ],
+        "id": 7
+      },
+      {
+        "title": "Epochs Completed",
+        "type": "stat",
+        "targets": [
+          { "expr": "ml_epochs_completed" }
+        ],
+        "id": 8
+      }
+    ],
+    "schemaVersion": 27,
+    "version": 1
+  }
+}

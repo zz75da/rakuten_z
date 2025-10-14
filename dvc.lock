@@ -1,0 +1,103 @@
+schema: '2.0'
+stages:
+  preprocess_text:
+    cmd: python train-api/services/preprocess_text.py
+    deps:
+    - path: data/X_train_update.csv
+      hash: md5
+      md5: c936389910c88bb29bf2c438af3476df
+      size: 54129120
+    - path: train-api/services/preprocess_text.py
+      hash: md5
+      md5: d6dedecb21a3b688eeec7bd351e20be0
+      size: 3572
+    outs:
+    - path: artifacts/text_vectorizer.pkl
+      hash: md5
+      md5: 1fadc9d5ca7432e0df8c37490ce751f2
+      size: 124425
+    - path: data/text_features.npy
+      hash: md5
+      md5: ff41edfc4abaea85254fe19d748db482
+      size: 417000128
+  preprocess_image:
+    cmd: python train-api/services/preprocess_image.py
+    deps:
+    - path: data/images/image_train
+      hash: md5
+      md5: d29a5e5a3b12a64121b7e6b1179a16e5.dir
+      size: 2257219410
+      nfiles: 84916
+    - path: train-api/services/preprocess_image.py
+      hash: md5
+      md5: 52fe5368364d0cfa2b0c44f1f6d029a7
+      size: 3631
+    outs:
+    - path: data/image_features.npy
+      hash: md5
+      md5: aeaee9cd6aea2ba3df8ba0712cfc805a
+      size: 695632000
+  reduce_features:
+    cmd: python train-api/services/pca_reducer.py
+    deps:
+    - path: data/image_features.npy
+      hash: md5
+      md5: aeaee9cd6aea2ba3df8ba0712cfc805a
+      size: 695632000
+    - path: data/text_features.npy
+      hash: md5
+      md5: ff41edfc4abaea85254fe19d748db482
+      size: 417000128
+    - path: train-api/services/pca_reducer.py
+      hash: md5
+      md5: 743683aac7ad4025e27ceb3c271a8a65
+      size: 5812
+    outs:
+    - path: artifacts/X_reduced.npy
+      hash: md5
+      md5: 5d47b3b8182d1c0917fc5b1a1c2a9cfc
+      size: 449715264
+    - path: artifacts/pca_image.pkl
+      hash: md5
+      md5: e91afe5a68834ba670a72cae6ed0866b
+      size: 4955898
+    - path: artifacts/pca_text.pkl
+      hash: md5
+      md5: e91afe5a68834ba670a72cae6ed0866b
+      size: 4955898
+  train_model:
+    cmd: python train-api/services/trainer.py
+    deps:
+    - path: artifacts/X_reduced.npy
+      hash: md5
+      md5: 5d47b3b8182d1c0917fc5b1a1c2a9cfc
+      size: 449715264
+    - path: data/Y_train_CVw08PX.csv
+      hash: md5
+      md5: 52d45c998ddc0c10f05987bb233ff5e7
+      size: 906705
+    - path: train-api/services/trainer.py
+      hash: md5
+      md5: 530f9f47b17d6c31c8c955f5bddc949a
+      size: 12723
+    outs:
+    - path: artifacts/label_encoder.pkl
+      hash: md5
+      md5: ce410ee1bcce7843aa25e56c32554e4a
+      size: 329
+    - path: artifacts/neural_network_model.h5
+      hash: md5
+      md5: d05b137bd1a513fa688220655332e9b7
+      size: 32664920
+    - path: artifacts/train_history.json
+      hash: md5
+      md5: d41d8cd98f00b204e9800998ecf8427e
+      size: 0
+    - path: metrics.json
+      hash: md5
+      md5: d41d8cd98f00b204e9800998ecf8427e
+      size: 0
+    - path: plots/history.json
+      hash: md5
+      md5: d41d8cd98f00b204e9800998ecf8427e
+      size: 0

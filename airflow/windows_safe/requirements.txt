@@ -1,0 +1,17 @@
+apache-airflow==2.8.1
+psycopg2-binary
+pandas
+requests
+scikit-learn
+numpy
+tensorflow
+pillow
+spacy
+torch
+torchvision
+fastapi[all]
+uvicorn[standard]
+python-multipart
+mlflow
+prometheus-client
+

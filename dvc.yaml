@@ -1,0 +1,42 @@
+stages:
+  preprocess_text:
+    cmd: python train-api/services/preprocess_text.py
+    deps:
+    - data/X_train_update.csv
+    - train-api/services/preprocess_text.py
+    outs:
+    - artifacts/text_vectorizer.pkl
+    - data/text_features.npy
+  preprocess_image:
+    cmd: python train-api/services/preprocess_image.py
+    deps:
+    - data/images/image_train
+    - train-api/services/preprocess_image.py
+    outs:
+    - data/image_features.npy
+  train_model:
+    cmd: python train-api/services/trainer.py
+    deps:
+    - artifacts/X_reduced.npy
+    - data/Y_train_CVw08PX.csv
+    - train-api/services/trainer.py
+    # params:
+    # - plots/history.json
+    outs:
+    - artifacts/label_encoder.pkl
+    - artifacts/neural_network_model.h5
+    - artifacts/train_history.json
+    - plots/history.json
+    metrics:
+    - metrics.json:
+        cache: false
+  reduce_features:
+    cmd: python train-api/services/pca_reducer.py
+    deps:
+    - data/image_features.npy
+    - data/text_features.npy
+    - train-api/services/pca_reducer.py
+    outs:
+    - artifacts/X_reduced.npy
+    - artifacts/pca_image.pkl
+    - artifacts/pca_text.pkl

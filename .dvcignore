@@ -1,0 +1,72 @@
+# === Large static image folders ===
+# Already tracked and uploaded, no need to check for changes
+#data/images/image_train/
+#data/images/image_test/
+#data/images/image_sample/
+
+# === Python cache ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# === Feature cache ===
+# Rebuildable, do not track
+data/feature_cache/
+
+# === Logs and temporary backups ===
+airflow/logs/
+logs/
+data/artifacts/logs/
+backup*/   # temporary backup folders
+*.tmp
+*.swp
+*.bak
+*.temp
+*.pid
+*.log
+
+# === Git ignored files ===
+.git/
+.gitignore
+*.git/
+data/.gitignore
+
+# === Environment / secret files ===
+*.env
+*.env.*
+.env
+.env.local
+.env.template
+.dagshub_tokens
+
+# === DVC internal cache and temp ===
+.dvc/cache/
+.dvc/tmp/
+.dvcignore
+.dvc/config
+.dvc/config.local
+
+# === Airflow temp files ===
+airflow-webserver.pid
+airflow/dags/__pycache__/
+
+# === Temporary artifacts ===
+data/artifacts_from_container/
+data/artifacts/temp/
+
+# === System / editor files ===
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+.venv*/
+venv*/
+# === Docker-related files ===
+*.dockerignore
+docker-compose.override.yml
+
+# === DO NOT IGNORE DVC-TRACKED ARTIFACTS ===
+# The artifacts/ folder is tracked by DVC and should NOT be ignored

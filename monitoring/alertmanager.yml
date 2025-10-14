@@ -1,0 +1,293 @@
+global:
+  # SMTP configuration for email alerts
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'rakuten-mlops-alerts@yourcompany.com'
+  smtp_auth_username: 'your-email@gmail.com'
+  smtp_auth_password: 'your-app-password'
+  smtp_require_tls: true
+
+  # Slack webhook for Slack alerts
+  slack_api_url: 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX'
+
+  # Resolve timeout - marks alerts as resolved after this time
+  resolve_timeout: 5m
+
+# Custom templates for better alert messages
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Route tree - defines how alerts are routed
+route:
+  # Default receiver
+  receiver: 'slack-critical'
+
+  # Group alerts by project and severity
+  group_by: ['project', 'severity']
+  
+  # Group wait time - wait for new alerts to group them together
+  group_wait: 30s
+  
+  # Group interval - time between sending notifications for grouped alerts
+  group_interval: 5m
+  
+  # Repeat interval - time between resending resolved alerts
+  repeat_interval: 4h
+
+  # Routes for different services and severity levels
+  routes:
+    # --- CRITICAL ALERTS ---
+    - receiver: 'slack-critical'
+      match:
+        severity: 'critical'
+      continue: false
+
+    # --- WARNING ALERTS ---  
+    - receiver: 'slack-warnings'
+      match:
+        severity: 'warning'
+      continue: false
+
+    # --- SERVICE-SPECIFIC ROUTES ---
+    - receiver: 'slack-airflow'
+      match:
+        service: 'airflow'
+      routes:
+        - receiver: 'slack-critical'
+          match:
+            severity: 'critical'
+        - receiver: 'slack-warnings'
+          match:
+            severity: 'warning'
+
+    - receiver: 'slack-mlflow'
+      match:
+        service: 'mlflow'
+      routes:
+        - receiver: 'slack-critical'
+          match:
+            severity: 'critical'
+        - receiver: 'slack-warnings'
+          match:
+            severity: 'warning'
+
+    - receiver: 'slack-preprocess-api'
+      match:
+        service: 'preprocess-api'
+      routes:
+        - receiver: 'slack-critical'
+          match:
+            severity: 'critical'
+        - receiver: 'slack-warnings'
+          match:
+            severity: 'warning'
+
+    - receiver: 'slack-train-api'
+      match:
+        service: 'train-api'
+      routes:
+        - receiver: 'slack-critical'
+          match:
+            severity: 'critical'
+        - receiver: 'slack-warnings'
+          match:
+            severity: 'warning'
+
+    - receiver: 'slack-predict-api'
+      match:
+        service: 'predict-api'
+      routes:
+        - receiver: 'slack-critical'
+          match:
+            severity: 'critical'
+        - receiver: 'slack-warnings'
+          match:
+            severity: 'warning'
+
+    # --- DATABASE ALERTS ---
+    - receiver: 'slack-database'
+      match:
+        service: 'postgres'
+      routes:
+        - receiver: 'slack-critical'
+          match:
+            severity: 'critical'
+        - receiver: 'slack-warnings'
+          match:
+            severity: 'warning'
+
+    # --- STORAGE ALERTS ---
+    - receiver: 'slack-storage'
+      match:
+        service: 'minio'
+      routes:
+        - receiver: 'slack-critical'
+          match:
+            severity: 'critical'
+        - receiver: 'slack-warnings'
+          match:
+            severity: 'warning'
+
+# Receivers - define where alerts are sent
+receivers:
+  # Critical alerts (Slack + Email + PagerDuty)
+  - name: 'slack-critical'
+    slack_configs:
+      - channel: '#mlops-critical-alerts'
+        send_resolved: true
+        title: '🚨 CRITICAL: {{ .CommonLabels.service }} Alert'
+        text: |-
+          *Alert:* {{ .CommonLabels.alertname }}
+          *Service:* {{ .CommonLabels.service }}
+          *Severity:* {{ .CommonLabels.severity }}
+          *Description:* {{ .CommonAnnotations.description }}
+          *Value:* {{ .CommonAnnotations.value }}
+          *Time:* {{ .StartsAt }}
+          *Graph:* <http://localhost:3000/dashboard/db/mlops-monitoring|View Dashboard>
+        color: 'danger'
+        username: 'Rakuten MLOps AlertManager'
+        icon_emoji: ':red_circle:'
+
+    email_configs:
+      - to: 'mlops-team@yourcompany.com'
+        from: 'rakuten-mlops-alerts@yourcompany.com'
+        smarthost: 'smtp.gmail.com:587'
+        auth_username: 'your-email@gmail.com'
+        auth_password: 'your-app-password'
+        require_tls: true
+        headers:
+          Subject: '🚨 CRITICAL: {{ .CommonLabels.service }} Alert - {{ .CommonLabels.alertname }}'
+        html: |-
+          <h2>🚨 CRITICAL ALERT</h2>
+          <p><strong>Service:</strong> {{ .CommonLabels.service }}</p>
+          <p><strong>Alert:</strong> {{ .CommonLabels.alertname }}</p>
+          <p><strong>Description:</strong> {{ .CommonAnnotations.description }}</p>
+          <p><strong>Time:</strong> {{ .StartsAt }}</p>
+          <p><a href="http://localhost:3000/dashboard/db/mlops-monitoring">View Dashboard</a></p>
+
+    # Uncomment if you have PagerDuty
+    # pagerduty_configs:
+    #   - service_key: 'your-pagerduty-service-key'
+
+  # Warning alerts (Slack only)
+  - name: 'slack-warnings'
+    slack_configs:
+      - channel: '#mlops-warnings'
+        send_resolved: true
+        title: '⚠️ WARNING: {{ .CommonLabels.service }} Alert'
+        text: |-
+          *Alert:* {{ .CommonLabels.alertname }}
+          *Service:* {{ .CommonLabels.service }}
+          *Severity:* {{ .CommonLabels.severity }}
+          *Description:* {{ .CommonAnnotations.description }}
+          *Value:* {{ .CommonAnnotations.value }}
+          *Time:* {{ .StartsAt }}
+          *Graph:* <http://localhost:3000/dashboard/db/mlops-monitoring|View Dashboard>
+        color: 'warning'
+        username: 'Rakuten MLOps AlertManager'
+        icon_emoji: ':warning:'
+
+  # Service-specific receivers
+  - name: 'slack-airflow'
+    slack_configs:
+      - channel: '#airflow-alerts'
+        send_resolved: true
+        title: '📊 Airflow: {{ .CommonLabels.alertname }}'
+        text: |-
+          *Status:* {{ .CommonLabels.severity }}
+          *DAG:* {{ .CommonLabels.dag_id }}
+          *Task:* {{ .CommonLabels.task_id }}
+          *Description:* {{ .CommonAnnotations.description }}
+          *Time:* {{ .StartsAt }}
+        color: '{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
+
+  - name: 'slack-mlflow'
+    slack_configs:
+      - channel: '#mlflow-alerts'
+        send_resolved: true
+        title: '🧪 MLflow: {{ .CommonLabels.alertname }}'
+        text: |-
+          *Status:* {{ .CommonLabels.severity }}
+          *Experiment:* {{ .CommonLabels.experiment_name }}
+          *Model:* {{ .CommonLabels.model_name }}
+          *Description:* {{ .CommonAnnotations.description }}
+        color: '{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
+
+  - name: 'slack-preprocess-api'
+    slack_configs:
+      - channel: '#preprocess-api-alerts'
+        send_resolved: true
+        title: '🔧 Preprocess-API: {{ .CommonLabels.alertname }}'
+        text: |-
+          *Status:* {{ .CommonLabels.severity }}
+          *Endpoint:* {{ .CommonLabels.endpoint }}
+          *Description:* {{ .CommonAnnotations.description }}
+          *Response Time:* {{ .CommonAnnotations.response_time }}
+        color: '{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
+
+  - name: 'slack-train-api'
+    slack_configs:
+      - channel: '#train-api-alerts'
+        send_resolved: true
+        title: '🤖 Train-API: {{ .CommonLabels.alertname }}'
+        text: |-
+          *Status:* {{ .CommonLabels.severity }}
+          *Model:* {{ .CommonLabels.model_name }}
+          *Accuracy:* {{ .CommonAnnotations.accuracy }}
+          *Loss:* {{ .CommonAnnotations.loss }}
+          *Description:* {{ .CommonAnnotations.description }}
+        color: '{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
+
+  - name: 'slack-predict-api'
+    slack_configs:
+      - channel: '#predict-api-alerts'
+        send_resolved: true
+        title: '🔮 Predict-API: {{ .CommonLabels.alertname }}'
+        text: |-
+          *Status:* {{ .CommonLabels.severity }}
+          *Model:* {{ .CommonLabels.model_name }}
+          *Latency:* {{ .CommonAnnotations.latency }}
+          *Success Rate:* {{ .CommonAnnotations.success_rate }}
+          *Description:* {{ .CommonAnnotations.description }}
+        color: '{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
+
+  - name: 'slack-database'
+    slack_configs:
+      - channel: '#database-alerts'
+        send_resolved: true
+        title: '💾 Database: {{ .CommonLabels.alertname }}'
+        text: |-
+          *Status:* {{ .CommonLabels.severity }}
+          *Database:* {{ .CommonLabels.database }}
+          *Query Time:* {{ .CommonAnnotations.query_time }}
+          *Connections:* {{ .CommonAnnotations.connections }}
+          *Description:* {{ .CommonAnnotations.description }}
+        color: '{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
+
+  - name: 'slack-storage'
+    slack_configs:
+      - channel: '#storage-alerts'
+        send_resolved: true
+        title: '💿 Storage: {{ .CommonLabels.alertname }}'
+        text: |-
+          *Status:* {{ .CommonLabels.severity }}
+          *Storage:* {{ .CommonLabels.storage_type }}
+          *Usage:* {{ .CommonAnnotations.usage_percent }}
+          *Free Space:* {{ .CommonAnnotations.free_space }}
+          *Description:* {{ .CommonAnnotations.description }}
+        color: '{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
+
+# Inhibit rules - prevent certain alerts when others are firing
+inhibit_rules:
+  # Don't send warning alerts when critical alerts are firing for the same service
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['service']
+
+  # Don't alert on individual pod failures when the entire node is down
+  - source_match:
+      alertname: 'NodeDown'
+    target_match:
+      severity: 'critical'
+    equal: ['instance']

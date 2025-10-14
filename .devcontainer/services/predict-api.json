@@ -1,0 +1,13 @@
+{
+  "name": "predict-api",
+  "service": "predict-api",
+  "workspaceFolder": "/app",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.analysis.extraPaths": ["/app"]
+      }
+    }
+  }
+}

@@ -1,0 +1,160 @@
+groups:
+- name: rakuten-mlops-alerts
+  rules:
+  
+  # --- AIRFLOW ALERTS ---
+  - alert: AirflowSchedulerDown
+    expr: up{job="airflow"} == 0
+    for: 5m
+    labels:
+      severity: critical
+      service: airflow
+    annotations:
+      description: Airflow scheduler is down
+      summary: Airflow scheduler container is not running
+
+  - alert: AirflowDagFailed
+    expr: airflow_dag_run_failed > 0
+    for: 2m
+    labels:
+      severity: warning
+      service: airflow
+    annotations:
+      description: DAG run has failed
+      summary: DAG {{ $labels.dag_id }} has failed runs
+
+  # --- MLFLOW ALERTS ---
+  - alert: MLflowServerDown
+    expr: up{job="mlflow"} == 0
+    for: 5m
+    labels:
+      severity: critical
+      service: mlflow
+    annotations:
+      description: MLflow tracking server is down
+      summary: MLflow server container is not running
+
+  # --- API SERVICE ALERTS ---
+  - alert: PreprocessAPIDown
+    expr: up{job="preprocess-api"} == 0
+    for: 3m
+    labels:
+      severity: critical
+      service: preprocess-api
+    annotations:
+      description: Preprocess API service is down
+      summary: Preprocess API container is not responding
+
+  - alert: PreprocessAPIHighLatency
+    expr: rate(http_request_duration_seconds_sum{job="preprocess-api"}[5m]) / rate(http_request_duration_seconds_count{job="preprocess-api"}[5m]) > 2
+    for: 5m
+    labels:
+      severity: warning
+      service: preprocess-api
+    annotations:
+      description: Preprocess API response latency is high
+      summary: High latency detected in preprocess API
+
+  - alert: TrainAPIDown
+    expr: up{job="train-api"} == 0
+    for: 3m
+    labels:
+      severity: critical
+      service: train-api
+    annotations:
+      description: Train API service is down
+      summary: Train API container is not responding
+
+  - alert: PredictAPIDown
+    expr: up{job="predict-api"} == 0
+    for: 3m
+    labels:
+      severity: critical
+      service: predict-api
+    annotations:
+      description: Predict API service is down
+      summary: Predict API container is not responding
+
+  # --- DATABASE ALERTS ---
+  - alert: PostgresqlDown
+    expr: up{job="postgres"} == 0
+    for: 2m
+    labels:
+      severity: critical
+      service: postgres
+    annotations:
+      description: PostgreSQL database is down
+      summary: PostgreSQL container is not running
+
+  - alert: PostgresqlHighConnections
+    expr: pg_stat_activity_count > 50
+    for: 5m
+    labels:
+      severity: warning
+      service: postgres
+    annotations:
+      description: High number of database connections
+      summary: PostgreSQL has many active connections
+
+  # --- STORAGE ALERTS ---
+  - alert: MinIODown
+    expr: up{job="minio"} == 0
+    for: 3m
+    labels:
+      severity: critical
+      service: minio
+    annotations:
+      description: MinIO storage service is down
+      summary: MinIO container is not running
+
+  - alert: DiskSpaceLow
+    expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100 < 10
+    for: 10m
+    labels:
+      severity: critical
+      service: storage
+    annotations:
+      description: Disk space is running low
+      summary: Only {{ $value }}% disk space remaining
+
+  # --- MODEL PERFORMANCE ALERTS ---
+  - alert: ModelAccuracyLow
+    expr: model_accuracy < 0.7
+    for: 30m
+    labels:
+      severity: warning
+      service: train-api
+    annotations:
+      description: Model accuracy has dropped below threshold
+      summary: Model accuracy is only {{ $value }}
+
+  - alert: PredictionLatencyHigh
+    expr: rate(prediction_latency_seconds_sum[5m]) / rate(prediction_latency_seconds_count[5m]) > 5
+    for: 10m
+    labels:
+      severity: warning
+      service: predict-api
+    annotations:
+      description: Prediction latency is very high
+      summary: High prediction latency detected
+
+  # --- RESOURCE USAGE ALERTS ---
+  - alert: HighMemoryUsage
+    expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 90
+    for: 10m
+    labels:
+      severity: warning
+      service: system
+    annotations:
+      description: Memory usage is very high
+      summary: Memory usage at {{ $value }}%
+
+  - alert: HighCPUUsage
+    expr: 100 - (avg by(instance)(irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+    for: 10m
+    labels:
+      severity: warning
+      service: system
+    annotations:
+      description: CPU usage is very high
+      summary: CPU usage at {{ $value }}%
