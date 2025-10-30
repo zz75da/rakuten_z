@@ -40,3 +40,15 @@ stages:
     - artifacts/X_reduced.npy
     - artifacts/pca_image.pkl
     - artifacts/pca_text.pkl
+  predict_model:
+    cmd: python predict-api/app.py
+    deps:
+      # All artifacts loaded by the API's load_artifacts function:
+      - artifacts/neural_network_model.h5
+      - artifacts/label_encoder.pkl
+      - artifacts/text_vectorizer.pkl
+      - artifacts/pca_text.pkl
+      - artifacts/pca_image.pkl
+      # The application code itself (if code changes, the stage is outdated)
+      - predict-api/app.py
+    # No 'outs' as it produces a service, not a data file.
