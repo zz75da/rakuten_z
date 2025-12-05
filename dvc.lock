@@ -25,9 +25,9 @@ stages:
     deps:
     - path: data/images/image_train
       hash: md5
-      md5: d29a5e5a3b12a64121b7e6b1179a16e5.dir
-      size: 2257219410
-      nfiles: 84916
+      md5: 9164e8d077006c1b1620aacfaab82e35.dir
+      size: 345244768
+      nfiles: 12858
     - path: train-api/services/preprocess_image.py
       hash: md5
       md5: 52fe5368364d0cfa2b0c44f1f6d029a7
@@ -99,5 +99,32 @@ stages:
       size: 0
     - path: plots/history.json
       hash: md5
-      md5: d41d8cd98f00b204e9800998ecf8427e
-      size: 0
+      md5: 81051bcc2cf1bedf378224b0a93e2877
+      size: 2
+  predict_model:
+    cmd: python predict-api/app.py
+    deps:
+    - path: artifacts/label_encoder.pkl
+      hash: md5
+      md5: ce410ee1bcce7843aa25e56c32554e4a
+      size: 329
+    - path: artifacts/neural_network_model.h5
+      hash: md5
+      md5: d05b137bd1a513fa688220655332e9b7
+      size: 32664920
+    - path: artifacts/pca_image.pkl
+      hash: md5
+      md5: e91afe5a68834ba670a72cae6ed0866b
+      size: 4955898
+    - path: artifacts/pca_text.pkl
+      hash: md5
+      md5: e91afe5a68834ba670a72cae6ed0866b
+      size: 4955898
+    - path: artifacts/text_vectorizer.pkl
+      hash: md5
+      md5: 1fadc9d5ca7432e0df8c37490ce751f2
+      size: 124425
+    - path: predict-api/app.py
+      hash: md5
+      md5: f5a107705aa9e3259fb93e728c5a6d31
+      size: 7255
