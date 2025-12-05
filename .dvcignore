@@ -35,6 +35,8 @@ data/.gitignore
 # === Airflow temp files ===
 airflow-webserver.pid
 airflow/dags/__pycache__/
+airflow/logs/
+
 
 # === Temporary artifacts (NOT tracked by DVC) ===
 data/artifacts_from_container/
