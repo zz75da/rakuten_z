@@ -1,3 +1,9 @@
+
+tests/
+train-api/
+streamlit/
+predict-api/
+
 # === Python cache ===
 __pycache__/
 *.pyc
