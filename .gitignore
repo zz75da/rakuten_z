@@ -3,50 +3,46 @@
 .env
 .env.*
 *.env
-.env.template  # keep template for reference
+.env.template
 .venv*/
 venv*/
 .dagshub_tokens
 /.aws
 
-# === Backup files ===
+# === Backup / temp files ===
 /backup_*
 backup*/
 *.tmp
 *.temp
 *.bak
-*.log
 *.pid
 tmp/
 
-# === DVC cache & temp files ===
+# === DVC cache & temp files (big, keep out of Git) ===
 .dvc/cache/
 .dvc/tmp/
-# Do NOT ignore .dvc metafiles
-!.dvc
-!.dvc/*.dvc
 
-# === Data files ===
-/data-file.bin
-# DVC-tracked intermediate files
-data/text_features.npy
-data/image_features.npy
-data/text_vectorizer.pkl
-data/X_reduced.npy
-data/pca_image.pkl
-data/pca_text.pkl
-data/images/
-data/artifacts/
-data/artifacts_from_container/
-# DVC-tracked final artifacts
+# DO NOT ignore DVC metadata/config – keep them in Git
+!.dvc
+!.dvc/**
+!*.dvc
+!dvc.yaml
+!dvc.lock
+
+# === Large data & artifacts (handled by DVC, not Git) ===
+data/
 artifacts/
-metrics.json
 plots/
-*.bin
-# Ignore raw/untracked data artifacts but keep DVC-tracked outputs
-data/artifacts/
-data/*.npy
-#artifacts/
+metrics.json
+data-file.bin
+
+# BUT: never ignore DVC metafiles, even inside data/ or nested dirs
+!data/*.dvc
+!data/**/*.dvc
+!artifacts.dvc
+!artifacts/*.dvc
+!plots.dvc
+!plots/*.dvc
 
 # === Python ===
 __pycache__/
@@ -75,3 +71,6 @@ docker-compose.override.yaml
 
 # === Logs / temp folders ===
 logs/
+
+# === Misc project-specific ===
+predict-api/deployment/
