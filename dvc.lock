@@ -85,7 +85,7 @@ stages:
       hash: md5
       md5: ce410ee1bcce7843aa25e56c32554e4a
       size: 329
-    - path: artifacts/neural_network_model.h5
+    - path: artifacts/neural_network_model.keras
       hash: md5
       md5: d05b137bd1a513fa688220655332e9b7
       size: 32664920
@@ -108,7 +108,7 @@ stages:
       hash: md5
       md5: ce410ee1bcce7843aa25e56c32554e4a
       size: 329
-    - path: artifacts/neural_network_model.h5
+    - path: artifacts/neural_network_model.keras
       hash: md5
       md5: d05b137bd1a513fa688220655332e9b7
       size: 32664920

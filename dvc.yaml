@@ -24,7 +24,7 @@ stages:
     # - plots/history.json
     outs:
     - artifacts/label_encoder.pkl
-    - artifacts/neural_network_model.h5
+    - artifacts/neural_network_model.keras
     - artifacts/train_history.json
     - plots/history.json
     metrics:
@@ -44,7 +44,7 @@ stages:
     cmd: python predict-api/app.py
     deps:
       # All artifacts loaded by the API's load_artifacts function:
-      - artifacts/neural_network_model.h5
+      - artifacts/neural_network_model.keras
       - artifacts/label_encoder.pkl
       - artifacts/text_vectorizer.pkl
       - artifacts/pca_text.pkl

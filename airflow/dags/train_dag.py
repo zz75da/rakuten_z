@@ -67,7 +67,7 @@ def trigger_and_poll_training(**context):
 
     # 1. Trigger
     payload = {
-        "use_dev_images": True,
+        "use_dev_images": False,
         "epochs": int(os.environ.get("TRAIN_EPOCHS", 10)),
         "batch_size": int(os.environ.get("TRAIN_BATCH_SIZE", 32)),
     }
