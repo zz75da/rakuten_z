@@ -88,7 +88,8 @@ def predict_single(description, uploaded_image, token, model_uri):
             resp = requests.post(endpoint, json=payload, headers=headers, timeout=30)
         if resp.status_code == 200:
             result = resp.json()
-            st.success(f"Predicted Category: {result['label']} (class {result['pred_class']})")
+            category = result.get("category", result["label"])
+            st.success(f"**{category}**  —  code `{result['label']}` (encoder index {result['pred_class']})")
             if "probs" in result:
                 st.write("Probabilities per class:", result["probs"])
             if uploaded_image:

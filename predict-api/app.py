@@ -78,6 +78,37 @@ text_vectorizer: CountVectorizer = None
 pca_text: IncrementalPCA = None
 pca_image: IncrementalPCA = None
 
+# --- Human-readable category names for each Rakuten prdtypecode ---
+CATEGORY_NAMES: dict[str, str] = {
+    "10":   "Books",
+    "40":   "Movies & DVDs",
+    "50":   "Video Game Accessories",
+    "60":   "Handheld & Retro Consoles",
+    "1140": "Collectible Figures & Novelty Decor",
+    "1160": "Trading Cards & Card Games",
+    "1180": "Tabletop Gaming Miniatures",
+    "1280": "Toys & Puzzles",
+    "1281": "Children's Games & Educational Toys",
+    "1300": "RC Vehicles & Drones",
+    "1301": "Sports & Outdoor Games",
+    "1302": "Novelty Toys & Leisure",
+    "1320": "Baby & Nursery Products",
+    "1560": "Furniture & Storage",
+    "1920": "Home Textiles & Soft Furnishings",
+    "1940": "Food, Beverages & Grocery",
+    "2060": "Lighting & Home Decoration",
+    "2220": "Pet Supplies",
+    "2280": "Magazines & Periodicals",
+    "2403": "Manga & Comics",
+    "2462": "Video Game Consoles & Electronics",
+    "2522": "Office & Art Supplies",
+    "2582": "Outdoor & Garden Furniture",
+    "2583": "Swimming Pool & Spa Equipment",
+    "2585": "Gardening Tools & Equipment",
+    "2705": "History & Documentary Media",
+    "2905": "Digital Games & Software",
+}
+
 # --- Input Schemas ---
 class TextRequest(BaseModel):
     description: str
@@ -243,6 +274,7 @@ def predict_text(req: TextRequest, user: dict = Depends(verify_jwt_token)):
     probs = model.predict(combined)
     pred = int(np.argmax(probs, axis=1)[0])
     label = str(label_encoder.inverse_transform([pred])[0])
+    category = CATEGORY_NAMES.get(label, label)
 
     _record_drift_metrics(probs[0], label, "/predict-text")
     FEATURE_TEXT_MEAN.set(float(np.mean(text_features)))
@@ -250,6 +282,7 @@ def predict_text(req: TextRequest, user: dict = Depends(verify_jwt_token)):
     return {
         "pred_class": pred,
         "label": label,
+        "category": category,
         "probs": probs.tolist(),
         "mode": "text_only",
     }
@@ -264,6 +297,7 @@ def predict_image(req: ImageRequest, user: dict = Depends(verify_jwt_token)):
     probs = model.predict(combined)
     pred = int(np.argmax(probs, axis=1)[0])
     label = str(label_encoder.inverse_transform([pred])[0])
+    category = CATEGORY_NAMES.get(label, label)
 
     _record_drift_metrics(probs[0], label, "/predict-image")
     FEATURE_IMAGE_MEAN.set(float(np.mean(image_features)))
@@ -271,6 +305,7 @@ def predict_image(req: ImageRequest, user: dict = Depends(verify_jwt_token)):
     return {
         "pred_class": pred,
         "label": label,
+        "category": category,
         "probs": probs.tolist(),
         "mode": "image_only",
     }
@@ -299,6 +334,7 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
     probs = model.predict(combined)
     pred = int(np.argmax(probs, axis=1)[0])
     label = str(label_encoder.inverse_transform([pred])[0])
+    category = CATEGORY_NAMES.get(label, label)
 
     _record_drift_metrics(probs[0], label, "/predict-multimodal")
     FEATURE_TEXT_MEAN.set(float(np.mean(text_features)))
@@ -307,6 +343,7 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
     return {
         "pred_class": pred,
         "label": label,
+        "category": category,
         "probs": probs.tolist(),
         "mode": "multimodal",
     }
