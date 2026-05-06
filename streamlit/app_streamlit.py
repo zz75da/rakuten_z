@@ -191,9 +191,9 @@ def show_presentation_page():
             <div style="background:#1e1e2e;border-left:4px solid #e94560;
                         border-radius:8px;padding:18px 20px">
                 <b style="color:#e94560">Branche Texte</b><br><br>
-                <code style="color:#a8b2d8">description</code> (chaîne brute)<br>
-                &nbsp;&nbsp;&nbsp;↓ SpaCy lemmatisation + stopwords<br>
-                &nbsp;&nbsp;&nbsp;↓ CountVectorizer <code>max_features=5000</code><br>
+                <code style="color:#a8b2d8">description</code> <span style="color:#6d7a9f">(chaîne brute)</span><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;↓ SpaCy lemmatisation + stopwords</span><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;↓ CountVectorizer</span> <code>max_features=5000</code><br>
                 &nbsp;&nbsp;&nbsp;↓ IncrementalPCA <code>n_components=1024</code><br>
                 <b style="color:#28a745">→ vecteur 1 × 1024</b>
             </div>
@@ -206,8 +206,8 @@ def show_presentation_page():
                 <b style="color:#a8b2d8">Branche Image</b><br><br>
                 <code style="color:#a8b2d8">image_jpg</code> (224 × 224 px)<br>
                 &nbsp;&nbsp;&nbsp;↓ ResNet50 pré-entraîné (ImageNet, sans top)<br>
-                &nbsp;&nbsp;&nbsp;↓ Global Average Pooling → <code>2048 dims</code><br>
-                &nbsp;&nbsp;&nbsp;↓ IncrementalPCA <code>n_components=300</code><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;↓ Global Average Pooling →</span> <code>2048 dims</code><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;↓ IncrementalPCA</span> <code>n_components=300</code><br>
                 <b style="color:#28a745">→ vecteur 1 × 300</b>
             </div>
             """, unsafe_allow_html=True)
@@ -620,7 +620,7 @@ def show_docker_workflow():
 # Global font scaling — doubles all rem-based Streamlit text
 st.markdown("""
 <style>
-html { font-size: 200% !important; }
+html { font-size: 100% !important; }
 code, .stCode { font-size: 0.85rem !important; }
 [data-testid="stSidebarContent"] { font-size: 70% !important; }
 </style>
