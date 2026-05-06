@@ -3,6 +3,7 @@ import streamlit as st
 import requests
 import json
 import os
+import re
 import base64
 from pathlib import Path
 import pandas as pd
@@ -11,6 +12,45 @@ from mlflow.tracking import MlflowClient
 # --- API URLs ---
 GATE_API_URL = os.environ.get("GATE_API_URL", "http://gate-api:5000/login")
 PREDICT_API_URL = os.environ.get("PREDICT_API_URL", "http://predict-api:5003")
+
+# --- Test-set ground-truth lookup ---
+# Loads the pre-classified test_data_zz.xlsx so predictions can be compared
+# against the description-inferred expected category.
+_TEST_DATA_PATH = os.environ.get(
+    "TEST_DATA_PATH",
+    "/app/data/test_data_zz.xlsx",        # inside container
+)
+_TEST_DATA_LOCAL = r"C:\Users\zobir\DScientest\ds_rakuren\test_data_zz.xlsx"
+
+@st.cache_data(show_spinner=False)
+def _load_test_lookup() -> dict:
+    """Return {imageid_str: {category, prdtypecode, designation}} or {}."""
+    for path in (_TEST_DATA_PATH, _TEST_DATA_LOCAL):
+        try:
+            df = pd.read_excel(path, engine="openpyxl",
+                               usecols=["imageid", "designation",
+                                        "prdtypecode", "category"])
+            df["imageid"] = df["imageid"].astype(str).str.strip()
+            return df.set_index("imageid").to_dict(orient="index")
+        except Exception:
+            continue
+    return {}
+
+
+def _lookup_expected(filename: str) -> dict | None:
+    """
+    Try to find an imageid in the test lookup from the uploaded filename.
+    Rakuten test images are named  image_<imageid>_product_<productid>.jpg
+    or simply  <imageid>.jpg – extract the first long numeric run.
+    """
+    lookup = _load_test_lookup()
+    if not lookup:
+        return None
+    nums = re.findall(r"\d{6,}", filename)
+    for n in nums:
+        if n in lookup:
+            return lookup[n]
+    return None
 
 # --- MLflow setup ---
 MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow:5000")
@@ -75,7 +115,6 @@ def predict_single(description, uploaded_image, token, model_uri):
         payload["image_base64"] = base64.b64encode(image_bytes).decode("utf-8")
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    # Choisir l'endpoint selon ce qui est fourni
     if uploaded_image and description:
         endpoint = f"{PREDICT_API_URL}/predict-multimodal"
     elif uploaded_image:
@@ -83,17 +122,64 @@ def predict_single(description, uploaded_image, token, model_uri):
     else:
         endpoint = f"{PREDICT_API_URL}/predict-text"
 
+    # Try to find expected category from test-set lookup (by imageid in filename)
+    expected = _lookup_expected(uploaded_image.name) if uploaded_image else None
+
     try:
         with st.spinner("Making prediction..."):
             resp = requests.post(endpoint, json=payload, headers=headers, timeout=30)
         if resp.status_code == 200:
             result = resp.json()
-            category = result.get("category", result["label"])
-            st.success(f"**{category}**  —  code `{result['label']}` (encoder index {result['pred_class']})")
+            predicted_cat = result.get("category", result["label"])
+            predicted_code = result["label"]
+
+            # ── Result display ──────────────────────────────────────────────
+            if expected:
+                exp_cat  = expected.get("category", "?")
+                exp_code = expected.get("prdtypecode", "?")
+                match = predicted_code == str(exp_code)
+                icon = "✅" if match else "⚠️"
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(
+                        f"<div style='background:#1e1e2e;border:2px solid #28a745;"
+                        f"border-radius:8px;padding:14px;text-align:center'>"
+                        f"<div style='color:#9aabb8;font-size:0.75rem'>MODEL PREDICTION</div>"
+                        f"<div style='color:#28a745;font-weight:700;font-size:1rem;margin-top:4px'>"
+                        f"{predicted_cat}</div>"
+                        f"<div style='color:#6d7a9f;font-size:0.75rem'>code {predicted_code}</div>"
+                        f"</div>", unsafe_allow_html=True)
+                with col2:
+                    st.markdown(
+                        f"<div style='background:#1e1e2e;border:2px solid #a8b2d8;"
+                        f"border-radius:8px;padding:14px;text-align:center'>"
+                        f"<div style='color:#9aabb8;font-size:0.75rem'>EXPECTED (from description)</div>"
+                        f"<div style='color:#a8b2d8;font-weight:700;font-size:1rem;margin-top:4px'>"
+                        f"{exp_cat}</div>"
+                        f"<div style='color:#6d7a9f;font-size:0.75rem'>code {exp_code}</div>"
+                        f"</div>", unsafe_allow_html=True)
+
+                verdict = (
+                    f"{icon} **Match** — prediction aligns with description-based expectation."
+                    if match else
+                    f"{icon} **Mismatch** — model predicted **{predicted_cat}**, "
+                    f"description suggests **{exp_cat}**. "
+                    f"Check confidence: {100*max(result['probs'][0]):.0f}%"
+                )
+                st.caption(verdict)
+
+            else:
+                # No test-set entry — plain result
+                st.success(f"**{predicted_cat}**  —  code `{predicted_code}` "
+                           f"(confidence {100*max(result['probs'][0]):.0f}%)")
+
             if "probs" in result:
-                st.write("Probabilities per class:", result["probs"])
+                with st.expander("Probabilities per class"):
+                    st.write(result["probs"])
             if uploaded_image:
-                st.image(uploaded_image, caption="Uploaded image", use_column_width=True)
+                st.image(uploaded_image, caption=uploaded_image.name,
+                         use_column_width=True)
         else:
             st.error(f"API Error: {resp.text}")
     except Exception as e:
