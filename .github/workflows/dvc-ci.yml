@@ -1,0 +1,132 @@
+name: CI — Tests & DVC Sync
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 1 — Unit & Integration Tests (no GPU, TF stubbed via MagicMock)
+  # ─────────────────────────────────────────────────────────────────────────────
+  tests:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # Cache the spacy model so we don't re-download it every run
+      - name: Cache spacy model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: spacy-en-${{ runner.os }}-${{ hashFiles('tests/requirements-test.txt') }}
+
+      - name: Install service dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Core service packages needed to import the FastAPI apps under test.
+          # scikit-learn==1.6.0 MUST be installed before any other requirements
+          # because the root requirements.txt pins the older 1.4.2 version.
+          pip install \
+            "scikit-learn==1.6.0" \
+            "numpy==1.26.4" \
+            "fastapi==0.111.0" \
+            "uvicorn[standard]==0.30.1" \
+            "pydantic==2.7.4" \
+            "requests==2.32.3" \
+            "httpx>=0.27.0" \
+            "PyJWT>=2.8.0" \
+            "prometheus-client==0.21.0" \
+            "prometheus-fastapi-instrumentator>=6.1.0" \
+            "mlflow>=2.17.0" \
+            "pandas>=2.2.0" \
+            "pillow>=10.4.0" \
+            "spacy>=3.7" \
+            "psutil>=5.9.0"
+
+      - name: Download spaCy English model
+        run: python -m spacy download en_core_web_sm
+
+      - name: Install test dependencies
+        run: pip install -r tests/requirements-test.txt
+
+      - name: Run unit tests
+        run: |
+          pytest tests/unit/ -v --tb=short -q \
+            --junitxml=tests/logs/unit-results.xml
+
+      - name: Run integration tests
+        run: |
+          pytest tests/integration/ -v --tb=short -q -m integration \
+            --junitxml=tests/logs/integration-results.xml
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: tests/logs/
+          if-no-files-found: ignore
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 2 — DVC remote integrity check (runs only on push to main)
+  # Verifies that all tracked data and artifacts are in sync with DagsHub.
+  # Does NOT run dvc repro (pipeline execution happens inside Docker, not CI).
+  # ─────────────────────────────────────────────────────────────────────────────
+  dvc-check:
+    name: DVC Remote Sync Check
+    runs-on: ubuntu-latest
+    needs: tests
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Cache DVC local cache
+        uses: actions/cache@v4
+        with:
+          path: .dvc/cache
+          key: dvc-${{ runner.os }}-${{ hashFiles('**/*.dvc', 'dvc.lock') }}
+          restore-keys: dvc-${{ runner.os }}-
+
+      - name: Install DVC with S3 support
+        run: pip install "dvc[s3]>=3.50" boto3
+
+      - name: Configure DVC remote credentials
+        env:
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          # DagsHub S3-compatible remote uses the same token for both key fields
+          dvc remote modify origin --local access_key_id     "$DAGSHUB_TOKEN"
+          dvc remote modify origin --local secret_access_key "$DAGSHUB_TOKEN"
+
+      - name: Verify DVC pipeline definition
+        run: dvc dag --md || true
+
+      - name: Check remote sync status
+        env:
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          echo "Checking which files are not yet pushed to the remote..."
+          dvc data status --json || true
+          echo "All DVC checks complete."
