@@ -3,6 +3,8 @@ import pickle
 import numpy as np
 import requests
 import tensorflow as tf
+from tensorflow.keras.applications import ResNet50
+from tensorflow.keras.applications.resnet50 import preprocess_input as resnet_preprocess
 from fastapi import FastAPI, HTTPException, Depends, Header
 from prometheus_client import make_asgi_app, Counter, Histogram, Gauge
 from sklearn.preprocessing import LabelEncoder
@@ -77,6 +79,7 @@ label_encoder: LabelEncoder = None
 text_vectorizer: CountVectorizer = None
 pca_text: IncrementalPCA = None
 pca_image: IncrementalPCA = None
+resnet_model = None          # loaded once at startup for image feature extraction
 
 # --- Human-readable category names for each Rakuten prdtypecode ---
 CATEGORY_NAMES: dict[str, str] = {
@@ -148,7 +151,7 @@ def verify_jwt_token(authorization: str = Header(...)):
 
 # --- Load artifacts ---
 def load_artifacts():
-    global model, label_encoder, text_vectorizer, pca_text, pca_image
+    global model, label_encoder, text_vectorizer, pca_text, pca_image, resnet_model
     try:
         # Try loading from MLflow first
         try:
@@ -183,7 +186,16 @@ def load_artifacts():
                 open(os.path.join(ARTIFACTS_PATH, "pca_image.pkl"), "rb")
             )
             print("✓ Artifacts loaded from disk")
-            
+
+        # ResNet50 for image feature extraction (shared across both load paths)
+        if resnet_model is None:
+            print("Loading ResNet50 for image feature extraction...")
+            resnet_model = ResNet50(
+                weights="imagenet", include_top=False,
+                pooling="avg", input_shape=(224, 224, 3)
+            )
+            print("✓ ResNet50 loaded")
+
     except Exception as e:
         raise RuntimeError(f"Failed to load artifacts: {e}")
 
@@ -208,10 +220,13 @@ def extract_text_features(description: str):
 def extract_image_features(image_input: str):
     """
     Accepts either:
-    - a path to a .npy file
-    - a base64-encoded image string
+    - a path to a pre-computed .npy feature file (shape: [1, 2048])
+    - a base64-encoded JPEG/PNG image string
+
+    In the base64 case the image is passed through ResNet50
+    (weights=imagenet, pooling=avg) to produce a 2048-d embedding,
+    matching the feature space used during training.
     """
-    # 1️ Check if input is a valid .npy path
     if os.path.exists(image_input) and image_input.endswith(".npy"):
         try:
             features = np.load(image_input)
@@ -220,18 +235,27 @@ def extract_image_features(image_input: str):
                 status_code=400, detail=f"Failed to load .npy features: {e}"
             )
     else:
-        # 2️ Assume base64 image
         try:
             image_bytes = base64.b64decode(image_input)
             img_array = np.frombuffer(image_bytes, np.uint8)
-            img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-            if img is None:
-                raise ValueError("Image decode failed")
-            img_flat = img.flatten()[None, :]
-            features = img_flat
+            img_bgr = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+            if img_bgr is None:
+                raise ValueError("Image decode failed — invalid or corrupted image data")
+            # Resize to 224×224 and convert BGR→RGB (OpenCV loads BGR)
+            img_rgb = cv2.cvtColor(
+                cv2.resize(img_bgr, (224, 224)), cv2.COLOR_BGR2RGB
+            )
+            # Add batch dimension and apply ResNet50 preprocessing
+            img_batch = resnet_preprocess(
+                np.expand_dims(img_rgb.astype(np.float32), axis=0)
+            )
+            # Extract 2048-d global-average-pooled features
+            features = resnet_model.predict(img_batch, verbose=0)  # shape (1, 2048)
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Image processing failed: {e}")
-    # Apply PCA
+
     try:
         reduced = pca_image.transform(features)
     except Exception as e:
