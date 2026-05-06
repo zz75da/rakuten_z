@@ -1,6 +1,6 @@
 # predict-api/Dockerfile
 # Base image
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive

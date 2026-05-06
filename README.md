@@ -4,7 +4,7 @@ A complete MLOps platform for multimodal (text + image) classification.
 
 # Rakuten MLOps Services
 
-[![CI with DVC + Tests](https://github.com/zz75da/raku_mlops/actions/workflows/dvc-ci.yml/badge.svg?branch=main)](https://github.com/zz75da/raku_mlops/actions/workflows/dvc-ci.yml)
+[![CI with DVC + Tests](https://github.com/zz75da/rakuten_z/actions/workflows/dvc-ci.yml/badge.svg?branch=main)](https://github.com/zz75da/rakuten_z/actions/workflows/dvc-ci.yml)
 
 
 ## Architecture
@@ -51,8 +51,6 @@ rakuten_mlops_services/
 
 ├── gate-api/         # Authentication service
 
-├── preprocess-api/   # Feature extraction
-
 ├── train-api/        # Model training
 
 ├── predict-api/      # Prediction service
@@ -68,8 +66,8 @@ rakuten_mlops_services/
 
 ## Repositories
 
-- **Code**: https://github.com/zz75da/raku_mlops
-- **Data & Experiments**: https://dagshub.com/zz75da/raku_mlops
+- **Code**: https://github.com/zz75da/rakuten_z
+- **Data & Experiments**: https://dagshub.com/zz75da/rakuten_z
 
 ## Testing
 

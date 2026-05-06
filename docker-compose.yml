@@ -44,46 +44,9 @@ services:
       - rakuten_mlops_network
 
   # === MLflow Tracking Server ===
-  mlflow:
-    build:
-      context: . 
-      dockerfile: mlflow_docker/Dockerfile
-    container_name: mlflow
-    command: >
-      bash -c "
-      echo 'Waiting for PostgreSQL...';
-      until pg_isready -h postgres -p 5432 -U mlflow_user -d mlflow; do sleep 2; done;
-      echo 'PostgreSQL ready. Starting MLflow...';
-      mlflow server
-      --backend-store-uri postgresql+psycopg2://mlflow_user:mlflow_pass@postgres:5432/mlflow
-      --default-artifact-root s3://mlflow/
-      --serve-artifacts
-      --host 0.0.0.0
-      --port 5000
-      "
-    ports:
-      - "5000:5000"
-    environment:
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
-      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
-      MLFLOW_ARTIFACT_URI: ${MLFLOW_ARTIFACT_URI}
-      DAGSHUB_USER: ${DAGSHUB_USER}
-      DAGSHUB_TOKEN: ${DAGSHUB_TOKEN}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5000/ || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 15
-    restart: unless-stopped
-    networks:
-      - rakuten_mlops_network
+  # REMOVED 2026-05-02: tracking centralized on DagsHub.
+  # All services use MLFLOW_TRACKING_URI=https://dagshub.com/zz75da/rakuten_z.mlflow (.env)
+  # See mlflow_docker/Dockerfile for the legacy container if you need to re-enable it.
 
   # === Airflow Init ===
   airflow_init:
@@ -166,12 +129,12 @@ services:
         condition: service_healthy
       airflow_init:
         condition: service_completed_successfully
-      mlflow:
-        condition: service_healthy
       train-api:
         condition: service_healthy
     command: >
       bash -c "
+      echo 'Cleaning stale PIDs...'; \
+      rm -f /opt/airflow/airflow-webserver.pid; \
       echo 'Starting Airflow...'; \
       airflow webserver -p 8080 & \
       airflow scheduler
@@ -265,8 +228,6 @@ services:
     depends_on:
       gate-api:
         condition: service_healthy
-      mlflow:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:5002/health || exit 1"]
       interval: 30s
@@ -314,8 +275,6 @@ services:
       - ./data/artifacts:/app/data/artifacts
     command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5003"]
     depends_on:
-      mlflow:
-        condition: service_healthy
       train-api:
         condition: service_healthy
     healthcheck:
@@ -368,6 +327,7 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
     volumes:
       - ./monitoring/grafana_dashboards:/var/lib/grafana/dashboards
+      - ./grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - prometheus
     healthcheck:
@@ -408,7 +368,7 @@ services:
     depends_on:
       - predict-api
       - gate-api
-      - mlflow   # optional, ensure mlflow service is up
+      # mlflow removed: tracking is on DagsHub (external)
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8501 || exit 1"]
       interval: 15s

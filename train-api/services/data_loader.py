@@ -45,29 +45,38 @@ def load_and_merge_data(image_folder: str = None, use_dev_images: bool = None):
     train_data = pd.merge(X_train, Y_train, on="Unnamed: 0")
     train_data.rename(columns={"Unnamed: 0": "id"}, inplace=True)
 
-    # Construct image filenames
+    # Construct image filenames.
+    # Missing files are tolerated in both DEV and FULL modes: the row is
+    # dropped and a warning is logged. This avoids a hard failure when the
+    # user has manually pruned images from image_train/ (or image_sample/).
+    mode_label = "DEV" if "image_sample" in image_folder else "FULL"
+
     def construct_image_path(row):
         fname = f"image_{row['imageid']}_product_{row['productid']}.jpg"
         full_path = os.path.join(IMAGE_PATH, fname)
-
         if not os.path.exists(full_path):
-            if "image_sample" in image_folder:
-                # Dev mode → warn and skip
-                logger.warning(f"[DEV MODE] Missing image skipped: {full_path}")
-                return None
-            else:
-                # Full training → strict error
-                raise FileNotFoundError(f"[FULL TRAIN] Image not found: {full_path}")
-
+            logger.warning(f"[{mode_label} MODE] Missing image skipped: {full_path}")
+            return None
         return full_path
 
     train_data["image_path"] = train_data.apply(construct_image_path, axis=1)
 
-    # Drop rows with missing images (only happens in dev mode)
-    if "image_sample" in image_folder:
-        before = len(train_data)
-        train_data = train_data.dropna(subset=["image_path"])
-        after = len(train_data)
-        logger.info(f"[DEV MODE] Dropped {before - after} rows with missing images")
+    # Drop rows whose image is missing on disk.
+    before = len(train_data)
+    train_data = train_data.dropna(subset=["image_path"]).reset_index(drop=True)
+    after = len(train_data)
+    dropped = before - after
+    if dropped:
+        ratio = dropped / before
+        logger.info(
+            f"[{mode_label} MODE] Dropped {dropped}/{before} rows with missing images "
+            f"({ratio:.1%})"
+        )
+        # Hard fail only if effectively NO image is on disk (catches misconfigured mount).
+        if after == 0:
+            raise FileNotFoundError(
+                f"[{mode_label} MODE] No image found in {IMAGE_PATH}. "
+                f"Check the volume mount and that the folder contains the expected images."
+            )
 
     return train_data

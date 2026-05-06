@@ -49,19 +49,27 @@ def reduce_features(
 
     # --- Incremental PCA for images ---
     logging.info("Starting Incremental PCA for images")
-    pca_img = IncrementalPCA(n_components=n_components_img)  # Variable named pca_img
+    # IncrementalPCA requires every partial_fit batch to have >= n_components samples.
+    # If the dataset is small (e.g. dev mode), shrink n_components to fit.
+    n_components_img = min(n_components_img, image_features.shape[0], image_features.shape[1])
+    pca_img = IncrementalPCA(n_components=n_components_img)
     batch_size = initial_batch_size
     total_samples = image_features.shape[0]
 
     start_idx = 0
     while start_idx < total_samples:
         end_idx = min(start_idx + batch_size, total_samples)
+        # Absorb a too-small trailing residue into the current batch so that
+        # the last partial_fit always has >= n_components samples.
+        remaining = total_samples - end_idx
+        if 0 < remaining < n_components_img:
+            end_idx = total_samples
         batch = image_features[start_idx:end_idx]
         try:
             pca_img.partial_fit(batch)
             if start_idx % (batch_size*5) == 0:
                 log_memory_usage(f"After image batch {start_idx}-{end_idx}")
-            start_idx += batch_size
+            start_idx = end_idx
         except MemoryError:
             batch_size = max(batch_size // 2, 16)
             logging.warning(f"MemoryError: reducing image batch size to {batch_size}")
@@ -75,7 +83,12 @@ def reduce_features(
 
     # --- Incremental PCA for text ---
     logging.info("Starting Incremental PCA for text")
-    n_text_components = min(target_dim - image_features_reduced.shape[1], initial_batch_size)
+    n_text_components = min(
+        target_dim - image_features_reduced.shape[1],
+        initial_batch_size,
+        text_features.shape[0],
+        text_features.shape[1],
+    )
     pca_text = IncrementalPCA(n_components=n_text_components)
     batch_size = initial_batch_size
     total_samples = text_features.shape[0]
@@ -83,12 +96,15 @@ def reduce_features(
     start_idx = 0
     while start_idx < total_samples:
         end_idx = min(start_idx + batch_size, total_samples)
+        remaining = total_samples - end_idx
+        if 0 < remaining < n_text_components:
+            end_idx = total_samples
         batch = text_features[start_idx:end_idx]
         try:
             pca_text.partial_fit(batch)
             if start_idx % (batch_size*5) == 0:
                 log_memory_usage(f"After text batch {start_idx}-{end_idx}")
-            start_idx += batch_size
+            start_idx = end_idx
         except MemoryError:
             batch_size = max(batch_size // 2, 16)
             logging.warning(f"MemoryError: reducing text batch size to {batch_size}")

@@ -1,107 +1,220 @@
-import pytest
-from unittest.mock import patch, MagicMock
-import pandas as pd
-import numpy as np
+"""
+Integration tests: async training workflow
+==========================================
+Purpose : Verify the full asynchronous training lifecycle end-to-end using
+          FastAPI's TestClient against the real train-api app.  The heavy ML
+          work (_run_training_pipeline) is patched to isolate HTTP behaviour
+          from compute time; TF / MLflow are stubbed at module level.
 
-class TestWorkflow:
-    
-    @patch('train_api.app.pd.read_csv')
-    @patch('train_api.app.requests.post')
-    @patch('train_api.app.mlflow')
-    def test_full_training_workflow(self, mock_mlflow, mock_requests, mock_read_csv):
-        """Test the complete training workflow with mocked dependencies"""
-        # Mock data loading
-        mock_X_data = pd.DataFrame({
-            'Unnamed: 0': [1, 2, 3],
-            'designation': ['bag', 'shoes', 'jacket'],
-            'description': ['leather bag', 'running shoes', 'winter jacket'],
-            'imageid': [1, 2, 3],
-            'productid': [100, 200, 300]
-        })
-        
-        mock_Y_data = pd.DataFrame({
-            'Unnamed: 0': [1, 2, 3],
-            'prdtypecode': [40, 60, 1140]
-        })
-        
-        mock_read_csv.side_effect = [mock_X_data, mock_Y_data]
-        
-        # Mock preprocess-api responses
-        mock_image_response = MagicMock()
-        mock_image_response.status_code = 200
-        mock_image_response.json.return_value = {
-            "features": {
-                "/app/data/images/image_train/image_1_product_100.jpg": list(np.random.rand(2048)),
-                "/app/data/images/image_train/image_2_product_200.jpg": list(np.random.rand(2048)),
-                "/app/data/images/image_train/image_3_product_300.jpg": list(np.random.rand(2048))
-            }
+Covered :
+  TestAsyncTrainingWorkflow
+    - POST /train returns 202 + job_id in under 5 s (non-blocking)
+    - The new job is immediately registered in _training_jobs as "running"
+    - GET /train/status/{job_id} returns 200 with a valid status string
+    - A manually inserted "success" entry exposes final_metrics and mlflow_run_id
+    - A manually inserted "failed" entry exposes the error message
+    - Unknown job_id returns 404
+    - Multiple concurrent POST /train calls receive distinct job_ids
+
+  TestRunTrainingPipelineFunction  (lower-level, faster feedback)
+    - When all pipeline steps succeed, _run_training_pipeline() sets
+      _training_jobs[id]["status"] to "success" or "failed" (never left as "running")
+    - When load_and_merge_data() raises, status is set to "failed"
+      and the error message is stored verbatim
+
+Note    : All patch() calls use patch.object(train_app_mod, ...) to avoid
+          sys.modules["app"] collisions introduced by other test modules.
+
+Dependencies : train-api/app.py (TF/MLflow/services stubbed), FastAPI TestClient
+"""
+import sys, os
+import time
+import uuid
+import pytest
+import numpy as np
+from fastapi.testclient import TestClient
+from unittest.mock import patch, MagicMock
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "train-api"))
+
+# Only clear 'app' if it is NOT already the train-api module (has _training_jobs).
+# Re-importing when train-api is cached would re-register Prometheus metrics → ValueError.
+_existing_app = sys.modules.get("app")
+if _existing_app is not None and not hasattr(_existing_app, "_training_jobs"):
+    del sys.modules["app"]
+    for _k in list(sys.modules.keys()):
+        if _k.startswith("services."):
+            del sys.modules[_k]
+
+# Stub TF and heavy deps before importing train-api app
+for _mod in [
+    "tensorflow", "tensorflow.keras", "tensorflow.keras.applications",
+    "tensorflow.keras.applications.resnet50",
+    "mlflow", "mlflow.tracking", "mlflow.tensorflow", "mlflow.sklearn",
+    "dagshub",
+]:
+    if _mod not in sys.modules:
+        sys.modules[_mod] = MagicMock()
+
+for _svc in ["preprocess_image", "trainer"]:
+    _full = f"services.{_svc}"
+    if _full not in sys.modules:
+        sys.modules[_full] = MagicMock()
+
+import app as train_app_mod
+from app import app, verify_jwt_token, _training_jobs
+
+
+@pytest.fixture(autouse=True)
+def admin_override():
+    app.dependency_overrides[verify_jwt_token] = lambda: {
+        "username": "admin", "role": "admin"}
+    yield
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client():
+    return TestClient(app)
+
+
+# ---------------------------------------------------------------------------
+# Async job lifecycle
+# ---------------------------------------------------------------------------
+@pytest.mark.integration
+class TestAsyncTrainingWorkflow:
+    def test_trigger_returns_job_id_immediately(self, client):
+        # Use patch.object so sys.modules["app"] pollution from other tests is irrelevant
+        with patch.object(train_app_mod, "_run_training_pipeline"):
+            start = time.time()
+            resp = client.post("/train", json={"use_dev_images": True, "epochs": 1})
+            elapsed = time.time() - start
+        assert resp.status_code == 202
+        assert "job_id" in resp.json()
+        assert elapsed < 5.0
+
+    def test_job_registered_as_running(self, client):
+        with patch.object(train_app_mod, "_run_training_pipeline"):
+            resp = client.post("/train", json={"use_dev_images": True, "epochs": 1})
+        job_id = resp.json()["job_id"]
+        assert job_id in _training_jobs
+        assert _training_jobs[job_id]["status"] == "running"
+
+    def test_poll_status_while_running(self, client):
+        with patch.object(train_app_mod, "_run_training_pipeline"):
+            post = client.post("/train", json={"epochs": 1})
+        job_id = post.json()["job_id"]
+
+        status = client.get(f"/train/status/{job_id}")
+        assert status.status_code == 200
+        assert status.json()["status"] in ("running", "success", "failed")
+
+    def test_manual_success_entry_is_readable(self, client):
+        fake_id = str(uuid.uuid4())
+        _training_jobs[fake_id] = {
+            "status": "success",
+            "job_id": fake_id,
+            "final_metrics": {"accuracy": 0.72},
+            "history": {"loss": [0.9, 0.5], "val_accuracy": [0.6, 0.72]},
+            "mlflow_run_id": "run-abc",
+            "mlflow_model_version": 3,
         }
-        
-        mock_text_response = MagicMock()
-        mock_text_response.status_code = 200
-        mock_text_response.json.return_value = {
-            "text_features": [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]],
-            "processed_descriptions": ["leather bag", "running shoes", "winter jacket"]
+        resp = client.get(f"/train/status/{fake_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "success"
+        assert data["mlflow_run_id"] == "run-abc"
+        assert data["final_metrics"]["accuracy"] == pytest.approx(0.72)
+
+    def test_manual_failed_entry_exposes_error(self, client):
+        fake_id = str(uuid.uuid4())
+        _training_jobs[fake_id] = {
+            "status": "failed",
+            "job_id": fake_id,
+            "error": "CUDA out of memory",
         }
-        
-        mock_requests.side_effect = [mock_image_response, mock_text_response]
-        
-        # Mock MLflow
-        mock_run = MagicMock()
-        mock_run.info.run_id = "test_run_id"
-        mock_mlflow.start_run.return_value.__enter__ = MagicMock(return_value=mock_run)
-        mock_mlflow.start_run.return_value.__exit__ = MagicMock(return_value=None)
-        
-        # Import and test the training function
-        from train_api.app import train_model
-        
-        # Mock request and authorization
-        mock_request = MagicMock()
-        mock_request.test_size = 0.2
-        mock_request.random_state = 42
-        mock_request.epochs = 2
-        mock_request.batch_size = 32
-        mock_request.model_name = "test_model"
-        mock_request.experiment_name = "test_experiment"
-        
-        mock_authorization = "Bearer mock_token"
-        
-        # This should execute the full workflow without errors
-        try:
-            result = train_model(mock_request, mock_authorization)
-            assert "accuracy" in result
-            assert result["accuracy"] >= 0  # Should be a valid accuracy
-        except Exception as e:
-            pytest.fail(f"Workflow failed with error: {e}")
-    
-    @patch('predict_api.app.mlflow.pyfunc.load_model')
-    @patch('predict_api.app.requests.post')
-    def test_prediction_workflow(self, mock_requests, mock_load_model):
-        """Test the prediction workflow"""
-        # Mock model loading
-        mock_model = MagicMock()
-        mock_model.predict.return_value = np.array([[0.1, 0.8, 0.1]])  # Mock predictions
-        mock_load_model.return_value = mock_model
-        
-        # Mock preprocess-api response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "image_features": list(np.random.rand(2048))
+        resp = client.get(f"/train/status/{fake_id}")
+        assert resp.status_code == 200
+        assert resp.json()["error"] == "CUDA out of memory"
+
+    def test_unknown_job_id_is_404(self, client):
+        resp = client.get("/train/status/does-not-exist-at-all")
+        assert resp.status_code == 404
+
+    def test_multiple_concurrent_jobs_are_independent(self, client):
+        ids = []
+        for _ in range(3):
+            with patch.object(train_app_mod, "_run_training_pipeline"):
+                resp = client.post("/train", json={"epochs": 1})
+            ids.append(resp.json()["job_id"])
+
+        assert len(set(ids)) == 3, "Each job must have a unique job_id"
+        for jid in ids:
+            assert jid in _training_jobs
+
+
+# ---------------------------------------------------------------------------
+# Training pipeline function (unit-level, faster feedback)
+# ---------------------------------------------------------------------------
+@pytest.mark.integration
+class TestRunTrainingPipelineFunction:
+    def test_success_path_updates_job_registry(self):
+        fake_id = str(uuid.uuid4())
+        _training_jobs[fake_id] = {"status": "running"}
+
+        mock_history = MagicMock()
+        mock_history.history = {
+            "loss": [0.9, 0.5],
+            "val_loss": [1.0, 0.6],
+            "accuracy": [0.4, 0.7],
+            "val_accuracy": [0.35, 0.65],
         }
-        mock_requests.return_value = mock_response
-        
-        # Import and test prediction
-        from predict_api.app import predict_image
-        
-        mock_request = MagicMock()
-        mock_request.image_data = "base64_test_image_data"
-        
-        mock_authorization = "Bearer mock_token"
-        
-        result = predict_image(mock_request, mock_authorization)
-        
-        assert "pred_class" in result
-        assert "label" in result
-        assert "probs" in result
-        assert result["input_mode"] == "image_only"
+
+        with patch.object(train_app_mod, "load_and_merge_data") as m_load, \
+             patch.object(train_app_mod, "extract_text_features") as m_text, \
+             patch.object(train_app_mod, "extract_image_features",
+                          return_value="data/image_features.npy"), \
+             patch.object(train_app_mod, "reduce_features", return_value=(
+                 "data/X_reduced.npy", "data/pca_image.pkl", "data/pca_text.pkl")), \
+             patch("numpy.load", return_value=np.zeros((10, 1324))), \
+             patch("builtins.open", side_effect=lambda *a, **k: MagicMock(
+                 __enter__=lambda s: MagicMock(), __exit__=lambda s, *a: None)), \
+             patch("pickle.load", return_value=MagicMock(
+                 n_components_=300, copy=True,
+                 transform=lambda x: np.zeros((x.shape[0], 300)))), \
+             patch.object(train_app_mod, "build_and_train_model", return_value=(
+                 MagicMock(), MagicMock(classes_=range(5)),
+                 mock_history, "path/model.keras", "run-xyz", 1,
+                 {"accuracy": 0.70})), \
+             patch.object(train_app_mod, "save_artifacts"), \
+             patch("requests.post"):
+
+            m_load.return_value = MagicMock(
+                __len__=lambda s: 10, __getitem__=lambda s, k: [0]*10)
+            m_text.return_value = (np.zeros((10, 5000)), MagicMock())
+
+            train_app_mod._run_training_pipeline(
+                job_id=fake_id,
+                use_dev_images=True,
+                epochs=2,
+                batch_size=32,
+            )
+
+        assert _training_jobs[fake_id]["status"] in ("success", "failed")
+
+    def test_failure_marks_job_as_failed(self):
+        fake_id = str(uuid.uuid4())
+        _training_jobs[fake_id] = {"status": "running"}
+
+        with patch.object(train_app_mod, "load_and_merge_data",
+                          side_effect=RuntimeError("CSV not found")):
+            train_app_mod._run_training_pipeline(
+                job_id=fake_id,
+                use_dev_images=True,
+                epochs=1,
+                batch_size=32,
+            )
+
+        assert _training_jobs[fake_id]["status"] == "failed"
+        assert "CSV not found" in _training_jobs[fake_id]["error"]

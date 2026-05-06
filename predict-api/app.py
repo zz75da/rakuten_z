@@ -4,16 +4,28 @@ import numpy as np
 import requests
 import tensorflow as tf
 from fastapi import FastAPI, HTTPException, Depends, Header
-from prometheus_client import make_asgi_app, Counter, Histogram
+from prometheus_client import make_asgi_app, Counter, Histogram, Gauge
 from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import IncrementalPCA
 from sklearn.feature_extraction.text import CountVectorizer
 import base64
 import cv2
 from pydantic import BaseModel
+import mlflow
+from mlflow.tracking import MlflowClient
 
 # --- FastAPI app ---
 app = FastAPI(title="Prediction API", version="1.0")
+
+# --- MLflow Configuration ---
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+MLFLOW_TRACKING_USERNAME = os.getenv("MLFLOW_TRACKING_USERNAME", "")
+MLFLOW_TRACKING_PASSWORD = os.getenv("MLFLOW_TRACKING_PASSWORD", "")
+MLFLOW_MODEL_NAME = os.getenv("MLFLOW_MODEL_NAME", "rakuten_multimodal")
+MLFLOW_MODEL_STAGE = os.getenv("MLFLOW_MODEL_STAGE", "Production")
+
+# Configure MLflow
+mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
 # --- Prometheus metrics ---
 REQUEST_COUNT = Counter(
@@ -22,7 +34,37 @@ REQUEST_COUNT = Counter(
     ["endpoint", "method", "status"],
 )
 REQUEST_LATENCY = Histogram(
-    "predict_request_latency_seconds", "Prediction request latency", ["endpoint"]
+    "predict_request_latency_seconds",
+    "Prediction request latency",
+    ["endpoint"],
+    buckets=[0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
+)
+
+# --- Drift detection metrics ---
+PREDICTION_CONFIDENCE = Histogram(
+    "prediction_confidence",
+    "Confidence (max softmax probability) of each prediction",
+    ["endpoint"],
+    buckets=[0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0],
+)
+PREDICTION_ENTROPY = Histogram(
+    "prediction_entropy",
+    "Shannon entropy of prediction probabilities (high = uncertain = possible drift)",
+    ["endpoint"],
+    buckets=[0.0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4, 2.7, 3.0, 3.5],
+)
+PREDICTION_CLASS_COUNT = Counter(
+    "prediction_class_total",
+    "Predictions per class label (tracks class distribution drift)",
+    ["endpoint", "label"],
+)
+FEATURE_TEXT_MEAN = Gauge(
+    "feature_text_input_mean",
+    "Mean of the text feature vector for the last prediction",
+)
+FEATURE_IMAGE_MEAN = Gauge(
+    "feature_image_input_mean",
+    "Mean of the image feature vector for the last prediction",
 )
 
 # --- Configuration ---
@@ -77,22 +119,51 @@ def verify_jwt_token(authorization: str = Header(...)):
 def load_artifacts():
     global model, label_encoder, text_vectorizer, pca_text, pca_image
     try:
-        model = tf.keras.models.load_model(
-            os.path.join(ARTIFACTS_PATH, "neural_network_model.h5")
-        )
-        label_encoder = pickle.load(
-            open(os.path.join(ARTIFACTS_PATH, "label_encoder.pkl"), "rb")
-        )
-        text_vectorizer = pickle.load(
-            open(os.path.join(ARTIFACTS_PATH, "text_vectorizer.pkl"), "rb")
-        )
-        pca_text = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_text.pkl"), "rb"))
-        pca_image = pickle.load(
-            open(os.path.join(ARTIFACTS_PATH, "pca_image.pkl"), "rb")
-        )
-        print("Artifacts loaded successfully")
+        # Try loading from MLflow first
+        try:
+            print(f"Attempting to load model '{MLFLOW_MODEL_NAME}' from MLflow ({MLFLOW_TRACKING_URI})...")
+            client = MlflowClient(tracking_uri=MLFLOW_TRACKING_URI)
+            model_uri = f"models:/{MLFLOW_MODEL_NAME}/{MLFLOW_MODEL_STAGE}"
+            model = mlflow.tensorflow.load_model(model_uri)
+            print(f"✓ Model loaded from MLflow: {model_uri}")
+            
+            # Load supporting artifacts from MLflow (if available as logged artifacts)
+            label_encoder = pickle.load(open(os.path.join(ARTIFACTS_PATH, "label_encoder.pkl"), "rb"))
+            text_vectorizer = pickle.load(open(os.path.join(ARTIFACTS_PATH, "text_vectorizer.pkl"), "rb"))
+            pca_text = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_text.pkl"), "rb"))
+            pca_image = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_image.pkl"), "rb"))
+            print("✓ Supporting artifacts loaded from disk")
+            
+        except Exception as mlflow_error:
+            print(f"MLflow loading failed, falling back to disk artifacts: {mlflow_error}")
+            # Prefer .keras (Keras 3 native), fall back to .h5 for older artifacts
+            keras_path = os.path.join(ARTIFACTS_PATH, "neural_network_model.keras")
+            h5_path = os.path.join(ARTIFACTS_PATH, "neural_network_model.h5")
+            model_path = keras_path if os.path.exists(keras_path) else h5_path
+            model = tf.keras.models.load_model(model_path)
+            label_encoder = pickle.load(
+                open(os.path.join(ARTIFACTS_PATH, "label_encoder.pkl"), "rb")
+            )
+            text_vectorizer = pickle.load(
+                open(os.path.join(ARTIFACTS_PATH, "text_vectorizer.pkl"), "rb")
+            )
+            pca_text = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_text.pkl"), "rb"))
+            pca_image = pickle.load(
+                open(os.path.join(ARTIFACTS_PATH, "pca_image.pkl"), "rb")
+            )
+            print("✓ Artifacts loaded from disk")
+            
     except Exception as e:
         raise RuntimeError(f"Failed to load artifacts: {e}")
+
+
+# --- Drift helpers ---
+def _record_drift_metrics(probs_flat: np.ndarray, label: str, endpoint: str):
+    confidence = float(np.max(probs_flat))
+    entropy = float(-np.sum(probs_flat * np.log(probs_flat + 1e-10)))
+    PREDICTION_CONFIDENCE.labels(endpoint=endpoint).observe(confidence)
+    PREDICTION_ENTROPY.labels(endpoint=endpoint).observe(entropy)
+    PREDICTION_CLASS_COUNT.labels(endpoint=endpoint, label=label).inc()
 
 
 # --- Preprocessing helpers ---
@@ -149,6 +220,20 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/reload-artifacts")
+def reload_artifacts_endpoint():
+    """Reload all artifacts from disk — call after a new training run completes."""
+    try:
+        load_artifacts()
+        return {
+            "status": "reloaded",
+            "pca_text_components": int(pca_text.n_components_),
+            "pca_image_components": int(pca_image.n_components_),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Artifact reload failed: {e}")
+
+
 @app.post("/predict-text")
 def predict_text(req: TextRequest, user: dict = Depends(verify_jwt_token)):
     text_features = extract_text_features(req.description)
@@ -159,6 +244,8 @@ def predict_text(req: TextRequest, user: dict = Depends(verify_jwt_token)):
     pred = int(np.argmax(probs, axis=1)[0])
     label = str(label_encoder.inverse_transform([pred])[0])
 
+    _record_drift_metrics(probs[0], label, "/predict-text")
+    FEATURE_TEXT_MEAN.set(float(np.mean(text_features)))
     REQUEST_COUNT.labels("/predict-text", "POST", "200").inc()
     return {
         "pred_class": pred,
@@ -178,6 +265,8 @@ def predict_image(req: ImageRequest, user: dict = Depends(verify_jwt_token)):
     pred = int(np.argmax(probs, axis=1)[0])
     label = str(label_encoder.inverse_transform([pred])[0])
 
+    _record_drift_metrics(probs[0], label, "/predict-image")
+    FEATURE_IMAGE_MEAN.set(float(np.mean(image_features)))
     REQUEST_COUNT.labels("/predict-image", "POST", "200").inc()
     return {
         "pred_class": pred,
@@ -211,6 +300,9 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
     pred = int(np.argmax(probs, axis=1)[0])
     label = str(label_encoder.inverse_transform([pred])[0])
 
+    _record_drift_metrics(probs[0], label, "/predict-multimodal")
+    FEATURE_TEXT_MEAN.set(float(np.mean(text_features)))
+    FEATURE_IMAGE_MEAN.set(float(np.mean(image_features)))
     REQUEST_COUNT.labels("/predict-multimodal", "POST", "200").inc()
     return {
         "pred_class": pred,

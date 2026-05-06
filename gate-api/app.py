@@ -2,12 +2,14 @@
 
 from fastapi import FastAPI, HTTPException, Header, Depends
 from pydantic import BaseModel
+from prometheus_fastapi_instrumentator import Instrumentator
 import jwt
 import os
 from datetime import datetime, timedelta
 import secrets
 
 app = FastAPI(title="Gate API", version="0.1")
+Instrumentator().instrument(app).expose(app)
 
 # --- Security Configuration ---
 SECRET_KEY = os.getenv("SECRET_KEY", "default_secret")

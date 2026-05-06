@@ -31,7 +31,7 @@ def list_model_versions_and_stages(model_name: str):
         version_numbers = sorted({v.version for v in versions}, key=lambda x: int(x))
         return stages.union(version_numbers)
     except Exception as e:
-        st.warning(f"⚠️ Could not retrieve MLflow versions: {e}")
+        st.warning(f"Could not retrieve MLflow versions: {e}")
         return {"Production", "Staging"}
 
 
@@ -47,7 +47,7 @@ def get_model_uri(stage_or_version="Production"):
                 v = versions[0]
                 return f"models:/{MODEL_NAME}/{stage_or_version}", v.version, v.current_stage
             else:
-                st.warning(f"⚠️ No model found in MLflow for stage '{stage_or_version}'.")
+                st.warning(f"No model found in MLflow for stage '{stage_or_version}'.")
                 return None, None, None
     except Exception as e:
         st.error(f"Failed to fetch model from MLflow: {e}")
@@ -133,122 +133,505 @@ def predict_batch_stream(batch_items, token, output_file_path, model_uri, chunk_
 # ======================
 # PAGES
 # ======================
+def _service_badge(name, url, path="/health"):
+    try:
+        r = requests.get(url + path, timeout=3)
+        ok = r.status_code == 200
+    except Exception:
+        ok = False
+    color = "#28a745" if ok else "#dc3545"
+    status = "UP" if ok else "DOWN"
+    style = "color:" + color + ";font-size:26px;font-weight:600"
+    return "<span style=\"" + style + "\">● " + name + ": " + status + "</span>"
+
+
 def show_presentation_page():
-    st.title("Présentation")
+    # ── Hero ──────────────────────────────────────────────────────────────────
     st.markdown("""
-    ### Objectifs
-    - Classification multimodale (texte + image)
-    - Mise en place d’un pipeline **MLOps** complet
-    - Déploiement multi-services via **Docker Compose**
-    """)
-    st.markdown("### ⚙️ Architecture globale")
-    st.code("""
-Utilisateur -> Streamlit UI -> Gate-API (auth)
-                       |
-                 Predict-API -> MLflow Registry
-    """, language="text")
-    st.markdown("### Pipeline ML multimodal")
-    st.code("""
-Texte : TF-IDF -> PCA
-Image : ResNet50 -> PCA
-         |
-         v
-   Concaténation -> Dense -> Softmax -> Classe prédite
-    """, language="text")
+    <div style="background:linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%);
+                border-radius:12px;padding:36px 32px 28px;margin-bottom:28px">
+        <h1 style="color:#e94560;margin:0 0 6px;font-size:2.2rem">
+            Rakuten Product Classifier
+        </h1>
+        <p style="color:#a8b2d8;margin:0;font-size:1.05rem">
+            Pipeline MLOps multimodal &mdash; texte &amp; image &mdash; du CSV au modèle en production
+        </p>
+        <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+            <span style="background:#e94560;color:white;padding:3px 10px;border-radius:20px;font-size:24px">Python 3.11</span>
+            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:24px">TensorFlow 2.17</span>
+            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:24px">MLflow + DagsHub</span>
+            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:24px">Airflow 2.x</span>
+            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:24px">Prometheus + Grafana</span>
+            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:24px">Docker Compose</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Key metrics ───────────────────────────────────────────────────────────
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Classes produits",  "27",    help="Catégories Rakuten à prédire")
+    c2.metric("Features texte",    "1 024", help="CountVectorizer(5000) → PCA(1024)")
+    c3.metric("Features image",    "300",   help="ResNet50(2048) → PCA(300)")
+    c4.metric("Features combinées","1 324", help="Concaténation texte + image")
+    c5.metric("Val accuracy",      "~68 %", help="Dernier run dev (5 327 échantillons)")
+    st.divider()
+
+    # ── Tabs ──────────────────────────────────────────────────────────────────
+    tab_ml, tab_ops, tab_stack, tab_services = st.tabs([
+        "Pipeline ML", "Architecture MLOps", "Stack technique", "Statut des services"
+    ])
+
+    # ── Tab 1 : Pipeline ML ───────────────────────────────────────────────────
+    with tab_ml:
+        st.markdown("#### Extraction de features")
+        col_txt, col_img = st.columns(2)
+
+        with col_txt:
+            st.markdown("""
+            <div style="background:#1e1e2e;border-left:4px solid #e94560;
+                        border-radius:8px;padding:18px 20px">
+                <b style="color:#e94560">Branche Texte</b><br><br>
+                <code style="color:#a8b2d8">description</code> (chaîne brute)<br>
+                &nbsp;&nbsp;&nbsp;↓ SpaCy lemmatisation + stopwords<br>
+                &nbsp;&nbsp;&nbsp;↓ CountVectorizer <code>max_features=5000</code><br>
+                &nbsp;&nbsp;&nbsp;↓ IncrementalPCA <code>n_components=1024</code><br>
+                <b style="color:#28a745">→ vecteur 1 × 1024</b>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col_img:
+            st.markdown("""
+            <div style="background:#1e1e2e;border-left:4px solid #0f3460;
+                        border-radius:8px;padding:18px 20px">
+                <b style="color:#a8b2d8">Branche Image</b><br><br>
+                <code style="color:#a8b2d8">image_jpg</code> (224 × 224 px)<br>
+                &nbsp;&nbsp;&nbsp;↓ ResNet50 pré-entraîné (ImageNet, sans top)<br>
+                &nbsp;&nbsp;&nbsp;↓ Global Average Pooling → <code>2048 dims</code><br>
+                &nbsp;&nbsp;&nbsp;↓ IncrementalPCA <code>n_components=300</code><br>
+                <b style="color:#28a745">→ vecteur 1 × 300</b>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("#### Modèle de classification")
+        st.markdown("""
+        <div style="background:#1e1e2e;border-radius:8px;padding:20px;margin-top:8px">
+        <pre style="color:#a8b2d8;margin:0;font-size:26px">
+  [texte 1×1024] ─┐
+                   ├─ hstack ─▶ [1×1324] ─▶ Dense(512, ReLU) ─▶ Dropout(0.5) ─▶ Dense(27, Softmax) ─▶ classe
+  [image 1×300 ] ─┘
+        </pre>
+        <div style="display:flex;gap:20px;margin-top:14px;flex-wrap:wrap">
+            <span style="color:#e94560">Optimizer : Adam</span>
+            <span style="color:#a8b2d8">Loss : sparse_categorical_crossentropy</span>
+            <span style="color:#a8b2d8">Split : 80/20</span>
+        </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Tab 2 : Architecture MLOps ────────────────────────────────────────────
+    with tab_ops:
+        st.markdown("#### Flux de données — du déclenchement à la prédiction")
+
+        # ── Ligne 1 : déclenchement ──────────────────────────────────────────
+        c1, arr1, c2, arr2, c3 = st.columns([3, 0.6, 2.5, 0.6, 4])
+        with c1:
+            st.markdown("""
+            <div style="background:#1e1e2e;border:1px solid #017cee;border-radius:8px;
+                        padding:14px 16px;text-align:center">
+                <div style="color:#017cee;font-weight:700;font-size:28px">✈ Airflow DAG</div>
+                <div style="color:#6c757d;font-size:24px;margin-top:6px">
+                    Déclenche le training<br>Poll status toutes les 60 s
+                </div>
+            </div>""", unsafe_allow_html=True)
+        with arr1:
+            st.markdown("<div style='text-align:center;font-size:26px;color:#a8b2d8;margin-top:18px'>→</div>",
+                        unsafe_allow_html=True)
+        with c2:
+            st.markdown("""
+            <div style="background:#1e1e2e;border:1px solid #e94560;border-radius:8px;
+                        padding:14px 16px;text-align:center">
+                <div style="color:#e94560;font-weight:700;font-size:28px">🔑 Gate-API</div>
+                <div style="color:#6c757d;font-size:24px;margin-top:6px">
+                    JWT auth<br><code style="font-size:22px">POST /login</code>
+                </div>
+            </div>""", unsafe_allow_html=True)
+        with arr2:
+            st.markdown("<div style='text-align:center;font-size:26px;color:#a8b2d8;margin-top:18px'>→</div>",
+                        unsafe_allow_html=True)
+        with c3:
+            st.markdown("""
+            <div style="background:#1e1e2e;border:1px solid #28a745;border-radius:8px;
+                        padding:14px 16px">
+                <div style="color:#28a745;font-weight:700;font-size:28px">⚙ Train-API</div>
+                <div style="color:#6c757d;font-size:24px;margin-top:6px;line-height:1.7">
+                    <code style="font-size:22px">POST /train</code> → job_id (202)<br>
+                    data_loader · preprocess_text · preprocess_image<br>
+                    pca_reducer · trainer · save_artifacts
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+        st.markdown("<div style='text-align:center;font-size:22px;color:#a8b2d8;margin:8px 0'>↓</div>",
+                    unsafe_allow_html=True)
+
+        # ── Ligne 2 : sorties du training ────────────────────────────────────
+        st.markdown("<div style='color:#a8b2d8;font-size:24px;text-align:center;"
+                    "margin-bottom:6px'>Sorties après training</div>",
+                    unsafe_allow_html=True)
+        o1, o2, o3 = st.columns(3)
+        with o1:
+            st.markdown("""
+            <div style="background:#1e1e2e;border:1px solid #f7981c;border-radius:8px;
+                        padding:14px 16px;text-align:center">
+                <div style="font-size:1.5rem">📊</div>
+                <div style="color:#f7981c;font-weight:700;font-size:28px">DagsHub MLflow</div>
+                <div style="color:#6c757d;font-size:24px;margin-top:6px">
+                    Params · métriques<br>datasets · PCAs<br>Model Registry
+                </div>
+            </div>""", unsafe_allow_html=True)
+        with o2:
+            st.markdown("""
+            <div style="background:#1e1e2e;border:1px solid #28a745;border-radius:8px;
+                        padding:14px 16px;text-align:center">
+                <div style="font-size:1.5rem">💾</div>
+                <div style="color:#28a745;font-weight:700;font-size:28px">Artefacts disque</div>
+                <div style="color:#6c757d;font-size:24px;margin-top:6px">
+                    neural_network_model.keras<br>pca_image.pkl · pca_text.pkl<br>text_vectorizer.pkl
+                </div>
+            </div>""", unsafe_allow_html=True)
+        with o3:
+            st.markdown("""
+            <div style="background:#1e1e2e;border:1px solid #e6522c;border-radius:8px;
+                        padding:14px 16px;text-align:center">
+                <div style="font-size:1.5rem">📈</div>
+                <div style="color:#e6522c;font-weight:700;font-size:28px">Prometheus</div>
+                <div style="color:#6c757d;font-size:24px;margin-top:6px">
+                    loss · accuracy<br>drift confidence/entropy<br>Grafana dashboards
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+        st.markdown("<div style='text-align:center;font-size:22px;color:#a8b2d8;margin:8px 0'>↓</div>",
+                    unsafe_allow_html=True)
+
+        # ── Ligne 3 : inférence ──────────────────────────────────────────────
+        ui_col, arr3, api_col = st.columns([2.5, 0.6, 4])
+        with ui_col:
+            st.markdown("""
+            <div style="background:#1e1e2e;border:1px solid #ff4b4b;border-radius:8px;
+                        padding:14px 16px;text-align:center">
+                <div style="font-size:1.5rem">🖥</div>
+                <div style="color:#ff4b4b;font-weight:700;font-size:28px">Streamlit UI</div>
+                <div style="color:#6c757d;font-size:24px;margin-top:6px">
+                    Saisie texte / image<br>Résultat + probabilités
+                </div>
+            </div>""", unsafe_allow_html=True)
+        with arr3:
+            st.markdown("<div style='text-align:center;font-size:26px;color:#a8b2d8;margin-top:20px'>→</div>",
+                        unsafe_allow_html=True)
+        with api_col:
+            st.markdown("""
+            <div style="background:#1e1e2e;border:1px solid #a8b2d8;border-radius:8px;
+                        padding:14px 16px">
+                <div style="color:#a8b2d8;font-weight:700;font-size:28px">🔮 Predict-API</div>
+                <div style="color:#6c757d;font-size:24px;margin-top:8px;
+                            display:flex;gap:12px;flex-wrap:wrap">
+                    <span><code style="font-size:22px">POST /predict-text</code></span>
+                    <span><code style="font-size:22px">POST /predict-image</code></span>
+                    <span><code style="font-size:22px">POST /predict-multimodal</code></span>
+                    <span><code style="font-size:22px">POST /reload-artifacts</code></span>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+        st.markdown("#### Gestion du modèle")
+        ca, cb, cc = st.columns(3)
+        with ca:
+            st.markdown("""
+            <div style="background:#1e1e2e;border-radius:8px;padding:16px;text-align:center">
+                <div style="font-size:2rem">📊</div>
+                <b style="color:#e94560">MLflow</b>
+                <p style="color:#a8b2d8;font-size:26px;margin:6px 0 0">
+                Tracking des runs,<br>params, métriques,<br>datasets, PCAs
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+        with cb:
+            st.markdown("""
+            <div style="background:#1e1e2e;border-radius:8px;padding:16px;text-align:center">
+                <div style="font-size:2rem">🗄️</div>
+                <b style="color:#a8b2d8">DagsHub</b>
+                <p style="color:#a8b2d8;font-size:26px;margin:6px 0 0">
+                Registry distant,<br>artefacts S3,<br>DVC data versioning
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+        with cc:
+            st.markdown("""
+            <div style="background:#1e1e2e;border-radius:8px;padding:16px;text-align:center">
+                <div style="font-size:2rem">🔄</div>
+                <b style="color:#a8b2d8">DVC</b>
+                <p style="color:#a8b2d8;font-size:26px;margin:6px 0 0">
+                Versioning des CSVs<br>et images,<br>pipeline reproductible
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # ── Tab 3 : Stack technique ───────────────────────────────────────────────
+    with tab_stack:
+        rows = [
+            ("Catégorie", "Outil", "Rôle"),
+            ("Orchestration", "Apache Airflow 2.x", "DAG de training, polling async, push métriques"),
+            ("Feature extraction", "SpaCy + ResNet50", "NLP lemmatisé + CNN pré-entraîné"),
+            ("Réduction dim.", "IncrementalPCA (sklearn)", "Batch-safe pour grands datasets"),
+            ("Modèle", "Keras / TensorFlow 2.17", "Dense 512 → Dropout → Softmax"),
+            ("Experiment tracking", "MLflow 2.17 + DagsHub", "Params, métriques, datasets, modèles"),
+            ("Serving", "FastAPI + uvicorn", "predict-api, train-api, gate-api"),
+            ("Auth", "JWT (PyJWT)", "Tokens Bearer, RBAC admin/user"),
+            ("Monitoring", "Prometheus + Grafana", "Drift confidence/entropy, latence, UP/DOWN"),
+            ("Alerting", "Alertmanager", "Slack, email — drift, latence, erreurs"),
+            ("Storage", "MinIO + PostgreSQL", "S3 artefacts + meta Airflow/MLflow"),
+            ("Data versioning", "DVC + DagsHub S3", "CSVs et images versionnés"),
+            ("Containerisation", "Docker Compose", "12 services, réseau bridge dédié"),
+        ]
+        header = rows[0]
+        st.markdown(
+            f"<div style=’display:grid;grid-template-columns:1fr 1.5fr 3fr;gap:1px;background:#333;"
+            f"border-radius:8px;overflow:hidden’>",
+            unsafe_allow_html=True,
+        )
+        # header
+        for cell in header:
+            st.markdown(
+                f"<div style=’background:#e94560;color:white;padding:8px 12px;font-weight:700;font-size:26px’>{cell}</div>",
+                unsafe_allow_html=True,
+            )
+        for row in rows[1:]:
+            bg = "#1e1e2e"
+            for i, cell in enumerate(row):
+                color = "#e94560" if i == 0 else "#a8b2d8"
+                st.markdown(
+                    f"<div style=’background:{bg};color:{color};padding:8px 12px;font-size:26px’>{cell}</div>",
+                    unsafe_allow_html=True,
+                )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Tab 4 : Statut des services ────────────────────────────────────────────
+    with tab_services:
+        st.markdown("#### Statut des services (live)")
+        if st.button("Rafraîchir"):
+            st.rerun()
+
+        gate_url = os.environ.get("GATE_API_URL", "http://gate-api:5000/login").replace("/login", "")
+        predict_url = os.environ.get("PREDICT_API_URL", "http://predict-api:5003")
+        train_url = "http://train-api:5002"
+
+        services = [
+            ("Streamlit UI",  "http://localhost:8501",  "/"),
+            ("Gate-API",      gate_url,                 "/health"),
+            ("Predict-API",   predict_url,              "/health"),
+            ("Train-API",     train_url,                "/health"),
+            ("Prometheus",    "http://prometheus:9090", "/-/healthy"),
+            ("Grafana",       "http://grafana:3000",    "/api/health"),
+            ("Pushgateway",   "http://pushgateway:9091","/"),
+            ("MinIO",         "http://minio:9000",      "/minio/health/live"),
+        ]
+
+        cols = st.columns(4)
+        for idx, (name, url, path) in enumerate(services):
+            try:
+                r = requests.get(f"{url}{path}", timeout=3)
+                ok = r.status_code in (200, 204)
+            except Exception:
+                ok = False
+            status_txt = "UP" if ok else "DOWN"
+            color = "#28a745" if ok else "#dc3545"
+            with cols[idx % 4]:
+                st.markdown(
+                    f"""<div style="background:#1e1e2e;border-radius:8px;padding:14px;
+                                    border-top:3px solid {color};text-align:center;margin-bottom:10px">
+                        <div style="font-size:1.5rem">{"✅" if ok else "❌"}</div>
+                        <div style="color:white;font-weight:600;font-size:28px">{name}</div>
+                        <div style="color:{color};font-size:24px;font-weight:700">{status_txt}</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+
+        st.caption("Les services internes (train-api, prometheus…) sont resolus via le réseau Docker.")
 
 
 def show_prediction_page():
     st.title("MLOps Streamlit Prediction Interface")
 
-    # Login
+    # ── Login form — shown only when not authenticated ────────────────────────
     if "user_token" not in st.session_state:
-        st.subheader("Login")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        if st.button("Login"):
+        st.subheader("Connexion")
+        username = st.text_input("Nom d'utilisateur")
+        password = st.text_input("Mot de passe", type="password")
+        if st.button("Se connecter"):
             auth_resp = authenticate_user(username, password)
             if auth_resp:
                 st.session_state["user_token"] = auth_resp["token"]
-                st.success("Login successful!")
+                st.session_state["logged_username"] = username
+                st.rerun()          # masque immédiatement le formulaire
             else:
-                st.error("Login failed")
+                st.error("Identifiants invalides")
+        return                      # ne rien afficher d'autre avant connexion
 
-    if "user_token" in st.session_state:
-        # --- Model selection ---
-        st.sidebar.subheader("Select MLflow Model Version")
-        available = list_model_versions_and_stages(MODEL_NAME)
-        available_sorted = sorted(available, key=lambda x: (not str(x).isdigit(), x))  # numeric first
+    # ── Authenticated — sidebar info + logout ────────────────────────────────
+    uname = st.session_state.get("logged_username", "admin")
+    st.sidebar.success(f"Connecté : **{uname}**")
+    if st.sidebar.button("Se déconnecter"):
+        st.session_state.pop("user_token", None)
+        st.session_state.pop("logged_username", None)
+        st.rerun()
 
-        # Default selection
-        default_index = available_sorted.index(DEFAULT_MODEL_STAGE_OR_VERSION) if DEFAULT_MODEL_STAGE_OR_VERSION in available_sorted else 0
-        stage_or_version = st.sidebar.selectbox("Stage or Version", available_sorted, index=default_index)
+    # --- Model selection ---
+    st.sidebar.subheader("Modèle MLflow")
+    available = list_model_versions_and_stages(MODEL_NAME)
+    # Numeric versions first, sorted descending (latest first)
+    available_sorted = sorted(
+        available,
+        key=lambda x: (not str(x).isdigit(), -int(x) if str(x).isdigit() else x),
+    )
 
-        model_uri, version_num, current_stage = get_model_uri(str(stage_or_version))
-        if not model_uri:
-            st.stop()
+    # Default: latest numeric version, fallback to first item
+    numeric_versions = [v for v in available_sorted if str(v).isdigit()]
+    default_val = str(max(numeric_versions, key=int)) if numeric_versions else available_sorted[0]
+    default_index = available_sorted.index(default_val) if default_val in available_sorted else 0
+    stage_or_version = st.sidebar.selectbox("Version / Stage", available_sorted, index=default_index)
 
-        st.sidebar.markdown(f" **Using model:** `{MODEL_NAME}`")
-        st.sidebar.markdown(f" **URI:** `{model_uri}`")
-        st.sidebar.markdown(f" **Version:** `{version_num}`  |  **Stage:** `{current_stage}`")
+    model_uri, version_num, current_stage = get_model_uri(str(stage_or_version))
+    if not model_uri:
+        st.stop()
 
-        # --- Prediction forms ---
-        st.subheader("Single Prediction")
-        description = st.text_input("Product description")
-        uploaded_image = st.file_uploader("Upload image", type=["png", "jpg", "jpeg"])
-        if st.button("Predict Single"):
-            predict_single(description, uploaded_image, st.session_state["user_token"], model_uri)
+    st.sidebar.markdown(f" **Modèle :** `{MODEL_NAME}`")
+    st.sidebar.markdown(f" **URI :** `{model_uri}`")
+    st.sidebar.markdown(f" **Version :** `{version_num}`  |  **Stage :** `{current_stage}`")
 
-        # --- Batch Prediction ---
-        st.subheader("Batch Prediction (Streaming)")
-        uploaded_files = st.file_uploader("Upload multiple images", accept_multiple_files=True, type=["png", "jpg", "jpeg"])
-        descriptions_file = st.file_uploader("Optional: CSV with descriptions", type=["csv"])
-        if st.button("Predict Batch"):
-            if uploaded_files:
-                batch_items = []
-                descriptions = []
-                if descriptions_file:
-                    df_desc = pd.read_csv(descriptions_file)
-                    if "description" in df_desc.columns:
-                        descriptions = df_desc["description"].tolist()
-                for idx, file in enumerate(uploaded_files):
-                    desc = descriptions[idx] if idx < len(descriptions) else ""
-                    batch_items.append({
-                        "description": desc,
-                        "image_features": base64.b64encode(file.getvalue()).decode("utf-8")
-                    })
-                output_file = "./batch_predictions_streamed.jsonl"
-                predict_batch_stream(batch_items, st.session_state["user_token"], output_file, model_uri)
-            else:
-                st.warning("⚠️ Please upload at least one image")
+    # --- Prediction forms ---
+    st.subheader("Single Prediction")
+    description = st.text_input("Product description")
+    uploaded_image = st.file_uploader("Upload image", type=["png", "jpg", "jpeg"])
+    if st.button("Predict Single"):
+        predict_single(description, uploaded_image, st.session_state["user_token"], model_uri)
+
+    # --- Batch Prediction ---
+    st.subheader("Batch Prediction (Streaming)")
+    uploaded_files = st.file_uploader("Upload multiple images", accept_multiple_files=True, type=["png", "jpg", "jpeg"])
+    descriptions_file = st.file_uploader("Optional: CSV with descriptions", type=["csv"])
+    if st.button("Predict Batch"):
+        if uploaded_files:
+            batch_items = []
+            descriptions = []
+            if descriptions_file:
+                df_desc = pd.read_csv(descriptions_file)
+                if "description" in df_desc.columns:
+                    descriptions = df_desc["description"].tolist()
+            for idx, file in enumerate(uploaded_files):
+                desc = descriptions[idx] if idx < len(descriptions) else ""
+                batch_items.append({
+                    "description": desc,
+                    "image_features": base64.b64encode(file.getvalue()).decode("utf-8")
+                })
+            output_file = "./batch_predictions_streamed.jsonl"
+            predict_batch_stream(batch_items, st.session_state["user_token"], output_file, model_uri)
+        else:
+            st.warning("⚠️ Please upload at least one image")
 
 
 
 def show_docker_workflow():
-    st.title("Docker Compose Workflow")
-    st.markdown("### Aperçu: micro-services orchestrés via Docker Compose")
-    st.code("""
-Utilisateur ─▶ Streamlit UI
-                      │
-                      ▼
-               Gate-API (auth)
-                      │
-                      ▼
-             Predict-API (inférence)
-                      │
-                      ▼
-               MLflow (gestion modèle)
-    """, language="text")
+    st.title("Infrastructure & Monitoring")
+
+    st.markdown("### Services Docker Compose")
+    services_info = [
+        ("postgres",      "PostgreSQL 13",         "Backend Airflow + MLflow",    "#6c757d"),
+        ("minio",         "MinIO",                  "Stockage S3 artefacts + DVC", "#f7981c"),
+        ("gate-api",      "FastAPI + JWT",          "Authentification RBAC",       "#e94560"),
+        ("train-api",     "FastAPI + TF 2.17",      "Pipeline training async",     "#e94560"),
+        ("predict-api",   "FastAPI + TF 2.17",      "Inférence texte/image/multi", "#e94560"),
+        ("airflow",       "Airflow 2.x",            "Orchestration DAG training",  "#017cee"),
+        ("prometheus",    "Prometheus 3.x",         "Scraping métriques (15s)",    "#e6522c"),
+        ("grafana",       "Grafana",                "Dashboards + drift detection","#f46800"),
+        ("alertmanager",  "Alertmanager",           "Routing Slack/email",         "#e6522c"),
+        ("pushgateway",   "Pushgateway",            "Métriques batch Airflow",     "#e6522c"),
+        ("streamlit",     "Streamlit",              "Interface utilisateur",       "#ff4b4b"),
+    ]
+
+    cols = st.columns(3)
+    for i, (name, image, role, color) in enumerate(services_info):
+        with cols[i % 3]:
+            st.markdown(f"""
+            <div style="background:#1e1e2e;border-radius:8px;padding:14px;
+                        border-left:4px solid {color};margin-bottom:10px">
+                <div style="color:{color};font-weight:700;font-size:28px">{name}</div>
+                <div style="color:#a8b2d8;font-size:24px">{image}</div>
+                <div style="color:#6c757d;font-size:24px;margin-top:4px">{role}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.divider()
+    st.markdown("### Métriques de drift exposées à Prometheus")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        **predict-api** expose :
+        - `prediction_confidence` — confiance max (softmax)
+        - `prediction_entropy` — entropie de Shannon
+        - `prediction_class_total` — distribution des classes
+        - `feature_text_input_mean` / `feature_image_input_mean`
+        - `predict_request_latency_seconds`
+        """)
+    with col2:
+        st.markdown("""
+        **train-api** expose :
+        - `train_loss` / `val_loss` / `train_accuracy` / `val_accuracy`
+        - `model_final_val_accuracy` — dernière accuracy finale
+        - `training_dataset_size` — taille dataset
+        - `model_num_classes` / `epochs_completed_total`
+        """)
+
+    st.markdown("### Alertes configurées")
+    alerts = [
+        ("PredictionConfidenceDrift", "warning", "P50 confiance < 0.40 pendant 15 min"),
+        ("PredictionEntropyHigh",     "warning", "P90 entropie > 2.5 nats pendant 15 min"),
+        ("ClassDistributionSkewed",   "warning", "Une classe > 80% des prédictions"),
+        ("HighPredictionErrorRate",   "critical","Taux d'erreurs 5xx > 10%"),
+        ("PredictionLatencyHigh",     "warning", "P95 latence > 5 s"),
+        ("ModelValAccuracyLow",       "warning", "val_accuracy < 0.70"),
+        ("PredictAPIDown",            "critical","predict-api inaccessible > 3 min"),
+        ("TrainAPIDown",              "critical","train-api inaccessible > 3 min"),
+    ]
+    for name, severity, desc in alerts:
+        color = "#dc3545" if severity == "critical" else "#ffc107"
+        st.markdown(
+            f"<div style='display:flex;align-items:center;gap:10px;margin:4px 0'>"
+            f"<span style='color:{color};font-size:22px;font-weight:700;min-width:70px'>{severity.upper()}</span>"
+            f"<code style='color:#a8b2d8;font-size:26px'>{name}</code>"
+            f"<span style='color:#6c757d;font-size:26px'>— {desc}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
 
 # ======================
 # MAIN
 # ======================
+
+# Global font scaling — doubles all rem-based Streamlit text
+st.markdown("""
+<style>
+html { font-size: 200% !important; }
+code, .stCode { font-size: 0.85rem !important; }
+[data-testid="stSidebarContent"] { font-size: 70% !important; }
+</style>
+""", unsafe_allow_html=True)
+
 st.sidebar.title("Menu")
-page = st.sidebar.radio("Navigation", ["Présentation du projet", "Prédictions", "Workflow Docker"])
+page = st.sidebar.radio("Navigation", ["Présentation du projet", "Prédictions", "Infrastructure & Monitoring"])
 
 if page == "Présentation du projet":
     show_presentation_page()
 elif page == "Prédictions":
     show_prediction_page()
-elif page == "Workflow Docker":
+elif page == "Infrastructure & Monitoring":
     show_docker_workflow()

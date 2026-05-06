@@ -24,6 +24,11 @@ RUN pip install --no-cache-dir --only-binary :all: -r requirements.txt
 # Create directory for MLflow
 RUN mkdir -p /mlflow
 
+# NOTE (2026-05-02): the local MLflow container is no longer used.
+# All MLflow tracking/registry/artifacts are centralized on DagsHub
+# (see MLFLOW_TRACKING_URI in .env). This Dockerfile is kept for
+# reference / fallback. Re-add the `mlflow` service to docker-compose.yml
+# if you want to spin it up again locally.
 EXPOSE 5000
 
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \

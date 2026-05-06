@@ -29,7 +29,7 @@ def save_artifacts(model, vectorizer, pca_models, label_encoder, skip_existing=T
     os.makedirs(ARTIFACTS_PATH, exist_ok=True)
 
     artifacts_to_save = {
-        "neural_network_model.h5": model,
+        "neural_network_model.keras": model,
         "text_vectorizer.pkl": vectorizer,
         "pca_image.pkl": pca_models["image"],
         "pca_text.pkl": pca_models["text"],
@@ -46,11 +46,9 @@ def save_artifacts(model, vectorizer, pca_models, label_encoder, skip_existing=T
         print(f"[Artifacts] Saving {filename} to {path} ...")
 
         try:
-            if filename.endswith(".h5"):
-                # Keras model
+            if filename.endswith(".keras") or filename.endswith(".h5"):
                 obj.save(path)
             else:
-                # Pickle for everything else
                 with open(path, "wb") as f:
                     pickle.dump(obj, f)
             end_artifact_time = time()

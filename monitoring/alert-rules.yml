@@ -1,17 +1,17 @@
 groups:
 - name: rakuten-mlops-alerts
   rules:
-  
+
   # --- AIRFLOW ALERTS ---
   - alert: AirflowSchedulerDown
-    expr: up{job="airflow"} == 0
+    expr: airflow_scheduler_heartbeat < 1
     for: 5m
     labels:
       severity: critical
       service: airflow
     annotations:
-      description: Airflow scheduler is down
-      summary: Airflow scheduler container is not running
+      summary: Airflow scheduler is down
+      description: Airflow scheduler container is not running
 
   - alert: AirflowDagFailed
     expr: airflow_dag_run_failed > 0
@@ -20,41 +20,10 @@ groups:
       severity: warning
       service: airflow
     annotations:
-      description: DAG run has failed
       summary: DAG {{ $labels.dag_id }} has failed runs
-
-  # --- MLFLOW ALERTS ---
-  - alert: MLflowServerDown
-    expr: up{job="mlflow"} == 0
-    for: 5m
-    labels:
-      severity: critical
-      service: mlflow
-    annotations:
-      description: MLflow tracking server is down
-      summary: MLflow server container is not running
+      description: DAG run has failed
 
   # --- API SERVICE ALERTS ---
-  - alert: PreprocessAPIDown
-    expr: up{job="preprocess-api"} == 0
-    for: 3m
-    labels:
-      severity: critical
-      service: preprocess-api
-    annotations:
-      description: Preprocess API service is down
-      summary: Preprocess API container is not responding
-
-  - alert: PreprocessAPIHighLatency
-    expr: rate(http_request_duration_seconds_sum{job="preprocess-api"}[5m]) / rate(http_request_duration_seconds_count{job="preprocess-api"}[5m]) > 2
-    for: 5m
-    labels:
-      severity: warning
-      service: preprocess-api
-    annotations:
-      description: Preprocess API response latency is high
-      summary: High latency detected in preprocess API
-
   - alert: TrainAPIDown
     expr: up{job="train-api"} == 0
     for: 3m
@@ -62,8 +31,8 @@ groups:
       severity: critical
       service: train-api
     annotations:
-      description: Train API service is down
       summary: Train API container is not responding
+      description: Train API service is down
 
   - alert: PredictAPIDown
     expr: up{job="predict-api"} == 0
@@ -72,8 +41,8 @@ groups:
       severity: critical
       service: predict-api
     annotations:
-      description: Predict API service is down
       summary: Predict API container is not responding
+      description: Predict API service is down
 
   # --- DATABASE ALERTS ---
   - alert: PostgresqlDown
@@ -83,8 +52,8 @@ groups:
       severity: critical
       service: postgres
     annotations:
-      description: PostgreSQL database is down
       summary: PostgreSQL container is not running
+      description: PostgreSQL database is down
 
   - alert: PostgresqlHighConnections
     expr: pg_stat_activity_count > 50
@@ -93,8 +62,8 @@ groups:
       severity: warning
       service: postgres
     annotations:
-      description: High number of database connections
       summary: PostgreSQL has many active connections
+      description: High number of database connections
 
   # --- STORAGE ALERTS ---
   - alert: MinIODown
@@ -104,8 +73,8 @@ groups:
       severity: critical
       service: minio
     annotations:
-      description: MinIO storage service is down
       summary: MinIO container is not running
+      description: MinIO storage service is down
 
   - alert: DiskSpaceLow
     expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100 < 10
@@ -114,29 +83,85 @@ groups:
       severity: critical
       service: storage
     annotations:
+      summary: Only {{ $value | printf "%.1f" }}% disk space remaining
       description: Disk space is running low
-      summary: Only {{ $value }}% disk space remaining
 
   # --- MODEL PERFORMANCE ALERTS ---
-  - alert: ModelAccuracyLow
-    expr: model_accuracy < 0.7
+  - alert: ModelValAccuracyLow
+    expr: val_accuracy < 0.7
     for: 30m
     labels:
       severity: warning
       service: train-api
     annotations:
-      description: Model accuracy has dropped below threshold
-      summary: Model accuracy is only {{ $value }}
+      summary: Model validation accuracy is {{ $value | printf "%.2f" }}
+      description: Model validation accuracy has dropped below 0.70
 
   - alert: PredictionLatencyHigh
-    expr: rate(prediction_latency_seconds_sum[5m]) / rate(prediction_latency_seconds_count[5m]) > 5
+    expr: histogram_quantile(0.95, rate(predict_request_latency_seconds_bucket[5m])) > 5
     for: 10m
     labels:
       severity: warning
       service: predict-api
     annotations:
-      description: Prediction latency is very high
-      summary: High prediction latency detected
+      summary: P95 prediction latency is {{ $value | printf "%.1f" }}s
+      description: 95th-percentile prediction latency exceeds 5 seconds
+
+  # --- DRIFT DETECTION ALERTS ---
+  - alert: PredictionConfidenceDrift
+    expr: histogram_quantile(0.5, sum(rate(prediction_confidence_bucket[15m])) by (le)) < 0.4
+    for: 15m
+    labels:
+      severity: warning
+      service: predict-api
+    annotations:
+      summary: Median prediction confidence dropped to {{ $value | printf "%.2f" }}
+      description: >
+        The median confidence of predictions is below 0.40. The model may be
+        receiving out-of-distribution inputs — possible data drift.
+
+  - alert: PredictionEntropyHigh
+    expr: histogram_quantile(0.9, sum(rate(prediction_entropy_bucket[15m])) by (le)) > 2.5
+    for: 15m
+    labels:
+      severity: warning
+      service: predict-api
+    annotations:
+      summary: P90 prediction entropy is {{ $value | printf "%.2f" }} nats
+      description: >
+        The 90th-percentile entropy of prediction distributions exceeds 2.5 nats.
+        High entropy indicates the model is uncertain — possible concept drift.
+
+  - alert: ClassDistributionSkewed
+    expr: >
+      max(rate(prediction_class_total[30m])) by (label)
+      /
+      sum(rate(prediction_class_total[30m]))
+      > 0.8
+    for: 20m
+    labels:
+      severity: warning
+      service: predict-api
+    annotations:
+      summary: One class accounts for >80% of predictions
+      description: >
+        Class distribution is heavily skewed — a single label exceeds 80% of
+        recent predictions. Check for data quality issues or feature pipeline
+        failures.
+
+  - alert: HighPredictionErrorRate
+    expr: >
+      rate(predict_requests_total{status=~"5.."}[5m])
+      /
+      rate(predict_requests_total[5m])
+      > 0.1
+    for: 5m
+    labels:
+      severity: critical
+      service: predict-api
+    annotations:
+      summary: Prediction error rate is {{ $value | printf "%.0f%%" }}
+      description: More than 10% of prediction requests are returning 5xx errors
 
   # --- RESOURCE USAGE ALERTS ---
   - alert: HighMemoryUsage
@@ -146,8 +171,8 @@ groups:
       severity: warning
       service: system
     annotations:
-      description: Memory usage is very high
-      summary: Memory usage at {{ $value }}%
+      summary: Memory usage at {{ $value | printf "%.1f" }}%
+      description: System memory usage exceeds 90%
 
   - alert: HighCPUUsage
     expr: 100 - (avg by(instance)(irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
@@ -156,5 +181,6 @@ groups:
       severity: warning
       service: system
     annotations:
-      description: CPU usage is very high
-      summary: CPU usage at {{ $value }}%
+      summary: CPU usage at {{ $value | printf "%.1f" }}%
+      description: System CPU usage exceeds 80%
+

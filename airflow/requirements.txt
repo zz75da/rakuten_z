@@ -1,8 +1,18 @@
 # airflow/requirements.txt
-apache-airflow-providers-http
-requests==2.32.3
-psycopg2-binary==2.9.9
-PyJWT
-mlflow
-prometheus-client
-jq
+apache-airflow==2.9.1
+apache-airflow-providers-http==4.10.1
+apache-airflow-providers-docker==3.12.1
+
+# DVC inside Airflow tasks
+dvc[s3]==3.62.0
+
+# MLflow tracking
+mlflow==2.8.1
+
+# Data stack
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.4.2
+
+# Monitoring
+prometheus-client==0.20.0

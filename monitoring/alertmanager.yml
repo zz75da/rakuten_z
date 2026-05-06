@@ -70,17 +70,6 @@ route:
           match:
             severity: 'warning'
 
-    - receiver: 'slack-preprocess-api'
-      match:
-        service: 'preprocess-api'
-      routes:
-        - receiver: 'slack-critical'
-          match:
-            severity: 'critical'
-        - receiver: 'slack-warnings'
-          match:
-            severity: 'warning'
-
     - receiver: 'slack-train-api'
       match:
         service: 'train-api'
@@ -210,18 +199,6 @@ receivers:
           *Experiment:* {{ .CommonLabels.experiment_name }}
           *Model:* {{ .CommonLabels.model_name }}
           *Description:* {{ .CommonAnnotations.description }}
-        color: '{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
-
-  - name: 'slack-preprocess-api'
-    slack_configs:
-      - channel: '#preprocess-api-alerts'
-        send_resolved: true
-        title: '🔧 Preprocess-API: {{ .CommonLabels.alertname }}'
-        text: |-
-          *Status:* {{ .CommonLabels.severity }}
-          *Endpoint:* {{ .CommonLabels.endpoint }}
-          *Description:* {{ .CommonAnnotations.description }}
-          *Response Time:* {{ .CommonAnnotations.response_time }}
         color: '{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
 
   - name: 'slack-train-api'

@@ -4,7 +4,8 @@ import json
 import numpy as np
 import pandas as pd
 import mlflow
-import mlflow.keras
+import mlflow.tensorflow
+import mlflow.sklearn
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score, classification_report
@@ -97,8 +98,8 @@ try:
 except Exception as e:
     print(f"Warning: could not set MLflow experiment: {e}")
 
-# Disable keras.autolog if manual logging
-mlflow.keras.autolog(disable=True)
+# Disable autolog — manual logging only
+mlflow.tensorflow.autolog(disable=True)
 
 # --- Helper functions ---
 def evaluate_model(model, X, y, label_encoder):
@@ -147,7 +148,39 @@ def save_training_history(history, artifacts_dir="/app/data/artifacts"):
     return history_path
 
 # --- Training function ---
-def build_and_train_model(X, y, epochs=10, batch_size=32, run_name="training_run"):
+def _log_datasets(train_data, x_csv_path, y_csv_path, X_reduced):
+    """Log source CSVs and reduced feature matrix to the active MLflow run."""
+    try:
+        cols = [c for c in ["imageid", "productid", "description", "prdtypecode"] if c in train_data.columns]
+        src_dataset = mlflow.data.from_pandas(
+            train_data[cols],
+            source=x_csv_path or "X_train_update.csv",
+            name="rakuten_train",
+            targets="prdtypecode",
+        )
+        mlflow.log_input(src_dataset, context="training")
+        print(f"Logged dataset 'rakuten_train': {len(train_data)} rows, source={x_csv_path}")
+    except Exception as e:
+        print(f"Warning: failed to log source dataset: {e}")
+
+    try:
+        reduced_dataset = mlflow.data.from_numpy(
+            X_reduced,
+            source=x_csv_path or "X_train_update.csv",
+            name="X_reduced_features",
+        )
+        mlflow.log_input(reduced_dataset, context="training")
+        print(f"Logged dataset 'X_reduced_features': shape={X_reduced.shape}")
+    except Exception as e:
+        print(f"Warning: failed to log reduced features dataset: {e}")
+
+
+def build_and_train_model(
+    X, y,
+    epochs=10, batch_size=32, run_name="training_run",
+    pca_models=None,
+    train_data=None, x_csv_path=None, y_csv_path=None,
+):
     label_encoder = LabelEncoder()
     y_encoded = label_encoder.fit_transform(y)
 
@@ -183,8 +216,20 @@ def build_and_train_model(X, y, epochs=10, batch_size=32, run_name="training_run
             mlflow.log_param("input_dim", X.shape[1])
             mlflow.log_param("num_classes", len(label_encoder.classes_))
             mlflow.log_param("dataset_rows", int(len(X)))
+            if pca_models:
+                pca_img = pca_models.get("image")
+                pca_txt = pca_models.get("text")
+                if pca_img:
+                    # Use sklearn's standard param names so existing DagsHub columns are filled
+                    mlflow.log_param("copy", pca_img.copy)
+                    mlflow.log_param("n_components", pca_img.n_components_)
+                    mlflow.log_param("pca_text_n_components", pca_txt.n_components_ if pca_txt else None)
         except Exception as e:
             print(f"Warning: failed to log params: {e}")
+
+        # Log datasets (source CSVs + reduced feature matrix)
+        if train_data is not None:
+            _log_datasets(train_data, x_csv_path, y_csv_path, X)
 
         history = model.fit(
             X_train, y_train,
@@ -204,15 +249,15 @@ def build_and_train_model(X, y, epochs=10, batch_size=32, run_name="training_run
             if "val_accuracy" in history.history:
                 mlflow.log_metric("val_accuracy", float(history.history["val_accuracy"][epoch]), step=epoch)
 
-        # ✅ CRITICAL FIX: Save model to BOTH locations for DVC and local use
-        model_path_dvc = os.path.join(ARTIFACTS_DIR, "neural_network_model.h5")
-        model_path_local = os.path.join(LOCAL_ARTIFACTS_DIR, "neural_network_model.h5")
-        
+        # Save in .keras format (Keras 3 native) — avoids legacy H5 deserialisation issues
+        model_path_dvc = os.path.join(ARTIFACTS_DIR, "neural_network_model.keras")
+        model_path_local = os.path.join(LOCAL_ARTIFACTS_DIR, "neural_network_model.keras")
+
         print(f"Saving model to DVC path: {model_path_dvc}")
         print(f"Saving model to local path: {model_path_local}")
-        
-        model.save(model_path_dvc)  # For DVC
-        model.save(model_path_local)  # For Docker container
+
+        model.save(model_path_dvc)
+        model.save(model_path_local)
         
         encoder_path_dvc = os.path.join(ARTIFACTS_DIR, "label_encoder.pkl")
         encoder_path_local = os.path.join(LOCAL_ARTIFACTS_DIR, "label_encoder.pkl")
@@ -244,14 +289,25 @@ def build_and_train_model(X, y, epochs=10, batch_size=32, run_name="training_run
         except Exception as e:
             print(f"Warning: failed to log artifacts to MLflow: {e}")
 
+        # Log PCA sklearn models so DagsHub shows their params
+        if pca_models:
+            try:
+                if pca_models.get("image"):
+                    mlflow.sklearn.log_model(pca_models["image"], artifact_path="pca_image")
+                if pca_models.get("text"):
+                    mlflow.sklearn.log_model(pca_models["text"], artifact_path="pca_text")
+                print("PCA models logged to MLflow")
+            except Exception as e:
+                print(f"Warning: failed to log PCA models: {e}")
+
         # Log model with signature to MLflow
         try:
             preds_for_signature = model.predict(X_train[: min(64, len(X_train))])
             signature = infer_signature(X_train[: min(64, len(X_train))], preds_for_signature)
-            mlflow.keras.log_model(model, artifact_path="model", signature=signature)
+            mlflow.tensorflow.log_model(model, artifact_path="model", signature=signature)
             print("Model logged to MLflow")
         except Exception as e:
-            print(f"Warning: mlflow.keras.log_model failed: {e}")
+            print(f"Warning: mlflow.tensorflow.log_model failed: {e}")
 
         # Evaluate and log final metrics
         eval_results = evaluate_model(model, X, y, label_encoder)
@@ -292,7 +348,6 @@ def build_and_train_model(X, y, epochs=10, batch_size=32, run_name="training_run
     except Exception:
         pass
 
-    # ✅ Verify files exist for DVC
     if not os.path.exists(model_path_dvc):
         raise FileNotFoundError(f"Model file not created at DVC path: {model_path_dvc}")
     if not os.path.exists(encoder_path_dvc):

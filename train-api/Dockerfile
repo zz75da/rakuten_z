@@ -1,31 +1,34 @@
 # train-api
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt dvc[s3]
+# 1. Installation des dépendances système (on le fait en premier pour le cache)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install system deps + AWS CLI
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        curl \
-        unzip \
-        git \
-    && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
-    && unzip awscliv2.zip \
-    && ./aws/install \
-    && rm -rf awscliv2.zip aws \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+# 2. Copie EXPLICITE du requirements
+COPY requirements.txt /app/requirements.txt
 
+# 3. Installation avec chemin ABSOLU vers le fichier
+# Note : Vérifie que httpx est bien écrit dans ton fichier requirements.txt local
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install -r /app/requirements.txt
+
+# 4. Copie du reste du code
 COPY . .
 
-ENV GATE_API_URL=http://gate-api:5000
-ENV SECRET_KEY=default_secret
-
+# 5. Téléchargement du modèle Spacy
 RUN python -m spacy download en_core_web_sm
 
 EXPOSE 5002
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:5002/health || exit 1
 
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5002"]
