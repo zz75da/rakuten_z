@@ -204,8 +204,8 @@ def show_presentation_page():
             <div style="background:#1e1e2e;border-left:4px solid #0f3460;
                         border-radius:8px;padding:18px 20px">
                 <b style="color:#a8b2d8">Branche Image</b><br><br>
-                <code style="color:#a8b2d8">image_jpg</code> (224 × 224 px)<br>
-                &nbsp;&nbsp;&nbsp;↓ ResNet50 pré-entraîné (ImageNet, sans top)<br>
+                <code style="color:#a8b2d8">image_jpg</code> <span style="color:#6d7a9f">(224 × 224 px)</span><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;↓ ResNet50 pré-entraîné (ImageNet, sans top)</span><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;↓ Global Average Pooling →</span> <code>2048 dims</code><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;↓ IncrementalPCA</span> <code>n_components=300</code><br>
                 <b style="color:#28a745">→ vecteur 1 × 300</b>
@@ -214,17 +214,78 @@ def show_presentation_page():
 
         st.markdown("#### Modèle de classification")
         st.markdown("""
-        <div style="background:#1e1e2e;border-radius:8px;padding:20px;margin-top:8px">
-        <pre style="color:#a8b2d8;margin:0;font-size:26px">
-  [texte 1×1024] ─┐
-                   ├─ hstack ─▶ [1×1324] ─▶ Dense(512, ReLU) ─▶ Dropout(0.5) ─▶ Dense(27, Softmax) ─▶ classe
-  [image 1×300 ] ─┘
-        </pre>
-        <div style="display:flex;gap:20px;margin-top:14px;flex-wrap:wrap">
+        <div style="background:#1e1e2e;border-radius:8px;padding:20px 24px;margin-top:8px">
+
+          <!-- inputs -->
+          <div style="display:flex;align-items:center;gap:0;flex-wrap:wrap">
+
+            <!-- left: two input vectors -->
+            <div style="display:flex;flex-direction:column;gap:10px;min-width:130px">
+              <div style="background:#16213e;border:1px solid #e94560;border-radius:6px;
+                          padding:6px 12px;text-align:center;font-size:0.82rem">
+                <span style="color:#e94560;font-weight:600">texte</span>
+                <span style="color:#6d7a9f"> 1×1024</span>
+              </div>
+              <div style="background:#16213e;border:1px solid #0f3460;border-radius:6px;
+                          padding:6px 12px;text-align:center;font-size:0.82rem">
+                <span style="color:#a8b2d8;font-weight:600">image</span>
+                <span style="color:#6d7a9f"> 1×300</span>
+              </div>
+            </div>
+
+            <!-- merge -->
+            <div style="color:#6d7a9f;font-size:1.4rem;padding:0 6px;line-height:1">⎫<br>⎭</div>
+            <div style="background:#0f3460;border-radius:6px;padding:6px 10px;
+                        font-size:0.78rem;color:#a8b2d8;text-align:center;min-width:64px">
+              hstack<br><span style="color:#6d7a9f">1×1324</span>
+            </div>
+
+            <!-- arrow -->
+            <div style="color:#6d7a9f;padding:0 6px;font-size:1rem">▶</div>
+
+            <!-- Dense 512 -->
+            <div style="background:#16213e;border:1px solid #28a745;border-radius:6px;
+                        padding:6px 10px;font-size:0.78rem;text-align:center;min-width:72px">
+              <span style="color:#28a745;font-weight:600">Dense</span><br>
+              <span style="color:#6d7a9f">512, ReLU</span>
+            </div>
+
+            <div style="color:#6d7a9f;padding:0 6px;font-size:1rem">▶</div>
+
+            <!-- Dropout -->
+            <div style="background:#16213e;border:1px solid #6c757d;border-radius:6px;
+                        padding:6px 10px;font-size:0.78rem;text-align:center;min-width:64px">
+              <span style="color:#a8b2d8;font-weight:600">Dropout</span><br>
+              <span style="color:#6d7a9f">p = 0.5</span>
+            </div>
+
+            <div style="color:#6d7a9f;padding:0 6px;font-size:1rem">▶</div>
+
+            <!-- Dense 27 -->
+            <div style="background:#16213e;border:1px solid #e94560;border-radius:6px;
+                        padding:6px 10px;font-size:0.78rem;text-align:center;min-width:72px">
+              <span style="color:#e94560;font-weight:600">Dense</span><br>
+              <span style="color:#6d7a9f">27, Softmax</span>
+            </div>
+
+            <div style="color:#6d7a9f;padding:0 6px;font-size:1rem">▶</div>
+
+            <!-- output -->
+            <div style="background:#1a3a1a;border:1px solid #28a745;border-radius:6px;
+                        padding:6px 12px;font-size:0.82rem;text-align:center;min-width:60px">
+              <span style="color:#28a745;font-weight:600">classe</span><br>
+              <span style="color:#6d7a9f">1 / 27</span>
+            </div>
+
+          </div>
+
+          <!-- hyper-params row -->
+          <div style="display:flex;gap:20px;margin-top:16px;flex-wrap:wrap;font-size:0.8rem">
             <span style="color:#e94560">Optimizer : Adam</span>
             <span style="color:#a8b2d8">Loss : sparse_categorical_crossentropy</span>
-            <span style="color:#a8b2d8">Split : 80/20</span>
-        </div>
+            <span style="color:#6d7a9f">Split : 80 / 20</span>
+          </div>
+
         </div>
         """, unsafe_allow_html=True)
 
