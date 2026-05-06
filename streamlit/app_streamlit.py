@@ -72,7 +72,7 @@ def predict_single(description, uploaded_image, token, model_uri):
         payload["description"] = description
     if uploaded_image:
         image_bytes = uploaded_image.getvalue()
-        payload["image_features"] = base64.b64encode(image_bytes).decode("utf-8")  # Predict-API expects image_features key in base64
+        payload["image_base64"] = base64.b64encode(image_bytes).decode("utf-8")
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     # Choisir l'endpoint selon ce qui est fourni
@@ -142,7 +142,7 @@ def _service_badge(name, url, path="/health"):
         ok = False
     color = "#28a745" if ok else "#dc3545"
     status = "UP" if ok else "DOWN"
-    style = "color:" + color + ";font-size:26px;font-weight:600"
+    style = "color:" + color + ";font-size:13px;font-weight:600"
     return "<span style=\"" + style + "\">● " + name + ": " + status + "</span>"
 
 
@@ -158,12 +158,12 @@ def show_presentation_page():
             Pipeline MLOps multimodal &mdash; texte &amp; image &mdash; du CSV au modèle en production
         </p>
         <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
-            <span style="background:#e94560;color:white;padding:3px 10px;border-radius:20px;font-size:24px">Python 3.11</span>
-            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:24px">TensorFlow 2.17</span>
-            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:24px">MLflow + DagsHub</span>
-            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:24px">Airflow 2.x</span>
-            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:24px">Prometheus + Grafana</span>
-            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:24px">Docker Compose</span>
+            <span style="background:#e94560;color:white;padding:3px 10px;border-radius:20px;font-size:12px">Python 3.11</span>
+            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:12px">TensorFlow 2.17</span>
+            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:12px">MLflow + DagsHub</span>
+            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:12px">Airflow 2.x</span>
+            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:12px">Prometheus + Grafana</span>
+            <span style="background:#0f3460;color:#a8b2d8;border:1px solid #e94560;padding:3px 10px;border-radius:20px;font-size:12px">Docker Compose</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -300,43 +300,43 @@ def show_presentation_page():
             st.markdown("""
             <div style="background:#1e1e2e;border:1px solid #017cee;border-radius:8px;
                         padding:14px 16px;text-align:center">
-                <div style="color:#017cee;font-weight:700;font-size:28px">✈ Airflow DAG</div>
-                <div style="color:#6c757d;font-size:24px;margin-top:6px">
+                <div style="color:#017cee;font-weight:700;font-size:14px">✈ Airflow DAG</div>
+                <div style="color:#9aabb8;font-size:12px;margin-top:6px">
                     Déclenche le training<br>Poll status toutes les 60 s
                 </div>
             </div>""", unsafe_allow_html=True)
         with arr1:
-            st.markdown("<div style='text-align:center;font-size:26px;color:#a8b2d8;margin-top:18px'>→</div>",
+            st.markdown("<div style='text-align:center;font-size:13px;color:#a8b2d8;margin-top:18px'>→</div>",
                         unsafe_allow_html=True)
         with c2:
             st.markdown("""
             <div style="background:#1e1e2e;border:1px solid #e94560;border-radius:8px;
                         padding:14px 16px;text-align:center">
-                <div style="color:#e94560;font-weight:700;font-size:28px">🔑 Gate-API</div>
-                <div style="color:#6c757d;font-size:24px;margin-top:6px">
-                    JWT auth<br><code style="font-size:22px">POST /login</code>
+                <div style="color:#e94560;font-weight:700;font-size:14px">🔑 Gate-API</div>
+                <div style="color:#9aabb8;font-size:12px;margin-top:6px">
+                    JWT auth<br><code style="font-size:11px">POST /login</code>
                 </div>
             </div>""", unsafe_allow_html=True)
         with arr2:
-            st.markdown("<div style='text-align:center;font-size:26px;color:#a8b2d8;margin-top:18px'>→</div>",
+            st.markdown("<div style='text-align:center;font-size:13px;color:#a8b2d8;margin-top:18px'>→</div>",
                         unsafe_allow_html=True)
         with c3:
             st.markdown("""
             <div style="background:#1e1e2e;border:1px solid #28a745;border-radius:8px;
                         padding:14px 16px">
-                <div style="color:#28a745;font-weight:700;font-size:28px">⚙ Train-API</div>
-                <div style="color:#6c757d;font-size:24px;margin-top:6px;line-height:1.7">
-                    <code style="font-size:22px">POST /train</code> → job_id (202)<br>
+                <div style="color:#28a745;font-weight:700;font-size:14px">⚙ Train-API</div>
+                <div style="color:#9aabb8;font-size:12px;margin-top:6px;line-height:1.7">
+                    <code style="font-size:11px">POST /train</code> → job_id (202)<br>
                     data_loader · preprocess_text · preprocess_image<br>
                     pca_reducer · trainer · save_artifacts
                 </div>
             </div>""", unsafe_allow_html=True)
 
-        st.markdown("<div style='text-align:center;font-size:22px;color:#a8b2d8;margin:8px 0'>↓</div>",
+        st.markdown("<div style='text-align:center;font-size:11px;color:#a8b2d8;margin:8px 0'>↓</div>",
                     unsafe_allow_html=True)
 
         # ── Ligne 2 : sorties du training ────────────────────────────────────
-        st.markdown("<div style='color:#a8b2d8;font-size:24px;text-align:center;"
+        st.markdown("<div style='color:#a8b2d8;font-size:12px;text-align:center;"
                     "margin-bottom:6px'>Sorties après training</div>",
                     unsafe_allow_html=True)
         o1, o2, o3 = st.columns(3)
@@ -345,8 +345,8 @@ def show_presentation_page():
             <div style="background:#1e1e2e;border:1px solid #f7981c;border-radius:8px;
                         padding:14px 16px;text-align:center">
                 <div style="font-size:1.5rem">📊</div>
-                <div style="color:#f7981c;font-weight:700;font-size:28px">DagsHub MLflow</div>
-                <div style="color:#6c757d;font-size:24px;margin-top:6px">
+                <div style="color:#f7981c;font-weight:700;font-size:14px">DagsHub MLflow</div>
+                <div style="color:#9aabb8;font-size:12px;margin-top:6px">
                     Params · métriques<br>datasets · PCAs<br>Model Registry
                 </div>
             </div>""", unsafe_allow_html=True)
@@ -355,8 +355,8 @@ def show_presentation_page():
             <div style="background:#1e1e2e;border:1px solid #28a745;border-radius:8px;
                         padding:14px 16px;text-align:center">
                 <div style="font-size:1.5rem">💾</div>
-                <div style="color:#28a745;font-weight:700;font-size:28px">Artefacts disque</div>
-                <div style="color:#6c757d;font-size:24px;margin-top:6px">
+                <div style="color:#28a745;font-weight:700;font-size:14px">Artefacts disque</div>
+                <div style="color:#9aabb8;font-size:12px;margin-top:6px">
                     neural_network_model.keras<br>pca_image.pkl · pca_text.pkl<br>text_vectorizer.pkl
                 </div>
             </div>""", unsafe_allow_html=True)
@@ -365,13 +365,13 @@ def show_presentation_page():
             <div style="background:#1e1e2e;border:1px solid #e6522c;border-radius:8px;
                         padding:14px 16px;text-align:center">
                 <div style="font-size:1.5rem">📈</div>
-                <div style="color:#e6522c;font-weight:700;font-size:28px">Prometheus</div>
-                <div style="color:#6c757d;font-size:24px;margin-top:6px">
+                <div style="color:#e6522c;font-weight:700;font-size:14px">Prometheus</div>
+                <div style="color:#9aabb8;font-size:12px;margin-top:6px">
                     loss · accuracy<br>drift confidence/entropy<br>Grafana dashboards
                 </div>
             </div>""", unsafe_allow_html=True)
 
-        st.markdown("<div style='text-align:center;font-size:22px;color:#a8b2d8;margin:8px 0'>↓</div>",
+        st.markdown("<div style='text-align:center;font-size:11px;color:#a8b2d8;margin:8px 0'>↓</div>",
                     unsafe_allow_html=True)
 
         # ── Ligne 3 : inférence ──────────────────────────────────────────────
@@ -381,25 +381,25 @@ def show_presentation_page():
             <div style="background:#1e1e2e;border:1px solid #ff4b4b;border-radius:8px;
                         padding:14px 16px;text-align:center">
                 <div style="font-size:1.5rem">🖥</div>
-                <div style="color:#ff4b4b;font-weight:700;font-size:28px">Streamlit UI</div>
-                <div style="color:#6c757d;font-size:24px;margin-top:6px">
+                <div style="color:#ff4b4b;font-weight:700;font-size:14px">Streamlit UI</div>
+                <div style="color:#9aabb8;font-size:12px;margin-top:6px">
                     Saisie texte / image<br>Résultat + probabilités
                 </div>
             </div>""", unsafe_allow_html=True)
         with arr3:
-            st.markdown("<div style='text-align:center;font-size:26px;color:#a8b2d8;margin-top:20px'>→</div>",
+            st.markdown("<div style='text-align:center;font-size:13px;color:#a8b2d8;margin-top:20px'>→</div>",
                         unsafe_allow_html=True)
         with api_col:
             st.markdown("""
             <div style="background:#1e1e2e;border:1px solid #a8b2d8;border-radius:8px;
                         padding:14px 16px">
-                <div style="color:#a8b2d8;font-weight:700;font-size:28px">🔮 Predict-API</div>
-                <div style="color:#6c757d;font-size:24px;margin-top:8px;
+                <div style="color:#a8b2d8;font-weight:700;font-size:14px">🔮 Predict-API</div>
+                <div style="color:#9aabb8;font-size:12px;margin-top:8px;
                             display:flex;gap:12px;flex-wrap:wrap">
-                    <span><code style="font-size:22px">POST /predict-text</code></span>
-                    <span><code style="font-size:22px">POST /predict-image</code></span>
-                    <span><code style="font-size:22px">POST /predict-multimodal</code></span>
-                    <span><code style="font-size:22px">POST /reload-artifacts</code></span>
+                    <span><code style="font-size:11px">POST /predict-text</code></span>
+                    <span><code style="font-size:11px">POST /predict-image</code></span>
+                    <span><code style="font-size:11px">POST /predict-multimodal</code></span>
+                    <span><code style="font-size:11px">POST /reload-artifacts</code></span>
                 </div>
             </div>""", unsafe_allow_html=True)
 
@@ -410,7 +410,7 @@ def show_presentation_page():
             <div style="background:#1e1e2e;border-radius:8px;padding:16px;text-align:center">
                 <div style="font-size:2rem">📊</div>
                 <b style="color:#e94560">MLflow</b>
-                <p style="color:#a8b2d8;font-size:26px;margin:6px 0 0">
+                <p style="color:#a8b2d8;font-size:13px;margin:6px 0 0">
                 Tracking des runs,<br>params, métriques,<br>datasets, PCAs
                 </p>
             </div>
@@ -420,7 +420,7 @@ def show_presentation_page():
             <div style="background:#1e1e2e;border-radius:8px;padding:16px;text-align:center">
                 <div style="font-size:2rem">🗄️</div>
                 <b style="color:#a8b2d8">DagsHub</b>
-                <p style="color:#a8b2d8;font-size:26px;margin:6px 0 0">
+                <p style="color:#a8b2d8;font-size:13px;margin:6px 0 0">
                 Registry distant,<br>artefacts S3,<br>DVC data versioning
                 </p>
             </div>
@@ -430,7 +430,7 @@ def show_presentation_page():
             <div style="background:#1e1e2e;border-radius:8px;padding:16px;text-align:center">
                 <div style="font-size:2rem">🔄</div>
                 <b style="color:#a8b2d8">DVC</b>
-                <p style="color:#a8b2d8;font-size:26px;margin:6px 0 0">
+                <p style="color:#a8b2d8;font-size:13px;margin:6px 0 0">
                 Versioning des CSVs<br>et images,<br>pipeline reproductible
                 </p>
             </div>
@@ -462,7 +462,7 @@ def show_presentation_page():
         # header
         for cell in header:
             st.markdown(
-                f"<div style=’background:#e94560;color:white;padding:8px 12px;font-weight:700;font-size:26px’>{cell}</div>",
+                f"<div style=’background:#e94560;color:white;padding:8px 12px;font-weight:700;font-size:13px’>{cell}</div>",
                 unsafe_allow_html=True,
             )
         for row in rows[1:]:
@@ -470,7 +470,7 @@ def show_presentation_page():
             for i, cell in enumerate(row):
                 color = "#e94560" if i == 0 else "#a8b2d8"
                 st.markdown(
-                    f"<div style=’background:{bg};color:{color};padding:8px 12px;font-size:26px’>{cell}</div>",
+                    f"<div style=’background:{bg};color:{color};padding:8px 12px;font-size:13px’>{cell}</div>",
                     unsafe_allow_html=True,
                 )
         st.markdown("</div>", unsafe_allow_html=True)
@@ -510,8 +510,8 @@ def show_presentation_page():
                     f"""<div style="background:#1e1e2e;border-radius:8px;padding:14px;
                                     border-top:3px solid {color};text-align:center;margin-bottom:10px">
                         <div style="font-size:1.5rem">{"✅" if ok else "❌"}</div>
-                        <div style="color:white;font-weight:600;font-size:28px">{name}</div>
-                        <div style="color:{color};font-size:24px;font-weight:700">{status_txt}</div>
+                        <div style="color:white;font-weight:600;font-size:14px">{name}</div>
+                        <div style="color:{color};font-size:12px;font-weight:700">{status_txt}</div>
                     </div>""",
                     unsafe_allow_html=True,
                 )
@@ -591,7 +591,7 @@ def show_prediction_page():
                 desc = descriptions[idx] if idx < len(descriptions) else ""
                 batch_items.append({
                     "description": desc,
-                    "image_features": base64.b64encode(file.getvalue()).decode("utf-8")
+                    "image_base64": base64.b64encode(file.getvalue()).decode("utf-8")
                 })
             output_file = "./batch_predictions_streamed.jsonl"
             predict_batch_stream(batch_items, st.session_state["user_token"], output_file, model_uri)
@@ -624,9 +624,9 @@ def show_docker_workflow():
             st.markdown(f"""
             <div style="background:#1e1e2e;border-radius:8px;padding:14px;
                         border-left:4px solid {color};margin-bottom:10px">
-                <div style="color:{color};font-weight:700;font-size:28px">{name}</div>
-                <div style="color:#a8b2d8;font-size:24px">{image}</div>
-                <div style="color:#6c757d;font-size:24px;margin-top:4px">{role}</div>
+                <div style="color:{color};font-weight:700;font-size:14px">{name}</div>
+                <div style="color:#a8b2d8;font-size:12px">{image}</div>
+                <div style="color:#9aabb8;font-size:12px;margin-top:4px">{role}</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -667,9 +667,9 @@ def show_docker_workflow():
         color = "#dc3545" if severity == "critical" else "#ffc107"
         st.markdown(
             f"<div style='display:flex;align-items:center;gap:10px;margin:4px 0'>"
-            f"<span style='color:{color};font-size:22px;font-weight:700;min-width:70px'>{severity.upper()}</span>"
-            f"<code style='color:#a8b2d8;font-size:26px'>{name}</code>"
-            f"<span style='color:#6c757d;font-size:26px'>— {desc}</span>"
+            f"<span style='color:{color};font-size:11px;font-weight:700;min-width:70px'>{severity.upper()}</span>"
+            f"<code style='color:#a8b2d8;font-size:13px'>{name}</code>"
+            f"<span style='color:#9aabb8;font-size:13px'>— {desc}</span>"
             f"</div>",
             unsafe_allow_html=True,
         )
