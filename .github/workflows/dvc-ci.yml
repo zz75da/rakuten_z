@@ -73,6 +73,16 @@ jobs:
           pytest tests/integration/ -v --tb=short -q -m integration \
             --junitxml=tests/logs/integration-results.xml
 
+      # Publish test results as GitHub Check annotations (visible on PR / commit page)
+      - name: Publish test results
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Pytest Results
+          path: tests/logs/*-results.xml
+          reporter: java-junit
+          fail-on-error: false
+
       - name: Upload test logs
         if: always()
         uses: actions/upload-artifact@v4
