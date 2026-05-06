@@ -300,81 +300,60 @@ def show_presentation_page():
             """, unsafe_allow_html=True)
 
         st.markdown("#### Modèle de classification")
-        st.markdown("""
-        <div style="background:#1e1e2e;border-radius:8px;padding:20px 24px;margin-top:8px">
 
-          <!-- inputs -->
-          <div style="display:flex;align-items:center;gap:0;flex-wrap:wrap">
+        def _card(label, sub, border, label_color):
+            return (
+                f"<div style='background:#16213e;border:1px solid {border};"
+                f"border-radius:6px;padding:6px 10px;font-size:0.78rem;"
+                f"text-align:center;min-width:68px'>"
+                f"<span style='color:{label_color};font-weight:600'>{label}</span><br>"
+                f"<span style='color:#6d7a9f'>{sub}</span></div>"
+            )
 
-            <!-- left: two input vectors -->
-            <div style="display:flex;flex-direction:column;gap:10px;min-width:130px">
-              <div style="background:#16213e;border:1px solid #e94560;border-radius:6px;
-                          padding:6px 12px;text-align:center;font-size:0.82rem">
-                <span style="color:#e94560;font-weight:600">texte</span>
-                <span style="color:#6d7a9f"> 1×1024</span>
-              </div>
-              <div style="background:#16213e;border:1px solid #0f3460;border-radius:6px;
-                          padding:6px 12px;text-align:center;font-size:0.82rem">
-                <span style="color:#a8b2d8;font-weight:600">image</span>
-                <span style="color:#6d7a9f"> 1×300</span>
-              </div>
-            </div>
+        arrow = "<div style='color:#6d7a9f;padding:0 5px;font-size:0.9rem;align-self:center'>&#9654;</div>"
 
-            <!-- merge -->
-            <div style="color:#6d7a9f;font-size:1.4rem;padding:0 6px;line-height:1">⎫<br>⎭</div>
-            <div style="background:#0f3460;border-radius:6px;padding:6px 10px;
-                        font-size:0.78rem;color:#a8b2d8;text-align:center;min-width:64px">
-              hstack<br><span style="color:#6d7a9f">1×1324</span>
-            </div>
+        row = "".join([
+            "<div style='display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:4px'>",
+            # input boxes stacked
+            "<div style='display:flex;flex-direction:column;gap:6px'>",
+            f"<div style='background:#16213e;border:1px solid #e94560;border-radius:6px;"
+            f"padding:6px 12px;font-size:0.78rem;text-align:center'>"
+            f"<span style='color:#e94560;font-weight:600'>texte</span>"
+            f"<span style='color:#6d7a9f'> 1&times;1024</span></div>",
+            f"<div style='background:#16213e;border:1px solid #4a6fa5;border-radius:6px;"
+            f"padding:6px 12px;font-size:0.78rem;text-align:center'>"
+            f"<span style='color:#a8b2d8;font-weight:600'>image</span>"
+            f"<span style='color:#6d7a9f'> 1&times;300</span></div>",
+            "</div>",
+            # merge bracket + hstack
+            "<div style='color:#6d7a9f;font-size:1.6rem;padding:0 2px;align-self:center;line-height:0.9'>}</div>",
+            f"<div style='background:#0f3460;border-radius:6px;padding:6px 10px;"
+            f"font-size:0.78rem;color:#a8b2d8;text-align:center;min-width:60px;align-self:center'>"
+            f"hstack<br><span style='color:#6d7a9f'>1&times;1324</span></div>",
+            arrow,
+            _card("Dense",   "512 &middot; ReLU",  "#28a745", "#28a745"),
+            arrow,
+            _card("Dropout", "p = 0.5",             "#9aabb8", "#a8b2d8"),
+            arrow,
+            _card("Dense",   "27 &middot; Softmax", "#e94560", "#e94560"),
+            arrow,
+            f"<div style='background:#1a3a1a;border:1px solid #28a745;border-radius:6px;"
+            f"padding:6px 12px;font-size:0.82rem;text-align:center;min-width:56px;align-self:center'>"
+            f"<span style='color:#28a745;font-weight:600'>classe</span><br>"
+            f"<span style='color:#6d7a9f'>1 / 27</span></div>",
+            "</div>",
+        ])
 
-            <!-- arrow -->
-            <div style="color:#6d7a9f;padding:0 6px;font-size:1rem">▶</div>
-
-            <!-- Dense 512 -->
-            <div style="background:#16213e;border:1px solid #28a745;border-radius:6px;
-                        padding:6px 10px;font-size:0.78rem;text-align:center;min-width:72px">
-              <span style="color:#28a745;font-weight:600">Dense</span><br>
-              <span style="color:#6d7a9f">512, ReLU</span>
-            </div>
-
-            <div style="color:#6d7a9f;padding:0 6px;font-size:1rem">▶</div>
-
-            <!-- Dropout -->
-            <div style="background:#16213e;border:1px solid #6c757d;border-radius:6px;
-                        padding:6px 10px;font-size:0.78rem;text-align:center;min-width:64px">
-              <span style="color:#a8b2d8;font-weight:600">Dropout</span><br>
-              <span style="color:#6d7a9f">p = 0.5</span>
-            </div>
-
-            <div style="color:#6d7a9f;padding:0 6px;font-size:1rem">▶</div>
-
-            <!-- Dense 27 -->
-            <div style="background:#16213e;border:1px solid #e94560;border-radius:6px;
-                        padding:6px 10px;font-size:0.78rem;text-align:center;min-width:72px">
-              <span style="color:#e94560;font-weight:600">Dense</span><br>
-              <span style="color:#6d7a9f">27, Softmax</span>
-            </div>
-
-            <div style="color:#6d7a9f;padding:0 6px;font-size:1rem">▶</div>
-
-            <!-- output -->
-            <div style="background:#1a3a1a;border:1px solid #28a745;border-radius:6px;
-                        padding:6px 12px;font-size:0.82rem;text-align:center;min-width:60px">
-              <span style="color:#28a745;font-weight:600">classe</span><br>
-              <span style="color:#6d7a9f">1 / 27</span>
-            </div>
-
-          </div>
-
-          <!-- hyper-params row -->
-          <div style="display:flex;gap:20px;margin-top:16px;flex-wrap:wrap;font-size:0.8rem">
-            <span style="color:#e94560">Optimizer : Adam</span>
-            <span style="color:#a8b2d8">Loss : sparse_categorical_crossentropy</span>
-            <span style="color:#6d7a9f">Split : 80 / 20</span>
-          </div>
-
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='background:#1e1e2e;border-radius:8px;padding:20px 24px;margin-top:8px'>"
+            f"{row}"
+            f"<div style='display:flex;gap:20px;margin-top:14px;flex-wrap:wrap;font-size:0.8rem'>"
+            f"<span style='color:#e94560'>Optimizer&nbsp;: Adam</span>"
+            f"<span style='color:#a8b2d8'>Loss&nbsp;: sparse_categorical_crossentropy</span>"
+            f"<span style='color:#6d7a9f'>Split&nbsp;: 80&nbsp;/&nbsp;20</span>"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
 
     # ── Tab 2 : Architecture MLOps ────────────────────────────────────────────
     with tab_ops:
