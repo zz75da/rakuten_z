@@ -53,17 +53,34 @@ def check_dataset_stats(**context):
     return shape
 
 
+def _fresh_token():
+    """Obtain a fresh JWT from gate-api. Called at task start and on 401 during polling."""
+    resp = requests.post(
+        f"{GATE_API}/login",
+        json={"username": "admin", "password": "admin_pass"},
+        timeout=10,
+    )
+    if resp.status_code != 200:
+        raise Exception(f"Re-login failed: {resp.text}")
+    return resp.json()["token"]
+
+
+def _auth_headers(token):
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
 def trigger_and_poll_training(**context):
     """
     1. POST /train  → get job_id (returns 202 immediately).
     2. Poll GET /train/status/{job_id} every TRAINING_POLL_INTERVAL seconds.
-    3. Return result dict when status == 'success', raise on 'failed'.
+    3. Refresh token automatically on 401 (token TTL < pipeline duration).
+    4. Return result dict when status == 'success', raise on 'failed'.
+
+    NOTE: always gets a FRESH token at task start — the XCom token from
+    get_auth_token may be hours old by the time this task runs.
     """
-    token = context["ti"].xcom_pull(task_ids="get_auth_token", key="auth_token")
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
+    token = _fresh_token()
+    print("Fresh token obtained.")
 
     # 1. Trigger
     payload = {
@@ -71,7 +88,16 @@ def trigger_and_poll_training(**context):
         "epochs": int(os.environ.get("TRAIN_EPOCHS", 10)),
         "batch_size": int(os.environ.get("TRAIN_BATCH_SIZE", 32)),
     }
-    resp = requests.post(f"{TRAIN_API}/train", json=payload, headers=headers, timeout=900)
+    resp = requests.post(
+        f"{TRAIN_API}/train", json=payload,
+        headers=_auth_headers(token), timeout=30,
+    )
+    if resp.status_code == 401:
+        token = _fresh_token()
+        resp = requests.post(
+            f"{TRAIN_API}/train", json=payload,
+            headers=_auth_headers(token), timeout=30,
+        )
     if not resp.ok:
         raise Exception(
             f"POST /train returned HTTP {resp.status_code}. Body: {resp.text[:2000]}"
@@ -80,10 +106,10 @@ def trigger_and_poll_training(**context):
     print(f"Training job started: {job_id}")
     context["ti"].xcom_push(key="training_job_id", value=job_id)
 
-    # 2. Poll — resilient to transient timeouts under high CPU load
+    # 2. Poll — resilient to transient timeouts and token expiry
     elapsed = 0
     consecutive_failures = 0
-    MAX_CONSECUTIVE_FAILURES = 10  # fail only after 10 consecutive unreachable polls
+    MAX_CONSECUTIVE_FAILURES = 10
 
     while elapsed < TRAINING_MAX_WAIT:
         time.sleep(TRAINING_POLL_INTERVAL)
@@ -92,9 +118,18 @@ def trigger_and_poll_training(**context):
         try:
             status_resp = requests.get(
                 f"{TRAIN_API}/train/status/{job_id}",
-                headers=headers,
-                timeout=60,  # generous: server may be CPU-bound during training
+                headers=_auth_headers(token),
+                timeout=60,
             )
+            # Transparent token refresh on expiry
+            if status_resp.status_code == 401:
+                print(f"[{elapsed}s] Token expired — refreshing and retrying poll")
+                token = _fresh_token()
+                status_resp = requests.get(
+                    f"{TRAIN_API}/train/status/{job_id}",
+                    headers=_auth_headers(token),
+                    timeout=60,
+                )
             status_resp.raise_for_status()
             consecutive_failures = 0
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
@@ -106,7 +141,7 @@ def trigger_and_poll_training(**context):
                 raise Exception(
                     f"Status endpoint unreachable {MAX_CONSECUTIVE_FAILURES} times in a row — aborting"
                 )
-            continue  # skip this tick, retry next interval
+            continue
 
         job = status_resp.json()
         status = job.get("status")
