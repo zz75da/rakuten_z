@@ -91,11 +91,23 @@ def trigger_and_poll_training(**context):
 
     # On retry, the train-api job is likely still running — reuse its job_id
     # rather than triggering a second parallel training run.
+    # If the train-api was restarted (in-memory state lost), the job will 404:
+    # in that case we clear the stale Variable and trigger a fresh job.
     existing_job_id = Variable.get(_JOB_ID_VAR, default_var=None)
     if existing_job_id:
-        print(f"Resuming existing training job: {existing_job_id}")
-        job_id = existing_job_id
-    else:
+        probe = requests.get(
+            f"{TRAIN_API}/train/status/{existing_job_id}",
+            headers=_auth_headers(token), timeout=30,
+        )
+        if probe.status_code == 404:
+            print(f"Job {existing_job_id} not found in train-api (container restarted?). Starting fresh.")
+            Variable.delete(_JOB_ID_VAR)
+            existing_job_id = None
+        else:
+            print(f"Resuming existing training job: {existing_job_id}")
+            job_id = existing_job_id
+
+    if not existing_job_id:
         # 1. Trigger a new training job
         payload = {
             "use_dev_images": False,
