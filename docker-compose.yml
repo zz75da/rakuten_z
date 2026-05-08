@@ -96,6 +96,12 @@ services:
       AIRFLOW_CONN_GATE_API: http://gate-api:5000
       AIRFLOW_CONN_PREDICT_API: http://predict-api:5003
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /tmp/airflow/logs
+      # Reconnect on stale pool connections (handles transient Postgres DNS failures)
+      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_PRE_PING: "True"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: "1800"
+      # Give tasks 15 min without a heartbeat before declaring zombie (default: 5 min)
+      # Prevents task kills during brief Postgres DNS outages under heavy CPU load
+      AIRFLOW__SCHEDULER__SCHEDULER_ZOMBIE_TASK_THRESHOLD: "900"
       SECRET_KEY: default_secret
       _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-http
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
