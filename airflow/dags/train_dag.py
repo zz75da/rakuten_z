@@ -4,8 +4,8 @@ from airflow.models import Variable
 from airflow.operators.bash import BashOperator
 from airflow.providers.http.sensors.http import HttpSensor
 from airflow.operators.python import PythonOperator
-import json
-import time
+from airflow.sensors.base import BaseSensorOperator
+from airflow.exceptions import AirflowException
 import requests
 import pandas as pd
 import os
@@ -15,41 +15,46 @@ default_args = {
     "depends_on_past": False,
     "email_on_failure": False,
     "email_on_retry": False,
-    "retries": 1,
-    "retry_delay": timedelta(minutes=5),
+    "retries": 0,
+    "retry_delay": timedelta(minutes=1),
 }
 
 TRAIN_API = "http://train-api:5002"
 GATE_API  = "http://gate-api:5000"
 
-# Full pipeline (image preprocessing + training) can exceed 24 h on CPU.
-# Default: 30 h — override via env var if needed.
 TRAINING_MAX_WAIT = int(os.environ.get("TRAINING_MAX_WAIT_SECONDS", 30 * 3600))
-TRAINING_POLL_INTERVAL = int(os.environ.get("TRAINING_POLL_INTERVAL_SECONDS", 60))
 
-# Airflow Variable key used to persist job_id across task retries
+# Airflow Variable key used to persist job_id across DAG runs
 _JOB_ID_VAR = "rakuten_current_training_job_id"
+
+
+# --- Helpers ---
+
+def _fresh_token():
+    resp = requests.post(
+        f"{GATE_API}/login",
+        json={"username": "admin", "password": "admin_pass"},
+        timeout=10,
+    )
+    if resp.status_code != 200:
+        raise Exception(f"Login failed: {resp.text}")
+    return resp.json()["token"]
+
+
+def _auth_headers(token):
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
 # --- Python Callables ---
 
 def get_auth_token(**context):
-    response = requests.post(
-        f"{GATE_API}/login",
-        json={"username": "admin", "password": "admin_pass"},
-        timeout=10,
-    )
-    if response.status_code != 200:
-        raise Exception(f"Login failed: {response.text}")
-    token = response.json()["token"]
+    token = _fresh_token()
     context["ti"].xcom_push(key="auth_token", value=token)
     return token
 
 
 def check_dataset_stats(**context):
-    """Read CSV metadata and push shape info to XCom (no training logic here)."""
     csv_path = "/opt/airflow/data/X_train_update.csv"
-    df = pd.read_csv(csv_path, nrows=0)   # headers only — fast
     full = pd.read_csv(csv_path)
     shape = f"{len(full)}x{len(full.columns)}"
     context["ti"].xcom_push(key="data_shape", value=shape)
@@ -58,41 +63,14 @@ def check_dataset_stats(**context):
     return shape
 
 
-def _fresh_token():
-    """Obtain a fresh JWT from gate-api. Called at task start and on 401 during polling."""
-    resp = requests.post(
-        f"{GATE_API}/login",
-        json={"username": "admin", "password": "admin_pass"},
-        timeout=10,
-    )
-    if resp.status_code != 200:
-        raise Exception(f"Re-login failed: {resp.text}")
-    return resp.json()["token"]
-
-
-def _auth_headers(token):
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-
-def trigger_and_poll_training(**context):
+def trigger_training(**context):
     """
-    1. POST /train  → get job_id (returns 202 immediately).
-       On retry: reuse the persisted job_id from the Airflow Variable
-       (the train-api job is still running even if this task was killed).
-    2. Poll GET /train/status/{job_id} every TRAINING_POLL_INTERVAL seconds.
-    3. Refresh token automatically on 401 (token TTL < pipeline duration).
-    4. Return result dict when status == 'success', raise on 'failed'.
-
-    execution_timeout is intentionally absent — full pipeline (image
-    preprocessing + training) can take 24 h+ on CPU.
+    Triggers a new training job or resumes an existing one.
+    Completes in seconds — the sensor handles the long wait.
     """
     token = _fresh_token()
     print("Fresh token obtained.")
 
-    # On retry, the train-api job is likely still running — reuse its job_id
-    # rather than triggering a second parallel training run.
-    # If the train-api was restarted (in-memory state lost), the job will 404:
-    # in that case we clear the stale Variable and trigger a fresh job.
     existing_job_id = Variable.get(_JOB_ID_VAR, default_var=None)
     if existing_job_id:
         probe = requests.get(
@@ -100,15 +78,15 @@ def trigger_and_poll_training(**context):
             headers=_auth_headers(token), timeout=30,
         )
         if probe.status_code == 404:
-            print(f"Job {existing_job_id} not found in train-api (container restarted?). Starting fresh.")
+            print(f"Job {existing_job_id} gone (train-api restarted). Starting fresh.")
             Variable.delete(_JOB_ID_VAR)
             existing_job_id = None
         else:
             print(f"Resuming existing training job: {existing_job_id}")
-            job_id = existing_job_id
+            context["ti"].xcom_push(key="training_job_id", value=existing_job_id)
+            return existing_job_id
 
     if not existing_job_id:
-        # 1. Trigger a new training job
         payload = {
             "use_dev_images": False,
             "epochs": int(os.environ.get("TRAIN_EPOCHS", 10)),
@@ -130,65 +108,58 @@ def trigger_and_poll_training(**context):
             )
         job_id = resp.json()["job_id"]
         print(f"Training job started: {job_id}")
-        # Persist so a retry can resume without re-triggering training
         Variable.set(_JOB_ID_VAR, job_id)
+        context["ti"].xcom_push(key="training_job_id", value=job_id)
+        return job_id
 
-    context["ti"].xcom_push(key="training_job_id", value=job_id)
 
-    # 2. Poll — resilient to transient timeouts and token expiry
-    elapsed = 0
-    consecutive_failures = 0
-    MAX_CONSECUTIVE_FAILURES = 10
+class TrainingCompleteSensor(BaseSensorOperator):
+    """
+    Polls /train/status/{job_id} using mode='reschedule'.
 
-    while elapsed < TRAINING_MAX_WAIT:
-        time.sleep(TRAINING_POLL_INTERVAL)
-        elapsed += TRAINING_POLL_INTERVAL
+    Each poke() call is a short-lived process (~2 seconds): the scheduler
+    relaunches it every poke_interval. No long-running process, no heartbeat
+    failures, no zombie detection — safe for 24 h+ training jobs.
+    """
 
-        try:
-            status_resp = requests.get(
+    def poke(self, context):
+        job_id = Variable.get(_JOB_ID_VAR, default_var=None)
+        if not job_id:
+            raise AirflowException(
+                "No training job_id in Variable — re-trigger the DAG from scratch"
+            )
+
+        token = _fresh_token()
+        resp = requests.get(
+            f"{TRAIN_API}/train/status/{job_id}",
+            headers=_auth_headers(token), timeout=60,
+        )
+        if resp.status_code == 401:
+            token = _fresh_token()
+            resp = requests.get(
                 f"{TRAIN_API}/train/status/{job_id}",
-                headers=_auth_headers(token),
-                timeout=60,
+                headers=_auth_headers(token), timeout=60,
             )
-            # Transparent token refresh on expiry
-            if status_resp.status_code == 401:
-                print(f"[{elapsed}s] Token expired — refreshing and retrying poll")
-                token = _fresh_token()
-                status_resp = requests.get(
-                    f"{TRAIN_API}/train/status/{job_id}",
-                    headers=_auth_headers(token),
-                    timeout=60,
-                )
-            status_resp.raise_for_status()
-            consecutive_failures = 0
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
-            consecutive_failures += 1
-            print(
-                f"[{elapsed}s] Status poll failed ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}): {exc}"
+        if resp.status_code == 404:
+            Variable.delete(_JOB_ID_VAR)
+            raise AirflowException(
+                f"Job {job_id} not found (train-api restarted). "
+                "Clear the DAG run and re-trigger to start a new job."
             )
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                raise Exception(
-                    f"Status endpoint unreachable {MAX_CONSECUTIVE_FAILURES} times in a row — aborting"
-                )
-            continue
+        resp.raise_for_status()
 
-        job = status_resp.json()
+        job = resp.json()
         status = job.get("status")
-        print(f"[{elapsed}s] Job {job_id} status: {status}")
+        print(f"Job {job_id}: status={status}")
 
         if status == "success":
-            Variable.delete(_JOB_ID_VAR)   # clear so next run starts fresh
+            Variable.delete(_JOB_ID_VAR)
             context["ti"].xcom_push(key="training_result", value=job)
-            return job
+            return True
         if status == "failed":
             Variable.delete(_JOB_ID_VAR)
-            raise Exception(f"Training job {job_id} failed: {job.get('error')}")
-        # status == "running" → keep polling
-
-    Variable.delete(_JOB_ID_VAR)
-    raise Exception(
-        f"Training job {job_id} did not finish within {TRAINING_MAX_WAIT // 3600}h"
-    )
+            raise AirflowException(f"Training job {job_id} failed: {job.get('error')}")
+        return False  # running — reschedule
 
 
 def get_model_version(**context):
@@ -203,7 +174,6 @@ def get_model_version(**context):
             print("MLFLOW_TRACKING_URI / DAGSHUB_USER not set — skipping version check")
             return "unknown"
 
-        # DagsHub MLflow REST API
         api_url = (
             f"https://dagshub.com/{dagshub_user}/rakuten_z.mlflow"
             f"/api/2.0/mlflow/registered-models/get-latest-versions"
@@ -230,7 +200,7 @@ def get_model_version(**context):
 
 def push_training_metrics(**context):
     """Push real training metrics from the completed job to Prometheus Pushgateway."""
-    result = context["ti"].xcom_pull(task_ids="train_model", key="training_result") or {}
+    result = context["ti"].xcom_pull(task_ids="wait_for_training", key="training_result") or {}
     final = result.get("final_metrics", {})
     history = result.get("history", {})
 
@@ -271,7 +241,7 @@ def push_training_metrics(**context):
 
 def evaluate_from_result(**context):
     """Log final evaluation metrics from training result stored in XCom."""
-    result = context["ti"].xcom_pull(task_ids="train_model", key="training_result") or {}
+    result = context["ti"].xcom_pull(task_ids="wait_for_training", key="training_result") or {}
     final = result.get("final_metrics", {})
     history = result.get("history", {})
 
@@ -353,12 +323,21 @@ with DAG(
         provide_context=True,
     )
 
-    # No execution_timeout — full pipeline (image preprocessing + training)
-    # takes 24 h+ on CPU. Airflow must not kill this task mid-poll.
-    train_model_task = PythonOperator(
-        task_id="train_model",
-        python_callable=trigger_and_poll_training,
+    # Triggers the job and returns in seconds.
+    trigger_training_task = PythonOperator(
+        task_id="trigger_training",
+        python_callable=trigger_training,
         provide_context=True,
+    )
+
+    # Polls every 5 minutes using mode='reschedule': each poke is a ~2-second
+    # process. No long-running task, no heartbeat, no zombie detection issues.
+    wait_for_training = TrainingCompleteSensor(
+        task_id="wait_for_training",
+        mode="reschedule",
+        poke_interval=300,          # poll every 5 minutes
+        timeout=TRAINING_MAX_WAIT,  # give up after 30 h
+        soft_fail=False,
     )
 
     get_version = PythonOperator(
@@ -413,7 +392,8 @@ with DAG(
         >> [wait_for_gate_api, wait_for_train_api, wait_for_predict_api]
         >> dataset_stats
         >> get_token
-        >> train_model_task
+        >> trigger_training_task
+        >> wait_for_training
         >> [get_version, push_metrics]
         >> eval_results
         >> verify_mlflow
