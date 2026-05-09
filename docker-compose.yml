@@ -99,9 +99,12 @@ services:
       # Reconnect on stale pool connections (handles transient Postgres DNS failures)
       AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_PRE_PING: "True"
       AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: "1800"
-      # Give tasks 15 min without a heartbeat before declaring zombie (default: 5 min)
-      # Prevents task kills during brief Postgres DNS outages under heavy CPU load
-      AIRFLOW__SCHEDULER__SCHEDULER_ZOMBIE_TASK_THRESHOLD: "900"
+      # Give tasks 30 min without a heartbeat before declaring zombie (default: 5 min)
+      # Prevents task kills during Postgres DNS outages or system pressure under heavy CPU/RAM load
+      AIRFLOW__SCHEDULER__SCHEDULER_ZOMBIE_TASK_THRESHOLD: "1800"
+      # Reduce gunicorn workers (default 4) to avoid OOM when train-api consumes 3-4 GB
+      AIRFLOW__WEBSERVER__WORKERS: "2"
+      AIRFLOW__WEBSERVER__WORKER_TIMEOUT: "120"
       SECRET_KEY: default_secret
       _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-http
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
