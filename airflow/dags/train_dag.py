@@ -130,16 +130,22 @@ class TrainingCompleteSensor(BaseSensorOperator):
             )
 
         token = _fresh_token()
-        resp = requests.get(
-            f"{TRAIN_API}/train/status/{job_id}",
-            headers=_auth_headers(token), timeout=60,
-        )
-        if resp.status_code == 401:
-            token = _fresh_token()
+        try:
             resp = requests.get(
                 f"{TRAIN_API}/train/status/{job_id}",
-                headers=_auth_headers(token), timeout=60,
+                headers=_auth_headers(token), timeout=120,
             )
+            if resp.status_code == 401:
+                token = _fresh_token()
+                resp = requests.get(
+                    f"{TRAIN_API}/train/status/{job_id}",
+                    headers=_auth_headers(token), timeout=120,
+                )
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            # train-api is under heavy load (PCA/training) — treat as transient
+            print(f"Status check timed out/unreachable (will retry in 5 min): {exc}")
+            return False
+
         if resp.status_code == 404:
             Variable.delete(_JOB_ID_VAR)
             raise AirflowException(
