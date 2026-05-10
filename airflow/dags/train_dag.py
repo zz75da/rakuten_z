@@ -73,15 +73,19 @@ def trigger_training(**context):
 
     existing_job_id = Variable.get(_JOB_ID_VAR, default_var=None)
     if existing_job_id:
-        probe = requests.get(
-            f"{TRAIN_API}/train/status/{existing_job_id}",
-            headers=_auth_headers(token), timeout=30,
-        )
-        if probe.status_code == 404:
-            print(f"Job {existing_job_id} gone (train-api restarted). Starting fresh.")
-            Variable.delete(_JOB_ID_VAR)
-            existing_job_id = None
-        else:
+        try:
+            probe = requests.get(
+                f"{TRAIN_API}/train/status/{existing_job_id}",
+                headers=_auth_headers(token), timeout=120,
+            )
+            if probe.status_code == 404:
+                print(f"Job {existing_job_id} gone (train-api restarted). Starting fresh.")
+                Variable.delete(_JOB_ID_VAR)
+                existing_job_id = None
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+            # train-api under heavy load (PCA/training) — assume job still alive
+            print(f"Probe timed out for job {existing_job_id} — assuming still running.")
+        if existing_job_id:
             print(f"Resuming existing training job: {existing_job_id}")
             context["ti"].xcom_push(key="training_job_id", value=existing_job_id)
             return existing_job_id
