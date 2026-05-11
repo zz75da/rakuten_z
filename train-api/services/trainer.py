@@ -188,11 +188,17 @@ def build_and_train_model(
 
     inputs = Input(shape=(X.shape[1],))
     x = Dense(512, activation="relu")(inputs)
-    x = Dropout(0.5)(x)
+    x = Dropout(0.3)(x)
+    x = Dense(256, activation="relu")(x)
+    x = Dropout(0.2)(x)
     outputs = Dense(len(label_encoder.classes_), activation="softmax")(x)
 
     model = Model(inputs, outputs)
-    model.compile(optimizer=Adam(), loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+    model.compile(
+        optimizer=Adam(learning_rate=0.001),
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"],
+    )
 
     # Repo bucket client optional
     try:
@@ -231,12 +237,33 @@ def build_and_train_model(
         if train_data is not None:
             _log_datasets(train_data, x_csv_path, y_csv_path, X)
 
+        from sklearn.utils.class_weight import compute_class_weight
+        import numpy as np
+        class_weights = compute_class_weight(
+            class_weight="balanced", classes=np.unique(y_train), y=y_train
+        )
+        class_weight_dict = dict(enumerate(class_weights))
+
+        from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+        callbacks = [
+            EarlyStopping(
+                monitor="val_accuracy", patience=5,
+                restore_best_weights=True, verbose=1,
+            ),
+            ReduceLROnPlateau(
+                monitor="val_loss", factor=0.3,
+                patience=2, min_lr=1e-6, verbose=1,
+            ),
+        ]
+
         history = model.fit(
             X_train, y_train,
             validation_data=(X_val, y_val),
             epochs=epochs,
-            batch_size=batch_size,
-            verbose=1
+            batch_size=128,
+            class_weight=class_weight_dict,
+            callbacks=callbacks,
+            verbose=1,
         )
 
         # Log metrics per epoch

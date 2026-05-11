@@ -57,8 +57,8 @@ Y_CSV = os.getenv("TRAIN_CSV_Y_PATH", "/app/data/Y_train_CVw08PX.csv")
 # --- Request model ---
 class TrainRequest(BaseModel):
     use_dev_images: bool = True
-    epochs: int = 10
-    batch_size: int = 32
+    epochs: int = 30
+    batch_size: int = 128
 
 # --- In-memory job registry ---
 _training_jobs: Dict[str, Dict[str, Any]] = {}

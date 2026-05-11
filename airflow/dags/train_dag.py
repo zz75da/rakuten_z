@@ -93,8 +93,8 @@ def trigger_training(**context):
     if not existing_job_id:
         payload = {
             "use_dev_images": False,
-            "epochs": int(os.environ.get("TRAIN_EPOCHS", 10)),
-            "batch_size": int(os.environ.get("TRAIN_BATCH_SIZE", 32)),
+            "epochs": int(os.environ.get("TRAIN_EPOCHS", 30)),
+            "batch_size": int(os.environ.get("TRAIN_BATCH_SIZE", 128)),
         }
         resp = requests.post(
             f"{TRAIN_API}/train", json=payload,
