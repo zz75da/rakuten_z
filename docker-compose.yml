@@ -232,6 +232,13 @@ services:
       - ./data/artifacts:/app/data/artifacts
       - ./data/feature_cache:/app/data/feature_cache
     command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5002"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     ports:
       - "5002:5002"
     depends_on:

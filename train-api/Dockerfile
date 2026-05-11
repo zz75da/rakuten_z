@@ -1,5 +1,5 @@
-# train-api
-FROM python:3.11-slim
+# train-api  (tensorflow/tensorflow:2.17.0-gpu bundles CUDA 12 + cuDNN — no host install needed)
+FROM tensorflow/tensorflow:2.17.0-gpu
 
 WORKDIR /app
 
