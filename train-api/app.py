@@ -109,12 +109,27 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
         train_data = load_and_merge_data(use_dev_images=use_dev_images)
         os.makedirs("data", exist_ok=True)
 
-        text_features, text_vectorizer = extract_text_features(train_data)
-        np.save("data/text_features.npy", text_features)
+        TEXT_CACHE = "data/text_features.npy"
+        IMAGE_CACHE = "data/image_features.npy"
+        VECTORIZER_CACHE = "data/artifacts/text_vectorizer.pkl"
 
-        image_features_path = extract_image_features(train_data)
-        if not image_features_path:
-            raise RuntimeError("Image feature extraction produced no features")
+        if os.path.exists(TEXT_CACHE) and os.path.exists(VECTORIZER_CACHE):
+            logger.info(f"Using cached text features: {TEXT_CACHE}")
+            with open(VECTORIZER_CACHE, "rb") as f:
+                text_vectorizer = pickle.load(f)
+        else:
+            logger.info("Extracting text features (no cache found)...")
+            text_features, text_vectorizer = extract_text_features(train_data)
+            np.save(TEXT_CACHE, text_features)
+
+        if os.path.exists(IMAGE_CACHE):
+            logger.info(f"Using cached image features: {IMAGE_CACHE} — skipping 37h ResNet50 extraction")
+            image_features_path = IMAGE_CACHE
+        else:
+            logger.info("Extracting image features (no cache found)...")
+            image_features_path = extract_image_features(train_data)
+            if not image_features_path:
+                raise RuntimeError("Image feature extraction produced no features")
 
         X_reduced_path, pca_img_path, pca_text_path = reduce_features(
             text_features_path="data/text_features.npy",
