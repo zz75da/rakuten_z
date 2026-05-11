@@ -18,6 +18,7 @@ COPY requirements.txt /app/requirements.txt
 # Note : Vérifie que httpx est bien écrit dans ton fichier requirements.txt local
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
+    pip install --ignore-installed blinker && \
     pip install -r /app/requirements.txt
 
 # 4. Copie du reste du code
