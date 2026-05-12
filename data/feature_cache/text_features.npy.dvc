@@ -1,0 +1,5 @@
+outs:
+- md5: 35c31e585fbc1d62100bcb507e58909f
+  size: 1698320128
+  hash: md5
+  path: text_features.npy
