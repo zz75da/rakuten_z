@@ -19,13 +19,15 @@ default_args = {
     "retry_delay": timedelta(minutes=1),
 }
 
-TRAIN_API = "http://train-api:5002"
-GATE_API  = "http://gate-api:5000"
+TRAIN_API        = "http://train-api:5002"
+GATE_API         = "http://gate-api:5000"
+MINILM_ENCODER   = "http://minilm-encoder:5004"
 
 TRAINING_MAX_WAIT = int(os.environ.get("TRAINING_MAX_WAIT_SECONDS", 30 * 3600))
 
-# Airflow Variable key used to persist job_id across DAG runs
-_JOB_ID_VAR = "rakuten_current_training_job_id"
+# Airflow Variable keys — one per training job so they don't collide
+_CV_JOB_ID_VAR     = "rakuten_cv_training_job_id"
+_MINILM_JOB_ID_VAR = "rakuten_minilm_training_job_id"
 
 
 # --- Helpers ---
@@ -63,36 +65,14 @@ def check_dataset_stats(**context):
     return shape
 
 
-def check_minilm_cache(**context):
+def _trigger_training_job(job_var_key, text_encoder, context):
     """
-    If text_encoder=minilm, verify the MiniLM feature cache exists.
-    Fails fast with a clear instruction if it doesn't.
-    """
-    text_encoder = context["params"].get("text_encoder", "countvectorizer")
-    if text_encoder != "minilm":
-        print(f"text_encoder={text_encoder} — skipping MiniLM cache check.")
-        return
-    cache_path = "/opt/airflow/data/feature_cache/text_features_minilm.npy"
-    if os.path.exists(cache_path):
-        size_mb = os.path.getsize(cache_path) / 1024**2
-        print(f"MiniLM cache found ({size_mb:.0f} MB): {cache_path}")
-    else:
-        raise AirflowException(
-            "MiniLM feature cache not found. "
-            "Run this command first, wait for it to finish, then re-trigger the DAG:\n"
-            "  docker-compose --profile minilm run --rm minilm-encoder"
-        )
-
-
-def trigger_training(**context):
-    """
-    Triggers a new training job or resumes an existing one.
-    Completes in seconds — the sensor handles the long wait.
+    Shared logic for triggering a training job (CV or MiniLM).
+    Resumes an existing job if one is stored in the Variable.
     """
     token = _fresh_token()
-    print("Fresh token obtained.")
 
-    existing_job_id = Variable.get(_JOB_ID_VAR, default_var=None)
+    existing_job_id = Variable.get(job_var_key, default_var=None)
     if existing_job_id:
         try:
             probe = requests.get(
@@ -101,59 +81,72 @@ def trigger_training(**context):
             )
             if probe.status_code == 404:
                 print(f"Job {existing_job_id} gone (train-api restarted). Starting fresh.")
-                Variable.delete(_JOB_ID_VAR)
+                Variable.delete(job_var_key)
                 existing_job_id = None
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
-            # train-api under heavy load (PCA/training) — assume job still alive
-            print(f"Probe timed out for job {existing_job_id} — assuming still running.")
+            print(f"Probe timed out for {existing_job_id} — assuming still running.")
         if existing_job_id:
-            print(f"Resuming existing training job: {existing_job_id}")
-            context["ti"].xcom_push(key="training_job_id", value=existing_job_id)
+            print(f"Resuming existing {text_encoder} job: {existing_job_id}")
+            context["ti"].xcom_push(key=f"{text_encoder}_job_id", value=existing_job_id)
             return existing_job_id
 
-    if not existing_job_id:
-        text_encoder = context["params"].get("text_encoder", "countvectorizer")
-        payload = {
-            "use_dev_images": False,
-            "epochs": int(os.environ.get("TRAIN_EPOCHS", 30)),
-            "batch_size": int(os.environ.get("TRAIN_BATCH_SIZE", 128)),
-            "text_encoder": text_encoder,
-        }
+    payload = {
+        "use_dev_images": False,
+        "epochs": int(os.environ.get("TRAIN_EPOCHS", 30)),
+        "batch_size": int(os.environ.get("TRAIN_BATCH_SIZE", 128)),
+        "text_encoder": text_encoder,
+    }
+    resp = requests.post(
+        f"{TRAIN_API}/train", json=payload,
+        headers=_auth_headers(token), timeout=30,
+    )
+    if resp.status_code == 401:
+        token = _fresh_token()
         resp = requests.post(
             f"{TRAIN_API}/train", json=payload,
             headers=_auth_headers(token), timeout=30,
         )
-        if resp.status_code == 401:
-            token = _fresh_token()
-            resp = requests.post(
-                f"{TRAIN_API}/train", json=payload,
-                headers=_auth_headers(token), timeout=30,
-            )
-        if not resp.ok:
-            raise Exception(
-                f"POST /train returned HTTP {resp.status_code}. Body: {resp.text[:2000]}"
-            )
-        job_id = resp.json()["job_id"]
-        print(f"Training job started: {job_id}")
-        Variable.set(_JOB_ID_VAR, job_id)
-        context["ti"].xcom_push(key="training_job_id", value=job_id)
-        return job_id
+    if not resp.ok:
+        raise Exception(f"POST /train returned HTTP {resp.status_code}. Body: {resp.text[:2000]}")
+    job_id = resp.json()["job_id"]
+    print(f"{text_encoder} training job started: {job_id}")
+    Variable.set(job_var_key, job_id)
+    context["ti"].xcom_push(key=f"{text_encoder}_job_id", value=job_id)
+    return job_id
+
+
+def trigger_cv_training(**context):
+    return _trigger_training_job(_CV_JOB_ID_VAR, "countvectorizer", context)
+
+
+def trigger_minilm_encoding(**context):
+    """Call POST /encode on the minilm-encoder service."""
+    resp = requests.post(f"{MINILM_ENCODER}/encode", timeout=30)
+    data = resp.json()
+    print(f"MiniLM encoder: {data}")
+    if data.get("status") == "error":
+        raise AirflowException(f"MiniLM encoding error: {data.get('message')}")
+
+
+def trigger_minilm_training(**context):
+    return _trigger_training_job(_MINILM_JOB_ID_VAR, "minilm", context)
 
 
 class TrainingCompleteSensor(BaseSensorOperator):
     """
     Polls /train/status/{job_id} using mode='reschedule'.
-
-    Each poke() call is a short-lived process (~2 seconds): the scheduler
-    relaunches it every poke_interval. No long-running process, no heartbeat
-    failures, no zombie detection — safe for 24 h+ training jobs.
+    job_var_key selects which Airflow Variable holds the active job ID.
     """
 
+    def __init__(self, job_var_key, **kwargs):
+        super().__init__(**kwargs)
+        self.job_var_key = job_var_key
+
     def poke(self, context):
-        job_id = Variable.get(_JOB_ID_VAR, default_var=None)
+        job_id = Variable.get(self.job_var_key, default_var=None)
         if not job_id:
             raise AirflowException(
-                "No training job_id in Variable — re-trigger the DAG from scratch"
+                f"No training job_id in Variable '{self.job_var_key}' — re-trigger the DAG"
             )
 
         token = _fresh_token()
@@ -169,39 +162,60 @@ class TrainingCompleteSensor(BaseSensorOperator):
                     headers=_auth_headers(token), timeout=120,
                 )
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
-            # train-api is under heavy load (PCA/training) — treat as transient
             print(f"Status check timed out/unreachable (will retry in 5 min): {exc}")
             return False
 
         if resp.status_code == 404:
-            Variable.delete(_JOB_ID_VAR)
+            Variable.delete(self.job_var_key)
             raise AirflowException(
                 f"Job {job_id} not found (train-api restarted). "
                 "Clear the DAG run and re-trigger to start a new job."
             )
         resp.raise_for_status()
 
-        job = resp.json()
+        job   = resp.json()
         status = job.get("status")
-        print(f"Job {job_id}: status={status}")
+        print(f"Job {job_id} [{self.job_var_key}]: status={status}")
 
         if status == "success":
-            Variable.delete(_JOB_ID_VAR)
+            Variable.delete(self.job_var_key)
             context["ti"].xcom_push(key="training_result", value=job)
             return True
         if status == "failed":
-            Variable.delete(_JOB_ID_VAR)
+            Variable.delete(self.job_var_key)
             raise AirflowException(f"Training job {job_id} failed: {job.get('error')}")
-        return False  # running — reschedule
+        return False
+
+
+class MiniLMEncodingSensor(BaseSensorOperator):
+    """
+    Polls GET /status on the minilm-encoder service until encoding is done.
+    """
+
+    def poke(self, context):
+        try:
+            resp = requests.get(f"{MINILM_ENCODER}/status", timeout=30)
+            data   = resp.json()
+            status = data.get("status")
+            print(f"MiniLM encoder status={status}: {data.get('message', '')}")
+            if status == "done":
+                return True
+            if status == "error":
+                raise AirflowException(f"MiniLM encoding failed: {data.get('message')}")
+            return False
+        except AirflowException:
+            raise
+        except Exception as exc:
+            print(f"MiniLM status check failed (retrying): {exc}")
+            return False
 
 
 def get_model_version(**context):
-    """Retrieve the latest model version from DagsHub MLflow registry."""
     try:
-        mlflow_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
+        mlflow_uri   = os.environ.get("MLFLOW_TRACKING_URI", "")
         dagshub_user = os.environ.get("DAGSHUB_USER", "")
         dagshub_token = os.environ.get("DAGSHUB_TOKEN", "")
-        model_name = os.environ.get("MLFLOW_MODEL_NAME", "rakuten_multimodal")
+        model_name   = os.environ.get("MLFLOW_MODEL_NAME", "rakuten_multimodal")
 
         if not mlflow_uri or not dagshub_user:
             print("MLFLOW_TRACKING_URI / DAGSHUB_USER not set — skipping version check")
@@ -232,9 +246,9 @@ def get_model_version(**context):
 
 
 def push_training_metrics(**context):
-    """Push real training metrics from the completed job to Prometheus Pushgateway."""
-    result = context["ti"].xcom_pull(task_ids="wait_for_training", key="training_result") or {}
-    final = result.get("final_metrics", {})
+    """Push CV training metrics to Prometheus Pushgateway."""
+    result = context["ti"].xcom_pull(task_ids="wait_for_cv_training", key="training_result") or {}
+    final  = result.get("final_metrics", {})
     history = result.get("history", {})
 
     accuracy     = final.get("accuracy", 0)
@@ -243,7 +257,7 @@ def push_training_metrics(**context):
     val_loss     = history.get("val_loss", [0])[-1]
     epochs_done  = len(history.get("loss", []))
 
-    started_at = result.get("started_at", "")
+    started_at   = result.get("started_at", "")
     completed_at = result.get("completed_at", "")
     if started_at and completed_at:
         from dateutil import parser as dtparser
@@ -252,54 +266,52 @@ def push_training_metrics(**context):
         elapsed = 0
 
     metrics = {
-        "training_accuracy": accuracy,
-        "validation_accuracy": val_accuracy,
-        "training_loss": loss,
-        "validation_loss": val_loss,
-        "epochs_completed": epochs_done,
-        "training_time_seconds": elapsed,
+        "training_accuracy":       accuracy,
+        "validation_accuracy":     val_accuracy,
+        "training_loss":           loss,
+        "validation_loss":         val_loss,
+        "epochs_completed":        epochs_done,
+        "training_time_seconds":   elapsed,
     }
     metrics_text = "\n".join(f"{k} {v}" for k, v in metrics.items())
-
     try:
         resp = requests.post(
             "http://pushgateway:9091/metrics/job/rakuten_mlops",
-            data=metrics_text,
-            timeout=10,
+            data=metrics_text, timeout=10,
         )
-        print(f"Metrics pushed (HTTP {resp.status_code}): {metrics}")
+        print(f"CV metrics pushed (HTTP {resp.status_code}): {metrics}")
     except Exception as exc:
         print(f"Prometheus push failed (non-blocking): {exc}")
 
 
 def evaluate_from_result(**context):
-    """Log final evaluation metrics from training result stored in XCom."""
-    result = context["ti"].xcom_pull(task_ids="wait_for_training", key="training_result") or {}
-    final = result.get("final_metrics", {})
-    history = result.get("history", {})
-
-    print("=== Model Evaluation Results ===")
-    print(f"Final accuracy : {final.get('accuracy', 'N/A'):.4f}" if final.get("accuracy") else "accuracy: N/A")
-    val_accs = history.get("val_accuracy", [])
-    if val_accs:
-        print(f"Best val_accuracy: {max(val_accs):.4f}  (last: {val_accs[-1]:.4f})")
-    mlflow_run = result.get("mlflow_run_id", "N/A")
-    print(f"MLflow run id  : {mlflow_run}")
-    return final
+    """Log evaluation results for both CV and MiniLM training runs."""
+    for task_id, label in [
+        ("wait_for_cv_training",    "CountVectorizer"),
+        ("wait_for_minilm_training", "MiniLM"),
+    ]:
+        result = context["ti"].xcom_pull(task_ids=task_id, key="training_result") or {}
+        final   = result.get("final_metrics", {})
+        history = result.get("history", {})
+        print(f"\n=== {label} Model Results ===")
+        if final.get("accuracy"):
+            print(f"  Final accuracy   : {final['accuracy']:.4f}")
+        val_accs = history.get("val_accuracy", [])
+        if val_accs:
+            print(f"  Best val_accuracy: {max(val_accs):.4f}  (last: {val_accs[-1]:.4f})")
+        print(f"  MLflow run id    : {result.get('mlflow_run_id', 'N/A')}")
+    return {}
 
 
 # --- DAG Definition ---
 with DAG(
     dag_id="rakuten_multimodal_pipeline_v5_1",
     default_args=default_args,
-    description="Train multimodal model (async) with MLflow & Prometheus",
+    description="Sequential CV + MiniLM dual-model training with MLflow & Prometheus",
     schedule_interval=None,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=["mlops", "training", "production", "monitoring"],
-    params={
-        "text_encoder": "countvectorizer",  # "countvectorizer" | "minilm"
-    },
 ) as dag:
 
     check_data = BashOperator(
@@ -320,9 +332,7 @@ with DAG(
         endpoint="/health",
         method="GET",
         response_check=lambda response: response.status_code == 200,
-        timeout=300,
-        poke_interval=15,
-        mode="reschedule",
+        timeout=300, poke_interval=15, mode="reschedule",
     )
 
     wait_for_train_api = HttpSensor(
@@ -331,9 +341,7 @@ with DAG(
         endpoint="/health",
         method="GET",
         response_check=lambda response: response.status_code == 200,
-        timeout=300,
-        poke_interval=15,
-        mode="reschedule",
+        timeout=300, poke_interval=15, mode="reschedule",
     )
 
     wait_for_predict_api = HttpSensor(
@@ -342,9 +350,16 @@ with DAG(
         endpoint="/health",
         method="GET",
         response_check=lambda response: response.status_code == 200,
-        timeout=300,
-        poke_interval=15,
-        mode="reschedule",
+        timeout=300, poke_interval=15, mode="reschedule",
+    )
+
+    wait_for_minilm_encoder = HttpSensor(
+        task_id="wait_for_minilm_encoder",
+        http_conn_id="minilm_encoder",
+        endpoint="/health",
+        method="GET",
+        response_check=lambda response: response.status_code == 200,
+        timeout=300, poke_interval=15, mode="reschedule",
     )
 
     dataset_stats = PythonOperator(
@@ -359,29 +374,54 @@ with DAG(
         provide_context=True,
     )
 
-    check_minilm = PythonOperator(
-        task_id="check_minilm_cache",
-        python_callable=check_minilm_cache,
+    # ── 1. CV training ────────────────────────────────────────────────────────
+    trigger_cv = PythonOperator(
+        task_id="trigger_cv_training",
+        python_callable=trigger_cv_training,
         provide_context=True,
     )
 
-    # Triggers the job and returns in seconds.
-    trigger_training_task = PythonOperator(
-        task_id="trigger_training",
-        python_callable=trigger_training,
-        provide_context=True,
-    )
-
-    # Polls every 5 minutes using mode='reschedule': each poke is a ~2-second
-    # process. No long-running task, no heartbeat, no zombie detection issues.
-    wait_for_training = TrainingCompleteSensor(
-        task_id="wait_for_training",
+    wait_for_cv = TrainingCompleteSensor(
+        task_id="wait_for_cv_training",
+        job_var_key=_CV_JOB_ID_VAR,
         mode="reschedule",
-        poke_interval=300,          # poll every 5 minutes
-        timeout=TRAINING_MAX_WAIT,  # give up after 30 h
+        poke_interval=300,
+        timeout=TRAINING_MAX_WAIT,
         soft_fail=False,
     )
 
+    # ── 2. MiniLM encoding (model unloads when done, frees RAM for training) ──
+    start_encoding = PythonOperator(
+        task_id="trigger_minilm_encoding",
+        python_callable=trigger_minilm_encoding,
+        provide_context=True,
+    )
+
+    wait_for_encoding = MiniLMEncodingSensor(
+        task_id="wait_for_minilm_encoding",
+        mode="reschedule",
+        poke_interval=60,           # poll every minute (encoding takes ~30 min)
+        timeout=4 * 3600,
+        soft_fail=False,
+    )
+
+    # ── 3. MiniLM training ────────────────────────────────────────────────────
+    trigger_minilm = PythonOperator(
+        task_id="trigger_minilm_training",
+        python_callable=trigger_minilm_training,
+        provide_context=True,
+    )
+
+    wait_for_minilm = TrainingCompleteSensor(
+        task_id="wait_for_minilm_training",
+        job_var_key=_MINILM_JOB_ID_VAR,
+        mode="reschedule",
+        poke_interval=300,
+        timeout=TRAINING_MAX_WAIT,
+        soft_fail=False,
+    )
+
+    # ── 4. Post-processing ────────────────────────────────────────────────────
     get_version = PythonOperator(
         task_id="get_model_version",
         python_callable=get_model_version,
@@ -421,8 +461,10 @@ with DAG(
     success_message = BashOperator(
         task_id="success_message",
         bash_command=(
-            "echo '=== MLOps Pipeline Completed ===' && "
-            "echo 'Grafana : http://localhost:3000' && "
+            "echo '=== MLOps Pipeline Completed — Both Models Trained ===' && "
+            "echo 'CV model    : artifacts/neural_network_model.keras' && "
+            "echo 'MiniLM model: artifacts/neural_network_model_minilm.keras' && "
+            "echo 'Grafana  : http://localhost:3000' && "
             "echo 'Streamlit: http://localhost:8501' && "
             "echo 'Pipeline executed: {{ ds }}'"
         ),
@@ -431,12 +473,15 @@ with DAG(
     # --- Task Dependencies ---
     (
         check_data
-        >> [wait_for_gate_api, wait_for_train_api, wait_for_predict_api]
+        >> [wait_for_gate_api, wait_for_train_api, wait_for_predict_api, wait_for_minilm_encoder]
         >> dataset_stats
         >> get_token
-        >> check_minilm
-        >> trigger_training_task
-        >> wait_for_training
+        >> trigger_cv
+        >> wait_for_cv
+        >> start_encoding
+        >> wait_for_encoding
+        >> trigger_minilm
+        >> wait_for_minilm
         >> [get_version, push_metrics]
         >> eval_results
         >> verify_mlflow
