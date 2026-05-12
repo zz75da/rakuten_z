@@ -93,6 +93,7 @@ services:
       AIRFLOW__CORE__PLUGINS_FOLDER: /opt/airflow/plugins
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres:5432/airflow
       AIRFLOW_CONN_TRAIN_API: http://train-api:5002
+      AIRFLOW_CONN_MINILM_ENCODER: http://minilm-encoder:5004
       AIRFLOW_CONN_GATE_API: http://gate-api:5000
       AIRFLOW_CONN_PREDICT_API: http://predict-api:5003
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /tmp/airflow/logs
@@ -212,6 +213,7 @@ services:
       # Airflow connections
       AIRFLOW_CONN_GATE_API: http://gate-api:5000
       AIRFLOW_CONN_TRAIN_API: http://train-api:5002
+      AIRFLOW_CONN_MINILM_ENCODER: http://minilm-encoder:5004
 
       # DagsHub / MLflow
       # AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -436,17 +438,18 @@ services:
     restart: unless-stopped
 
 
-  # === minilm-encoder (one-shot, profile: minilm) ===
-  # Encodes 84k texts with MiniLM and saves text_features_minilm.npy.
-  # Run once before a MiniLM training DAG run:
-  #   docker-compose --profile minilm run --rm minilm-encoder
+  # === minilm-encoder ===
+  # Lightweight FastAPI service (~50 MB idle).
+  # Loads SentenceTransformer only when POST /encode is called,
+  # then unloads the model after saving text_features_minilm.npy.
   minilm-encoder:
-    profiles: ["minilm"]
     build:
       context: ./minilm-encoder
       dockerfile: Dockerfile
     container_name: minilm-encoder
-    restart: "no"
+    restart: unless-stopped
+    ports:
+      - "5004:5004"
     environment:
       - TRAIN_CSV_X_PATH=/app/data/X_train_update.csv
       - MINILM_CACHE_PATH=/app/data/feature_cache/text_features_minilm.npy
@@ -456,6 +459,12 @@ services:
       - ./data/feature_cache:/app/data/feature_cache
     networks:
       - rakuten_mlops_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5004/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
 
 
 networks:
