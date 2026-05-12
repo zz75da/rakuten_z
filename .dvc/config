@@ -3,3 +3,5 @@
 ['remote "origin"']
     url = s3://dvc
     endpointurl = https://dagshub.com/zz75da/rakuten_z.s3
+['remote "dagshub"']
+    url = https://dagshub.com/zz75da/rakuten_z.dvc
