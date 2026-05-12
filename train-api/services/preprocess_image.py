@@ -11,7 +11,7 @@ from tensorflow.keras.applications.resnet50 import preprocess_input
 # === Constants ===
 IMAGE_SIZE = (224, 224)
 BATCH_SIZE = 32        # safe for standard RAM
-SAVE_FILE = "data/image_features.npy"
+SAVE_FILE = "data/feature_cache/image_features.npy"
 
 # === Logging ===
 logging.basicConfig(level=logging.INFO,

@@ -11,7 +11,7 @@ import psutil
 
 # === Constants ===
 TEXT_FEATURES_LIMIT = 5000
-TEXT_FEATURES_FILE = "data/text_features.npy"
+TEXT_FEATURES_FILE = "data/feature_cache/text_features.npy"
 TEXT_VECTORIZER_FILE = "data/text_vectorizer.pkl"
 BATCH_SIZE = 5000  # adjust based on memory
 N_CORES = 6  # your Core i7
@@ -89,7 +89,7 @@ if __name__ == "__main__":
     features, vectorizer = extract_text_features(df)
 
     logging.info("Saving outputs...")
-    os.makedirs("data", exist_ok=True)
+    os.makedirs("data/feature_cache", exist_ok=True)
     os.makedirs("artifacts", exist_ok=True)
     np.save(TEXT_FEATURES_FILE, features)
     with open(TEXT_VECTORIZER_FILE, "wb") as f:

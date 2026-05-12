@@ -74,3 +74,4 @@ logs/
 
 # === Misc project-specific ===
 predict-api/deployment/
+monitoring/alertmanager.yml

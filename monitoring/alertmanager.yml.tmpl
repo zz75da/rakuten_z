@@ -1,0 +1,60 @@
+global:
+  smtp_smarthost: 'smtp-relay.brevo.com:587'
+  smtp_from: 'aaf1e2001@smtp-brevo.com'
+  smtp_auth_username: 'aaf1e2001@smtp-brevo.com'
+  smtp_auth_password: '__BREVO_SMTP_KEY__'
+  smtp_require_tls: true
+  resolve_timeout: 5m
+
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+route:
+  receiver: 'email-critical'
+  group_by: ['service', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: 'email-critical'
+      match:
+        severity: 'critical'
+    - receiver: 'email-warning'
+      match:
+        severity: 'warning'
+
+receivers:
+  - name: 'email-critical'
+    email_configs:
+      - to: '__ALERT_EMAIL_TO__'
+        send_resolved: true
+        headers:
+          Subject: '[CRITICAL] {{ .CommonLabels.alertname }} - {{ .CommonLabels.service }}'
+        html: |-
+          <h2>CRITICAL ALERT</h2>
+          <p><strong>Service:</strong> {{ .CommonLabels.service }}</p>
+          <p><strong>Alert:</strong> {{ .CommonLabels.alertname }}</p>
+          <p><strong>Severity:</strong> {{ .CommonLabels.severity }}</p>
+          <p><strong>Description:</strong> {{ .CommonAnnotations.description }}</p>
+          <p><strong>Time:</strong> {{ .StartsAt }}</p>
+
+  - name: 'email-warning'
+    email_configs:
+      - to: '__ALERT_EMAIL_TO__'
+        send_resolved: true
+        headers:
+          Subject: '[WARNING] {{ .CommonLabels.alertname }} - {{ .CommonLabels.service }}'
+        html: |-
+          <h2>WARNING ALERT</h2>
+          <p><strong>Service:</strong> {{ .CommonLabels.service }}</p>
+          <p><strong>Alert:</strong> {{ .CommonLabels.alertname }}</p>
+          <p><strong>Severity:</strong> {{ .CommonLabels.severity }}</p>
+          <p><strong>Description:</strong> {{ .CommonAnnotations.description }}</p>
+          <p><strong>Time:</strong> {{ .StartsAt }}</p>
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['service']

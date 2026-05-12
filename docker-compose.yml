@@ -411,12 +411,21 @@ services:
     container_name: alertmanager
     ports:
       - "9093:9093"
+    environment:
+      - BREVO_SMTP_KEY=${BREVO_SMTP_KEY}
+      - ALERT_EMAIL_TO=${ALERT_EMAIL_TO}
     volumes:
-      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - ./monitoring/alertmanager.yml.tmpl:/etc/alertmanager/alertmanager.yml.tmpl
       - ./monitoring/alertmanager-templates:/etc/alertmanager/templates
-    command:
-        - '--config.file=/etc/alertmanager/alertmanager.yml'
-        - '--storage.path=/alertmanager'
+      - alertmanager_data:/alertmanager
+    entrypoint:
+      - sh
+      - -c
+      - |
+        sed -e "s|__BREVO_SMTP_KEY__|$$BREVO_SMTP_KEY|g" \
+            -e "s|__ALERT_EMAIL_TO__|$$ALERT_EMAIL_TO|g" \
+            /etc/alertmanager/alertmanager.yml.tmpl > /tmp/alertmanager.yml &&
+        /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
     networks:
       - rakuten_mlops_network
     restart: unless-stopped
@@ -431,6 +440,7 @@ volumes:
   minio_data:
   grafana-storage:
   prometheus_data:
+  alertmanager_data:
   feature_cache:
     driver: local
   artifacts:
