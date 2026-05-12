@@ -1,0 +1,5 @@
+outs:
+- md5: a90eb221cca202dcdea7e284c7f3c026
+  size: 695632000
+  hash: md5
+  path: image_features.npy
