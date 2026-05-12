@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_client import Gauge, Counter
 from services.data_loader import load_and_merge_data
-from services.preprocess_text import extract_text_features
+from services.preprocess_text import extract_text_features, extract_text_features_minilm
 from services.preprocess_image import extract_image_features
 from services.pca_reducer import reduce_features
 from services.trainer import build_and_train_model, evaluate_model
@@ -60,6 +60,7 @@ class TrainRequest(BaseModel):
     epochs: int = 30
     batch_size: int = 128
     use_cache: bool = True
+    text_encoder: str = "countvectorizer"  # "countvectorizer" | "minilm"
 
 # --- In-memory job registry ---
 _training_jobs: Dict[str, Dict[str, Any]] = {}
@@ -99,7 +100,7 @@ async def verify_jwt_token(authorization: str = Header(...)):
         raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")
 
 
-def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch_size: int, use_cache: bool = True):
+def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch_size: int, use_cache: bool = True, text_encoder: str = "countvectorizer"):
     """Execute the full training pipeline in a background thread."""
     mode = "DEV" if use_dev_images else "FULL TRAIN"
     logger.info(f"[job={job_id}] Training pipeline started (mode={mode})")
@@ -110,24 +111,41 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
         train_data = load_and_merge_data(use_dev_images=use_dev_images)
         os.makedirs("data/feature_cache", exist_ok=True)
 
-        TEXT_CACHE = "data/feature_cache/text_features.npy"
         IMAGE_CACHE = "data/feature_cache/image_features.npy"
-        VECTORIZER_CACHE = "data/artifacts/text_vectorizer.pkl"
 
-        if use_cache and os.path.exists(TEXT_CACHE) and os.path.exists(VECTORIZER_CACHE):
-            logger.info(f"Using cached text features: {TEXT_CACHE}")
-            with open(VECTORIZER_CACHE, "rb") as f:
-                text_vectorizer = pickle.load(f)
+        # --- Text feature extraction ---
+        if text_encoder == "minilm":
+            TEXT_CACHE = "data/feature_cache/text_features_minilm.npy"
+            if use_cache and os.path.exists(TEXT_CACHE):
+                logger.info(f"Using cached MiniLM text features: {TEXT_CACHE}")
+                text_vectorizer = None  # encoder rebuilt below for artifact saving
+            else:
+                logger.info("Extracting MiniLM text features...")
+                text_features, text_vectorizer = extract_text_features_minilm(train_data)
+                np.save(TEXT_CACHE, text_features)
         else:
-            logger.info("Extracting text features (no cache found)..." if not use_cache or not os.path.exists(TEXT_CACHE) else "Extracting text features (use_cache=False)...")
-            text_features, text_vectorizer = extract_text_features(train_data)
-            np.save(TEXT_CACHE, text_features)
+            TEXT_CACHE = "data/feature_cache/text_features.npy"
+            VECTORIZER_CACHE = "data/artifacts/text_vectorizer.pkl"
+            if use_cache and os.path.exists(TEXT_CACHE) and os.path.exists(VECTORIZER_CACHE):
+                logger.info(f"Using cached text features: {TEXT_CACHE}")
+                with open(VECTORIZER_CACHE, "rb") as f:
+                    text_vectorizer = pickle.load(f)
+            else:
+                logger.info("Extracting text features...")
+                text_features, text_vectorizer = extract_text_features(train_data)
+                np.save(TEXT_CACHE, text_features)
 
+        # Re-fit MiniLM encoder when cache was used (needed for artifact saving)
+        if text_encoder == "minilm" and text_vectorizer is None:
+            logger.info("Re-encoding with MiniLM to obtain encoder for artifact saving...")
+            _, text_vectorizer = extract_text_features_minilm(train_data)
+
+        # --- Image feature extraction ---
         if use_cache and os.path.exists(IMAGE_CACHE):
             logger.info(f"Using cached image features: {IMAGE_CACHE} — skipping 37h ResNet50 extraction")
             image_features_path = IMAGE_CACHE
         else:
-            logger.info("Extracting image features (no cache found)..." if not use_cache or not os.path.exists(IMAGE_CACHE) else "Extracting image features (use_cache=False)...")
+            logger.info("Extracting image features...")
             image_features_path = extract_image_features(train_data)
             if not image_features_path:
                 raise RuntimeError("Image feature extraction produced no features")
@@ -135,12 +153,15 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
         X_reduced_path, pca_img_path, pca_text_path = reduce_features(
             text_features_path=TEXT_CACHE,
             image_features_path=IMAGE_CACHE,
+            text_encoder=text_encoder,
         )
         X_reduced = np.load(X_reduced_path)
         with open(pca_img_path, "rb") as f:
             pca_img = pickle.load(f)
-        with open(pca_text_path, "rb") as f:
-            pca_text = pickle.load(f)
+        pca_text = None
+        if pca_text_path and os.path.exists(pca_text_path):
+            with open(pca_text_path, "rb") as f:
+                pca_text = pickle.load(f)
         pca_models = {"image": pca_img, "text": pca_text}
 
         y = train_data["prdtypecode"]
@@ -157,8 +178,7 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
             )
         )
 
-        # Always overwrite so predict-api picks up the freshest artifacts
-        save_artifacts(model, text_vectorizer, pca_models, label_encoder, skip_existing=False)
+        save_artifacts(model, text_vectorizer, pca_models, label_encoder, skip_existing=False, text_encoder=text_encoder)
 
         # Notify predict-api to reload artifacts from disk
         predict_api_url = os.getenv("PREDICT_API_URL", "http://predict-api:5003")
@@ -242,7 +262,7 @@ async def train_model(
 
     thread = threading.Thread(
         target=_run_training_pipeline,
-        args=(job_id, req.use_dev_images, req.epochs, req.batch_size, req.use_cache),
+        args=(job_id, req.use_dev_images, req.epochs, req.batch_size, req.use_cache, req.text_encoder),
         daemon=True,
     )
     thread.start()

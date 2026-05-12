@@ -36,7 +36,8 @@ def reduce_features(
     n_components_img=300,
     target_dim=5300,
     save_dir="data",
-    initial_batch_size=1024
+    initial_batch_size=1024,
+    text_encoder="countvectorizer",
 ):
     os.makedirs(save_dir, exist_ok=True)
     
@@ -81,40 +82,49 @@ def reduce_features(
     logging.info(f"Image features reduced shape: {image_features_reduced.shape}")
     log_memory_usage("After image PCA transform")
 
-    # --- Incremental PCA for text ---
-    logging.info("Starting Incremental PCA for text")
-    n_text_components = min(
-        target_dim - image_features_reduced.shape[1],
-        initial_batch_size,
-        text_features.shape[0],
-        text_features.shape[1],
-    )
-    pca_text = IncrementalPCA(n_components=n_text_components)
-    batch_size = initial_batch_size
-    total_samples = text_features.shape[0]
+    # --- Text features: PCA for CountVectorizer, pass-through for MiniLM ---
+    pca_text = None
+    pca_text_path = None
 
-    start_idx = 0
-    while start_idx < total_samples:
-        end_idx = min(start_idx + batch_size, total_samples)
-        remaining = total_samples - end_idx
-        if 0 < remaining < n_text_components:
-            end_idx = total_samples
-        batch = text_features[start_idx:end_idx]
-        try:
-            pca_text.partial_fit(batch)
-            if start_idx % (batch_size*5) == 0:
-                log_memory_usage(f"After text batch {start_idx}-{end_idx}")
-            start_idx = end_idx
-        except MemoryError:
-            batch_size = max(batch_size // 2, 16)
-            logging.warning(f"MemoryError: reducing text batch size to {batch_size}")
-            if batch_size < 16:
-                raise MemoryError("Cannot fit even a single text batch into memory")
+    if text_encoder == "minilm":
+        # MiniLM embeddings are already compact (384-dim) — no PCA needed
+        logging.info("MiniLM encoder: skipping text PCA, using embeddings directly")
+        text_features_reduced = text_features
+        logging.info(f"MiniLM text features shape: {text_features_reduced.shape}")
+    else:
+        logging.info("Starting Incremental PCA for text")
+        n_text_components = min(
+            target_dim - image_features_reduced.shape[1],
+            initial_batch_size,
+            text_features.shape[0],
+            text_features.shape[1],
+        )
+        pca_text = IncrementalPCA(n_components=n_text_components)
+        batch_size = initial_batch_size
+        total_samples = text_features.shape[0]
 
-    logging.info("Transforming text features using PCA")
-    text_features_reduced = pca_text.transform(text_features)
-    logging.info(f"Text features reduced shape: {text_features_reduced.shape}")
-    log_memory_usage("After text PCA transform")
+        start_idx = 0
+        while start_idx < total_samples:
+            end_idx = min(start_idx + batch_size, total_samples)
+            remaining = total_samples - end_idx
+            if 0 < remaining < n_text_components:
+                end_idx = total_samples
+            batch = text_features[start_idx:end_idx]
+            try:
+                pca_text.partial_fit(batch)
+                if start_idx % (batch_size * 5) == 0:
+                    log_memory_usage(f"After text batch {start_idx}-{end_idx}")
+                start_idx = end_idx
+            except MemoryError:
+                batch_size = max(batch_size // 2, 16)
+                logging.warning(f"MemoryError: reducing text batch size to {batch_size}")
+                if batch_size < 16:
+                    raise MemoryError("Cannot fit even a single text batch into memory")
+
+        logging.info("Transforming text features using PCA")
+        text_features_reduced = pca_text.transform(text_features)
+        logging.info(f"Text features reduced shape: {text_features_reduced.shape}")
+        log_memory_usage("After text PCA transform")
 
     # --- Combine features ---
     logging.info("Combining text and image features")
@@ -123,24 +133,21 @@ def reduce_features(
     log_memory_usage("After combining features")
 
     # --- Save outputs ---
-    # FIX 1: Use consistent save_dir parameter for all outputs
-    X_reduced_path = os.path.join(save_dir, "X_reduced.npy")  # Changed to use save_dir parameter
+    X_reduced_path = os.path.join(save_dir, "X_reduced.npy")
     pca_img_path = os.path.join(save_dir, "pca_image.pkl")
-    pca_text_path = os.path.join(save_dir, "pca_text.pkl")
 
     np.save(X_reduced_path, X_reduced)
     with open(pca_img_path, "wb") as f:
-        pickle.dump(pca_img, f)  # Variable is pca_img, not pca_image
-    with open(pca_text_path, "wb") as f:
-        pickle.dump(pca_text, f)
+        pickle.dump(pca_img, f)
 
-    # FIX 2: REMOVE THESE DUPLICATE LINES - they're causing the NameError
-    # pickle.dump(pca_image, open("artifacts/pca_image.pkl", "wb"))  # ❌ DUPLICATE & WRONG VARIABLE NAME
-    # pickle.dump(pca_text, open("artifacts/pca_text.pkl", "wb"))   # ❌ DUPLICATE
+    if pca_text is not None:
+        pca_text_path = os.path.join(save_dir, "pca_text.pkl")
+        with open(pca_text_path, "wb") as f:
+            pickle.dump(pca_text, f)
+        logging.info(f"Saved PCA text model -> {pca_text_path}")
 
     logging.info(f"Saved X_reduced -> {X_reduced_path}")
     logging.info(f"Saved PCA image model -> {pca_img_path}")
-    logging.info(f"Saved PCA text model -> {pca_text_path}")
 
     return X_reduced_path, pca_img_path, pca_text_path
 

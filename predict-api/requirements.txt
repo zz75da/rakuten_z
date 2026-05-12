@@ -31,3 +31,6 @@ dagshub==0.7.0
 prometheus-client==0.20.0
 prometheus-fastapi-instrumentator
 
+# === Text encoders ===
+sentence-transformers>=2.7.0
+
