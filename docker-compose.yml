@@ -204,6 +204,11 @@ services:
       DAGSHUB_CLIENT_TOKENS_CACHE: /root/.dagshub_tokens
       LOG_LEVEL: INFO
 
+      # Force CPU — host CUDA driver too old for TF GPU runtime
+      CUDA_VISIBLE_DEVICES: ""
+      # Limit glibc memory arenas to prevent double-free with numpy/TF/torch
+      MALLOC_ARENA_MAX: "2"
+
       # Airflow connections
       AIRFLOW_CONN_GATE_API: http://gate-api:5000
       AIRFLOW_CONN_TRAIN_API: http://train-api:5002
@@ -429,6 +434,28 @@ services:
     networks:
       - rakuten_mlops_network
     restart: unless-stopped
+
+
+  # === minilm-encoder (one-shot, profile: minilm) ===
+  # Encodes 84k texts with MiniLM and saves text_features_minilm.npy.
+  # Run once before a MiniLM training DAG run:
+  #   docker-compose --profile minilm run --rm minilm-encoder
+  minilm-encoder:
+    profiles: ["minilm"]
+    build:
+      context: ./minilm-encoder
+      dockerfile: Dockerfile
+    container_name: minilm-encoder
+    restart: "no"
+    environment:
+      - TRAIN_CSV_X_PATH=/app/data/X_train_update.csv
+      - MINILM_CACHE_PATH=/app/data/feature_cache/text_features_minilm.npy
+      - MINILM_BATCH_SIZE=256
+    volumes:
+      - ./data/X_train_update.csv:/app/data/X_train_update.csv:ro
+      - ./data/feature_cache:/app/data/feature_cache
+    networks:
+      - rakuten_mlops_network
 
 
 networks:

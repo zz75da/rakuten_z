@@ -63,6 +63,27 @@ def check_dataset_stats(**context):
     return shape
 
 
+def check_minilm_cache(**context):
+    """
+    If text_encoder=minilm, verify the MiniLM feature cache exists.
+    Fails fast with a clear instruction if it doesn't.
+    """
+    text_encoder = context["params"].get("text_encoder", "countvectorizer")
+    if text_encoder != "minilm":
+        print(f"text_encoder={text_encoder} — skipping MiniLM cache check.")
+        return
+    cache_path = "/opt/airflow/data/feature_cache/text_features_minilm.npy"
+    if os.path.exists(cache_path):
+        size_mb = os.path.getsize(cache_path) / 1024**2
+        print(f"MiniLM cache found ({size_mb:.0f} MB): {cache_path}")
+    else:
+        raise AirflowException(
+            "MiniLM feature cache not found. "
+            "Run this command first, wait for it to finish, then re-trigger the DAG:\n"
+            "  docker-compose --profile minilm run --rm minilm-encoder"
+        )
+
+
 def trigger_training(**context):
     """
     Triggers a new training job or resumes an existing one.
@@ -91,10 +112,12 @@ def trigger_training(**context):
             return existing_job_id
 
     if not existing_job_id:
+        text_encoder = context["params"].get("text_encoder", "countvectorizer")
         payload = {
             "use_dev_images": False,
             "epochs": int(os.environ.get("TRAIN_EPOCHS", 30)),
             "batch_size": int(os.environ.get("TRAIN_BATCH_SIZE", 128)),
+            "text_encoder": text_encoder,
         }
         resp = requests.post(
             f"{TRAIN_API}/train", json=payload,
@@ -274,6 +297,9 @@ with DAG(
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=["mlops", "training", "production", "monitoring"],
+    params={
+        "text_encoder": "countvectorizer",  # "countvectorizer" | "minilm"
+    },
 ) as dag:
 
     check_data = BashOperator(
@@ -330,6 +356,12 @@ with DAG(
     get_token = PythonOperator(
         task_id="get_auth_token",
         python_callable=get_auth_token,
+        provide_context=True,
+    )
+
+    check_minilm = PythonOperator(
+        task_id="check_minilm_cache",
+        python_callable=check_minilm_cache,
         provide_context=True,
     )
 
@@ -402,6 +434,7 @@ with DAG(
         >> [wait_for_gate_api, wait_for_train_api, wait_for_predict_api]
         >> dataset_stats
         >> get_token
+        >> check_minilm
         >> trigger_training_task
         >> wait_for_training
         >> [get_version, push_metrics]

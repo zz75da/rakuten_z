@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_client import Gauge, Counter
 from services.data_loader import load_and_merge_data
-from services.preprocess_text import extract_text_features, extract_text_features_minilm
+from services.preprocess_text import extract_text_features
 from services.preprocess_image import extract_image_features
 from services.pca_reducer import reduce_features
 from services.trainer import build_and_train_model, evaluate_model
@@ -116,13 +116,13 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
         # --- Text feature extraction ---
         if text_encoder == "minilm":
             TEXT_CACHE = "data/feature_cache/text_features_minilm.npy"
-            if use_cache and os.path.exists(TEXT_CACHE):
-                logger.info(f"Using cached MiniLM text features: {TEXT_CACHE}")
-                text_vectorizer = None  # encoder rebuilt below for artifact saving
-            else:
-                logger.info("Extracting MiniLM text features...")
-                text_features, text_vectorizer = extract_text_features_minilm(train_data)
-                np.save(TEXT_CACHE, text_features)
+            if not os.path.exists(TEXT_CACHE):
+                raise RuntimeError(
+                    "MiniLM feature cache not found. "
+                    "Run: docker-compose --profile minilm run --rm minilm-encoder"
+                )
+            logger.info(f"Using cached MiniLM text features: {TEXT_CACHE}")
+            text_vectorizer = None  # predict-api loads SentenceTransformer directly
         else:
             TEXT_CACHE = "data/feature_cache/text_features.npy"
             VECTORIZER_CACHE = "data/artifacts/text_vectorizer.pkl"
@@ -134,11 +134,6 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
                 logger.info("Extracting text features...")
                 text_features, text_vectorizer = extract_text_features(train_data)
                 np.save(TEXT_CACHE, text_features)
-
-        # Re-fit MiniLM encoder when cache was used (needed for artifact saving)
-        if text_encoder == "minilm" and text_vectorizer is None:
-            logger.info("Re-encoding with MiniLM to obtain encoder for artifact saving...")
-            _, text_vectorizer = extract_text_features_minilm(train_data)
 
         # --- Image feature extraction ---
         if use_cache and os.path.exists(IMAGE_CACHE):

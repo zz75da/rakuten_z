@@ -179,18 +179,21 @@ def load_artifacts():
 
         # --- MiniLM model (optional — only available after a minilm training run) ---
         minilm_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_minilm.keras")
-        minilm_enc_path = os.path.join(ARTIFACTS_PATH, "minilm_encoder.pkl")
-        if os.path.exists(minilm_keras) and os.path.exists(minilm_enc_path):
+        if os.path.exists(minilm_keras):
             try:
                 model_minilm = tf.keras.models.load_model(minilm_keras)
-                minilm_encoder = pickle.load(open(minilm_enc_path, "rb"))
-                print("✓ MiniLM model loaded from disk")
+                # Load encoder directly — no pkl, model cached by sentence-transformers
+                from sentence_transformers import SentenceTransformer
+                minilm_encoder = SentenceTransformer(
+                    "paraphrase-multilingual-MiniLM-L12-v2", device="cpu"
+                )
+                print("✓ MiniLM model loaded")
             except Exception as e:
                 print(f"⚠ MiniLM model could not be loaded: {e}")
                 model_minilm = None
                 minilm_encoder = None
         else:
-            print("ℹ MiniLM model not found — train with text_encoder=minilm to enable it")
+            print("ℹ MiniLM model not found — run minilm-encoder then train with text_encoder=minilm")
             model_minilm = None
             minilm_encoder = None
 
