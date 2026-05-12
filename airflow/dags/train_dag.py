@@ -23,7 +23,8 @@ TRAIN_API        = "http://train-api:5002"
 GATE_API         = "http://gate-api:5000"
 MINILM_ENCODER   = "http://minilm-encoder:5004"
 
-TRAINING_MAX_WAIT = int(os.environ.get("TRAINING_MAX_WAIT_SECONDS", 30 * 3600))
+TRAINING_MAX_WAIT      = int(os.environ.get("TRAINING_MAX_WAIT_SECONDS",  30 * 3600))
+ENCODING_MAX_WAIT      = int(os.environ.get("ENCODING_MAX_WAIT_SECONDS",   4 * 3600))
 
 # Airflow Variable keys — one per training job so they don't collide
 _CV_JOB_ID_VAR     = "rakuten_cv_training_job_id"
@@ -400,8 +401,8 @@ with DAG(
     wait_for_encoding = MiniLMEncodingSensor(
         task_id="wait_for_minilm_encoding",
         mode="reschedule",
-        poke_interval=60,           # poll every minute (encoding takes ~30 min)
-        timeout=4 * 3600,
+        poke_interval=60,
+        timeout=ENCODING_MAX_WAIT,
         soft_fail=False,
     )
 

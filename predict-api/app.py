@@ -236,10 +236,18 @@ def _resolve_model(model_key: str):
     """Return (model, text_dim) for the requested encoder, or raise 503."""
     if model_key == "minilm":
         if model_minilm is None:
-            raise HTTPException(status_code=503, detail="MiniLM model not available — run a training job with text_encoder=minilm first")
+            raise HTTPException(
+                status_code=503,
+                detail="MiniLM model not available — trigger the DAG to train it first",
+            )
         return model_minilm, 384
     if model_cv is None:
         raise HTTPException(status_code=503, detail="CV model not available")
+    if pca_text is None:
+        raise HTTPException(
+            status_code=503,
+            detail="CV model artifacts incomplete — pca_text.pkl missing",
+        )
     return model_cv, int(pca_text.n_components_)
 
 
@@ -306,6 +314,11 @@ def reload_artifacts_endpoint():
     """Reload all artifacts from disk — call after a new training run completes."""
     try:
         load_artifacts()
+        # Guard: at minimum the CV model + its PCA must be loaded
+        if model_cv is None and model_minilm is None:
+            raise RuntimeError("Neither CV nor MiniLM model could be loaded from disk")
+        if model_cv is not None and pca_text is None:
+            raise RuntimeError("CV model loaded but pca_text.pkl is missing")
         return {
             "status": "reloaded",
             "cv_model_loaded": model_cv is not None,
