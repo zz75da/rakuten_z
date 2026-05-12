@@ -74,12 +74,17 @@ ARTIFACTS_PATH = os.getenv("ARTIFACTS_PATH", "/app/data/artifacts")
 GATE_API_URL = os.getenv("GATE_API_URL", "http://gate-api:5000")
 
 # --- Globals ---
-model = None
-label_encoder: LabelEncoder = None
+# CountVectorizer model
+model_cv = None
 text_vectorizer: CountVectorizer = None
 pca_text: IncrementalPCA = None
+# MiniLM model
+model_minilm = None
+minilm_encoder = None
+# Shared
+label_encoder: LabelEncoder = None
 pca_image: IncrementalPCA = None
-resnet_model = None          # loaded once at startup for image feature extraction
+resnet_model = None
 
 # --- Human-readable category names for each Rakuten prdtypecode ---
 CATEGORY_NAMES: dict[str, str] = {
@@ -115,15 +120,17 @@ CATEGORY_NAMES: dict[str, str] = {
 # --- Input Schemas ---
 class TextRequest(BaseModel):
     description: str
+    model: str = "cv"  # "cv" | "minilm"
 
 
 class ImageRequest(BaseModel):
-    image_base64: str  # image in base64
+    image_base64: str
 
 
 class MultimodalRequest(BaseModel):
     description: str = None
     image_base64: str = None
+    model: str = "cv"  # "cv" | "minilm"
 
 
 # --- Auth helper ---
@@ -151,43 +158,43 @@ def verify_jwt_token(authorization: str = Header(...)):
 
 # --- Load artifacts ---
 def load_artifacts():
-    global model, label_encoder, text_vectorizer, pca_text, pca_image, resnet_model
+    global model_cv, model_minilm, label_encoder, text_vectorizer, pca_text, pca_image, resnet_model, minilm_encoder
     try:
-        # Try loading from MLflow first
+        # --- Shared artifacts ---
+        label_encoder = pickle.load(open(os.path.join(ARTIFACTS_PATH, "label_encoder.pkl"), "rb"))
+        pca_image = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_image.pkl"), "rb"))
+
+        # --- CV model ---
         try:
-            print(f"Attempting to load model '{MLFLOW_MODEL_NAME}' from MLflow ({MLFLOW_TRACKING_URI})...")
-            client = MlflowClient(tracking_uri=MLFLOW_TRACKING_URI)
-            model_uri = f"models:/{MLFLOW_MODEL_NAME}/{MLFLOW_MODEL_STAGE}"
-            model = mlflow.tensorflow.load_model(model_uri)
-            print(f"✓ Model loaded from MLflow: {model_uri}")
-            
-            # Load supporting artifacts from MLflow (if available as logged artifacts)
-            label_encoder = pickle.load(open(os.path.join(ARTIFACTS_PATH, "label_encoder.pkl"), "rb"))
-            text_vectorizer = pickle.load(open(os.path.join(ARTIFACTS_PATH, "text_vectorizer.pkl"), "rb"))
-            pca_text = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_text.pkl"), "rb"))
-            pca_image = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_image.pkl"), "rb"))
-            print("✓ Supporting artifacts loaded from disk")
-            
-        except Exception as mlflow_error:
-            print(f"MLflow loading failed, falling back to disk artifacts: {mlflow_error}")
-            # Prefer .keras (Keras 3 native), fall back to .h5 for older artifacts
             keras_path = os.path.join(ARTIFACTS_PATH, "neural_network_model.keras")
             h5_path = os.path.join(ARTIFACTS_PATH, "neural_network_model.h5")
             model_path = keras_path if os.path.exists(keras_path) else h5_path
-            model = tf.keras.models.load_model(model_path)
-            label_encoder = pickle.load(
-                open(os.path.join(ARTIFACTS_PATH, "label_encoder.pkl"), "rb")
-            )
-            text_vectorizer = pickle.load(
-                open(os.path.join(ARTIFACTS_PATH, "text_vectorizer.pkl"), "rb")
-            )
+            model_cv = tf.keras.models.load_model(model_path)
+            text_vectorizer = pickle.load(open(os.path.join(ARTIFACTS_PATH, "text_vectorizer.pkl"), "rb"))
             pca_text = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_text.pkl"), "rb"))
-            pca_image = pickle.load(
-                open(os.path.join(ARTIFACTS_PATH, "pca_image.pkl"), "rb")
-            )
-            print("✓ Artifacts loaded from disk")
+            print("✓ CV model loaded from disk")
+        except Exception as e:
+            print(f"⚠ CV model could not be loaded: {e}")
+            model_cv = None
 
-        # ResNet50 for image feature extraction (shared across both load paths)
+        # --- MiniLM model (optional — only available after a minilm training run) ---
+        minilm_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_minilm.keras")
+        minilm_enc_path = os.path.join(ARTIFACTS_PATH, "minilm_encoder.pkl")
+        if os.path.exists(minilm_keras) and os.path.exists(minilm_enc_path):
+            try:
+                model_minilm = tf.keras.models.load_model(minilm_keras)
+                minilm_encoder = pickle.load(open(minilm_enc_path, "rb"))
+                print("✓ MiniLM model loaded from disk")
+            except Exception as e:
+                print(f"⚠ MiniLM model could not be loaded: {e}")
+                model_minilm = None
+                minilm_encoder = None
+        else:
+            print("ℹ MiniLM model not found — train with text_encoder=minilm to enable it")
+            model_minilm = None
+            minilm_encoder = None
+
+        # --- ResNet50 for image features (shared) ---
         if resnet_model is None:
             print("Loading ResNet50 for image feature extraction...")
             resnet_model = ResNet50(
@@ -215,6 +222,22 @@ def extract_text_features(description: str):
     bow = text_vectorizer.transform(processed).toarray()
     reduced = pca_text.transform(bow)
     return reduced
+
+
+def extract_text_features_minilm(description: str):
+    embeddings = minilm_encoder.encode([description], convert_to_numpy=True)
+    return embeddings.astype(np.float32)  # shape (1, 384)
+
+
+def _resolve_model(model_key: str):
+    """Return (model, text_dim) for the requested encoder, or raise 503."""
+    if model_key == "minilm":
+        if model_minilm is None:
+            raise HTTPException(status_code=503, detail="MiniLM model not available — run a training job with text_encoder=minilm first")
+        return model_minilm, 384
+    if model_cv is None:
+        raise HTTPException(status_code=503, detail="CV model not available")
+    return model_cv, int(pca_text.n_components_)
 
 
 def extract_image_features(image_input: str):
@@ -282,7 +305,9 @@ def reload_artifacts_endpoint():
         load_artifacts()
         return {
             "status": "reloaded",
-            "pca_text_components": int(pca_text.n_components_),
+            "cv_model_loaded": model_cv is not None,
+            "minilm_model_loaded": model_minilm is not None,
+            "pca_text_components": int(pca_text.n_components_) if pca_text else None,
             "pca_image_components": int(pca_image.n_components_),
         }
     except Exception as e:
@@ -291,11 +316,16 @@ def reload_artifacts_endpoint():
 
 @app.post("/predict-text")
 def predict_text(req: TextRequest, user: dict = Depends(verify_jwt_token)):
-    text_features = extract_text_features(req.description)
+    active_model, text_dim = _resolve_model(req.model)
+    text_features = (
+        extract_text_features_minilm(req.description)
+        if req.model == "minilm"
+        else extract_text_features(req.description)
+    )
     dummy_img = np.zeros((1, pca_image.n_components_))
     combined = np.hstack([text_features, dummy_img])
 
-    probs = model.predict(combined)
+    probs = active_model.predict(combined)
     pred = int(np.argmax(probs, axis=1)[0])
     label = str(label_encoder.inverse_transform([pred])[0])
     category = CATEGORY_NAMES.get(label, label)
@@ -304,21 +334,19 @@ def predict_text(req: TextRequest, user: dict = Depends(verify_jwt_token)):
     FEATURE_TEXT_MEAN.set(float(np.mean(text_features)))
     REQUEST_COUNT.labels("/predict-text", "POST", "200").inc()
     return {
-        "pred_class": pred,
-        "label": label,
-        "category": category,
-        "probs": probs.tolist(),
-        "mode": "text_only",
+        "pred_class": pred, "label": label, "category": category,
+        "probs": probs.tolist(), "mode": "text_only", "encoder": req.model,
     }
 
 
 @app.post("/predict-image")
 def predict_image(req: ImageRequest, user: dict = Depends(verify_jwt_token)):
+    active_model, text_dim = _resolve_model("cv")  # image-only always uses CV model
     image_features = extract_image_features(req.image_base64)
-    dummy_text = np.zeros((1, pca_text.n_components_))
+    dummy_text = np.zeros((1, text_dim))
     combined = np.hstack([dummy_text, image_features])
 
-    probs = model.predict(combined)
+    probs = active_model.predict(combined)
     pred = int(np.argmax(probs, axis=1)[0])
     label = str(label_encoder.inverse_transform([pred])[0])
     category = CATEGORY_NAMES.get(label, label)
@@ -327,25 +355,21 @@ def predict_image(req: ImageRequest, user: dict = Depends(verify_jwt_token)):
     FEATURE_IMAGE_MEAN.set(float(np.mean(image_features)))
     REQUEST_COUNT.labels("/predict-image", "POST", "200").inc()
     return {
-        "pred_class": pred,
-        "label": label,
-        "category": category,
-        "probs": probs.tolist(),
-        "mode": "image_only",
+        "pred_class": pred, "label": label, "category": category,
+        "probs": probs.tolist(), "mode": "image_only", "encoder": "cv",
     }
 
 
 @app.post("/predict-multimodal")
 def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_token)):
     if not req.description and not req.image_base64:
-        raise HTTPException(
-            status_code=400, detail="Must provide description or image_base64"
-        )
+        raise HTTPException(status_code=400, detail="Must provide description or image_base64")
 
+    active_model, text_dim = _resolve_model(req.model)
     text_features = (
-        extract_text_features(req.description)
+        (extract_text_features_minilm(req.description) if req.model == "minilm" else extract_text_features(req.description))
         if req.description
-        else np.zeros((1, pca_text.n_components_))
+        else np.zeros((1, text_dim))
     )
     image_features = (
         extract_image_features(req.image_base64)
@@ -354,8 +378,7 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
     )
 
     combined = np.hstack([text_features, image_features])
-
-    probs = model.predict(combined)
+    probs = active_model.predict(combined)
     pred = int(np.argmax(probs, axis=1)[0])
     label = str(label_encoder.inverse_transform([pred])[0])
     category = CATEGORY_NAMES.get(label, label)
@@ -365,11 +388,8 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
     FEATURE_IMAGE_MEAN.set(float(np.mean(image_features)))
     REQUEST_COUNT.labels("/predict-multimodal", "POST", "200").inc()
     return {
-        "pred_class": pred,
-        "label": label,
-        "category": category,
-        "probs": probs.tolist(),
-        "mode": "multimodal",
+        "pred_class": pred, "label": label, "category": category,
+        "probs": probs.tolist(), "mode": "multimodal", "encoder": req.model,
     }
 
 

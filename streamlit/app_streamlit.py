@@ -106,13 +106,16 @@ def authenticate_user(username, password):
         return None
 
 
-def predict_single(description, uploaded_image, token, model_uri):
+def predict_single(description, uploaded_image, token, model_uri, encoder="cv"):
     payload = {}
     if description:
         payload["description"] = description
     if uploaded_image:
         image_bytes = uploaded_image.getvalue()
         payload["image_base64"] = base64.b64encode(image_bytes).decode("utf-8")
+    # Inject encoder choice (ignored by /predict-image which is always CV)
+    if description:
+        payload["model"] = encoder
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     if uploaded_image and description:
@@ -633,12 +636,23 @@ def show_prediction_page():
     st.sidebar.markdown(f" **URI :** `{model_uri}`")
     st.sidebar.markdown(f" **Version :** `{version_num}`  |  **Stage :** `{current_stage}`")
 
+    # --- Encoder selection ---
+    st.sidebar.subheader("Encodeur texte")
+    encoder_options = {
+        "CountVectorizer (v21 — fixe)": "cv",
+        "MiniLM (paraphrase-multilingual)": "minilm",
+    }
+    encoder_label = st.sidebar.radio("Modèle texte", list(encoder_options.keys()), index=0)
+    selected_encoder = encoder_options[encoder_label]
+    if selected_encoder == "minilm":
+        st.sidebar.info("MiniLM disponible après un run d'entraînement avec `text_encoder=minilm`.")
+
     # --- Prediction forms ---
     st.subheader("Single Prediction")
     description = st.text_input("Product description")
     uploaded_image = st.file_uploader("Upload image", type=["png", "jpg", "jpeg"])
     if st.button("Predict Single"):
-        predict_single(description, uploaded_image, st.session_state["user_token"], model_uri)
+        predict_single(description, uploaded_image, st.session_state["user_token"], model_uri, encoder=selected_encoder)
 
     # --- Batch Prediction ---
     st.subheader("Batch Prediction (Streaming)")

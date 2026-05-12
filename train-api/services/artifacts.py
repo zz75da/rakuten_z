@@ -18,23 +18,31 @@ def track_time(func):
 
 
 @track_time
-def save_artifacts(model, vectorizer, pca_models, label_encoder, skip_existing=True):
+def save_artifacts(model, vectorizer, pca_models, label_encoder, skip_existing=True, text_encoder="countvectorizer"):
     """
     Save model, vectorizer, PCA objects, and label encoder to ARTIFACTS_PATH.
-    Safe, robust, and includes per-artifact timing.
 
     Parameters:
-        skip_existing (bool): if True, skip saving files that already exist (useful with DVC).
+        skip_existing (bool): if True, skip saving files that already exist.
+        text_encoder (str): "countvectorizer" or "minilm" — determines artifact names.
     """
     os.makedirs(ARTIFACTS_PATH, exist_ok=True)
 
-    artifacts_to_save = {
-        "neural_network_model.keras": model,
-        "text_vectorizer.pkl": vectorizer,
-        "pca_image.pkl": pca_models["image"],
-        "pca_text.pkl": pca_models["text"],
-        "label_encoder.pkl": label_encoder,
-    }
+    if text_encoder == "minilm":
+        artifacts_to_save = {
+            "neural_network_model_minilm.keras": model,
+            "minilm_encoder.pkl": vectorizer,
+            "pca_image.pkl": pca_models["image"],
+            "label_encoder.pkl": label_encoder,
+        }
+    else:
+        artifacts_to_save = {
+            "neural_network_model.keras": model,
+            "text_vectorizer.pkl": vectorizer,
+            "pca_image.pkl": pca_models["image"],
+            "pca_text.pkl": pca_models["text"],
+            "label_encoder.pkl": label_encoder,
+        }
 
     for filename, obj in artifacts_to_save.items():
         path = os.path.join(ARTIFACTS_PATH, filename)
