@@ -12,9 +12,7 @@ import psutil
 # === Constants ===
 TEXT_FEATURES_LIMIT = 5000
 TEXT_FEATURES_FILE = "data/feature_cache/text_features.npy"
-MINILM_TEXT_FEATURES_FILE = "data/feature_cache/text_features_minilm.npy"
 TEXT_VECTORIZER_FILE = "data/text_vectorizer.pkl"
-MINILM_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 BATCH_SIZE = 5000  # adjust based on memory
 N_CORES = 6  # your Core i7
 
@@ -82,23 +80,6 @@ def extract_text_features(data: pd.DataFrame, max_features: int = TEXT_FEATURES_
     text_features = vectorizer.fit_transform(processed_descriptions).toarray().astype(np.float32)
     log_memory("After vectorization")
     return text_features, vectorizer
-
-
-@track_time
-def extract_text_features_minilm(data: pd.DataFrame):
-    """Encode text using SentenceTransformer MiniLM — no preprocessing needed."""
-    from sentence_transformers import SentenceTransformer
-    logging.info(f"Loading SentenceTransformer: {MINILM_MODEL_NAME}")
-    encoder = SentenceTransformer(MINILM_MODEL_NAME)
-    texts = data["description"].fillna("").tolist()
-    logging.info(f"Encoding {len(texts)} texts with MiniLM...")
-    log_memory("Before MiniLM encoding")
-    embeddings = encoder.encode(
-        texts, batch_size=256, show_progress_bar=True, convert_to_numpy=True
-    )
-    log_memory("After MiniLM encoding")
-    logging.info(f"MiniLM embeddings shape: {embeddings.shape}")
-    return embeddings.astype(np.float32), encoder
 
 
 if __name__ == "__main__":
