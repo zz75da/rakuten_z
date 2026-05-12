@@ -59,6 +59,7 @@ class TrainRequest(BaseModel):
     use_dev_images: bool = True
     epochs: int = 30
     batch_size: int = 128
+    use_cache: bool = True
 
 # --- In-memory job registry ---
 _training_jobs: Dict[str, Dict[str, Any]] = {}
@@ -98,7 +99,7 @@ async def verify_jwt_token(authorization: str = Header(...)):
         raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")
 
 
-def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch_size: int):
+def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch_size: int, use_cache: bool = True):
     """Execute the full training pipeline in a background thread."""
     mode = "DEV" if use_dev_images else "FULL TRAIN"
     logger.info(f"[job={job_id}] Training pipeline started (mode={mode})")
@@ -107,33 +108,33 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
         _training_jobs[job_id]["status"] = "running"
 
         train_data = load_and_merge_data(use_dev_images=use_dev_images)
-        os.makedirs("data", exist_ok=True)
+        os.makedirs("data/feature_cache", exist_ok=True)
 
-        TEXT_CACHE = "data/text_features.npy"
-        IMAGE_CACHE = "data/image_features.npy"
+        TEXT_CACHE = "data/feature_cache/text_features.npy"
+        IMAGE_CACHE = "data/feature_cache/image_features.npy"
         VECTORIZER_CACHE = "data/artifacts/text_vectorizer.pkl"
 
-        if os.path.exists(TEXT_CACHE) and os.path.exists(VECTORIZER_CACHE):
+        if use_cache and os.path.exists(TEXT_CACHE) and os.path.exists(VECTORIZER_CACHE):
             logger.info(f"Using cached text features: {TEXT_CACHE}")
             with open(VECTORIZER_CACHE, "rb") as f:
                 text_vectorizer = pickle.load(f)
         else:
-            logger.info("Extracting text features (no cache found)...")
+            logger.info("Extracting text features (no cache found)..." if not use_cache or not os.path.exists(TEXT_CACHE) else "Extracting text features (use_cache=False)...")
             text_features, text_vectorizer = extract_text_features(train_data)
             np.save(TEXT_CACHE, text_features)
 
-        if os.path.exists(IMAGE_CACHE):
+        if use_cache and os.path.exists(IMAGE_CACHE):
             logger.info(f"Using cached image features: {IMAGE_CACHE} — skipping 37h ResNet50 extraction")
             image_features_path = IMAGE_CACHE
         else:
-            logger.info("Extracting image features (no cache found)...")
+            logger.info("Extracting image features (no cache found)..." if not use_cache or not os.path.exists(IMAGE_CACHE) else "Extracting image features (use_cache=False)...")
             image_features_path = extract_image_features(train_data)
             if not image_features_path:
                 raise RuntimeError("Image feature extraction produced no features")
 
         X_reduced_path, pca_img_path, pca_text_path = reduce_features(
-            text_features_path="data/text_features.npy",
-            image_features_path="data/image_features.npy",
+            text_features_path=TEXT_CACHE,
+            image_features_path=IMAGE_CACHE,
         )
         X_reduced = np.load(X_reduced_path)
         with open(pca_img_path, "rb") as f:
@@ -241,7 +242,7 @@ async def train_model(
 
     thread = threading.Thread(
         target=_run_training_pipeline,
-        args=(job_id, req.use_dev_images, req.epochs, req.batch_size),
+        args=(job_id, req.use_dev_images, req.epochs, req.batch_size, req.use_cache),
         daemon=True,
     )
     thread.start()

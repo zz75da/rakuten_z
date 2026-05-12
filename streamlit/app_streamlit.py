@@ -260,7 +260,7 @@ def show_presentation_page():
     c2.metric("Features texte",    "1 024", help="CountVectorizer(5000) → PCA(1024)")
     c3.metric("Features image",    "300",   help="ResNet50(2048) → PCA(300)")
     c4.metric("Features combinées","1 324", help="Concaténation texte + image")
-    c5.metric("Val accuracy",      "~68 %", help="Dernier run dev (5 327 échantillons)")
+    c5.metric("Val accuracy",      "~73.8 %", help="Dernier run complet (84 916 échantillons)")
     st.divider()
 
     # ── Tabs ──────────────────────────────────────────────────────────────────

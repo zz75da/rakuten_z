@@ -147,8 +147,8 @@ def reduce_features(
 if __name__ == "__main__":
     # FIX 3: Update save_dir to "artifacts" to match DVC expectations
     reduce_features(
-        text_features_path="data/text_features.npy",
-        image_features_path="data/image_features.npy",
+        text_features_path="data/feature_cache/text_features.npy",
+        image_features_path="data/feature_cache/image_features.npy",
         n_components_img=300,
         target_dim=5300,
         save_dir="artifacts",  # Changed from "data" to "artifacts"
