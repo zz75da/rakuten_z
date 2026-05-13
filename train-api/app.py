@@ -170,6 +170,8 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
                 train_data=train_data,
                 x_csv_path=X_CSV,
                 y_csv_path=Y_CSV,
+                text_encoder=text_encoder,
+                use_dev_images=use_dev_images,
             )
         )
 
