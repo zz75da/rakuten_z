@@ -1,0 +1,5 @@
+outs:
+- md5: 16f1b9e019ddab2079016b556d47bd11
+  size: 130431104
+  hash: md5
+  path: text_features_minilm.npy
