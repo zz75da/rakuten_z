@@ -180,22 +180,38 @@ def build_and_train_model(
     epochs=10, batch_size=32, run_name="training_run",
     pca_models=None,
     train_data=None, x_csv_path=None, y_csv_path=None,
+    text_encoder="countvectorizer", use_dev_images=False,
 ):
+    # Architecture constants — logged to MLflow for reproducibility
+    RANDOM_SEED      = 42
+    VAL_SPLIT        = 0.2
+    LEARNING_RATE    = 0.001
+    HIDDEN_1         = 512
+    HIDDEN_2         = 256
+    DROPOUT_1        = 0.3
+    DROPOUT_2        = 0.2
+    ES_PATIENCE      = 5
+    LR_PATIENCE      = 2
+    LR_FACTOR        = 0.3
+    LR_MIN           = 1e-6
+
     label_encoder = LabelEncoder()
     y_encoded = label_encoder.fit_transform(y)
 
-    X_train, X_val, y_train, y_val = train_test_split(X, y_encoded, test_size=0.2, random_state=42)
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y_encoded, test_size=VAL_SPLIT, random_state=RANDOM_SEED
+    )
 
     inputs = Input(shape=(X.shape[1],))
-    x = Dense(512, activation="relu")(inputs)
-    x = Dropout(0.3)(x)
-    x = Dense(256, activation="relu")(x)
-    x = Dropout(0.2)(x)
+    x = Dense(HIDDEN_1, activation="relu")(inputs)
+    x = Dropout(DROPOUT_1)(x)
+    x = Dense(HIDDEN_2, activation="relu")(x)
+    x = Dropout(DROPOUT_2)(x)
     outputs = Dense(len(label_encoder.classes_), activation="softmax")(x)
 
     model = Model(inputs, outputs)
     model.compile(
-        optimizer=Adam(learning_rate=0.001),
+        optimizer=Adam(learning_rate=LEARNING_RATE),
         loss="sparse_categorical_crossentropy",
         metrics=["accuracy"],
     )
@@ -217,19 +233,35 @@ def build_and_train_model(
     with mlflow.start_run(run_name=run_name) as run:
         # Log params
         try:
-            mlflow.log_param("epochs", epochs)
-            mlflow.log_param("batch_size", batch_size)
-            mlflow.log_param("input_dim", X.shape[1])
-            mlflow.log_param("num_classes", len(label_encoder.classes_))
-            mlflow.log_param("dataset_rows", int(len(X)))
+            # Training config
+            mlflow.log_param("text_encoder",           text_encoder)
+            mlflow.log_param("use_dev_images",         use_dev_images)
+            mlflow.log_param("epochs_max",             epochs)
+            mlflow.log_param("batch_size",             batch_size)
+            mlflow.log_param("random_seed",            RANDOM_SEED)
+            mlflow.log_param("val_split",              VAL_SPLIT)
+            mlflow.log_param("input_dim",              X.shape[1])
+            mlflow.log_param("num_classes",            len(label_encoder.classes_))
+            mlflow.log_param("dataset_rows",           int(len(X)))
+            # Architecture
+            mlflow.log_param("learning_rate",          LEARNING_RATE)
+            mlflow.log_param("hidden_1",               HIDDEN_1)
+            mlflow.log_param("hidden_2",               HIDDEN_2)
+            mlflow.log_param("dropout_1",              DROPOUT_1)
+            mlflow.log_param("dropout_2",              DROPOUT_2)
+            mlflow.log_param("class_weights",          "balanced")
+            # Early stopping / LR schedule
+            mlflow.log_param("early_stopping_patience", ES_PATIENCE)
+            mlflow.log_param("lr_reduce_patience",     LR_PATIENCE)
+            mlflow.log_param("lr_reduce_factor",       LR_FACTOR)
+            mlflow.log_param("lr_min",                 LR_MIN)
+            # PCA
             if pca_models:
                 pca_img = pca_models.get("image")
                 pca_txt = pca_models.get("text")
                 if pca_img:
-                    # Use sklearn's standard param names so existing DagsHub columns are filled
-                    mlflow.log_param("copy", pca_img.copy)
-                    mlflow.log_param("n_components", pca_img.n_components_)
-                    mlflow.log_param("pca_text_n_components", pca_txt.n_components_ if pca_txt else None)
+                    mlflow.log_param("pca_image_components", pca_img.n_components_)
+                    mlflow.log_param("pca_text_components",  pca_txt.n_components_ if pca_txt else "n/a")
         except Exception as e:
             print(f"Warning: failed to log params: {e}")
 
@@ -247,12 +279,12 @@ def build_and_train_model(
         from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
         callbacks = [
             EarlyStopping(
-                monitor="val_accuracy", patience=5,
+                monitor="val_accuracy", patience=ES_PATIENCE,
                 restore_best_weights=True, verbose=1,
             ),
             ReduceLROnPlateau(
-                monitor="val_loss", factor=0.3,
-                patience=2, min_lr=1e-6, verbose=1,
+                monitor="val_loss", factor=LR_FACTOR,
+                patience=LR_PATIENCE, min_lr=LR_MIN, verbose=1,
             ),
         ]
 
@@ -260,14 +292,18 @@ def build_and_train_model(
             X_train, y_train,
             validation_data=(X_val, y_val),
             epochs=epochs,
-            batch_size=128,
+            batch_size=batch_size,
             class_weight=class_weight_dict,
             callbacks=callbacks,
             verbose=1,
         )
 
+        # Log actual epochs trained (early stopping may reduce this below epochs_max)
+        actual_epochs = len(history.history.get("loss", []))
+        mlflow.log_param("actual_epochs_trained", actual_epochs)
+
         # Log metrics per epoch
-        for epoch in range(len(history.history.get("loss", []))):
+        for epoch in range(actual_epochs):
             mlflow.log_metric("train_loss", float(history.history["loss"][epoch]), step=epoch)
             if "val_loss" in history.history:
                 mlflow.log_metric("val_loss", float(history.history["val_loss"][epoch]), step=epoch)
