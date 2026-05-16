@@ -3,10 +3,27 @@
   "uid": "rakuten-drift-v1",
   "timezone": "browser",
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "time": { "from": "now-3h", "to": "now" },
-  "templating": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "encoder",
+        "label": "Encoder",
+        "type": "custom",
+        "current": { "text": "All", "value": "$__all" },
+        "options": [
+          { "selected": true,  "text": "All",                  "value": "$__all" },
+          { "selected": false, "text": "CV (CountVectorizer)",  "value": "countvectorizer" },
+          { "selected": false, "text": "MiniLM",               "value": "minilm" }
+        ],
+        "includeAll": true,
+        "multi": false,
+        "query": "countvectorizer,minilm"
+      }
+    ]
+  },
   "annotations": { "list": [] },
   "panels": [
 
@@ -14,7 +31,7 @@
       "id": 1,
       "type": "stat",
       "title": "Total Predictions",
-      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{
         "refId": "A",
@@ -40,7 +57,7 @@
       "id": 2,
       "type": "stat",
       "title": "Median Confidence (P50)",
-      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{
         "refId": "A",
@@ -55,10 +72,10 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
+              { "color": "red",    "value": null },
               { "color": "orange", "value": 0.35 },
               { "color": "yellow", "value": 0.5 },
-              { "color": "green", "value": 0.65 }
+              { "color": "green",  "value": 0.65 }
             ]
           }
         }
@@ -74,26 +91,67 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "Validation Accuracy (last training)",
-      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "title": "CV Final Val Accuracy",
+      "description": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{
         "refId": "A",
-        "expr": "model_final_val_accuracy or val_accuracy or vector(0)",
-        "legendFormat": "Val Accuracy"
+        "expr": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
+        "legendFormat": "CV"
       }],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "min": 0,
           "max": 1,
+          "noValue": "—",
+          "mappings": [{ "type": "value", "options": { "0": { "text": "—", "color": "text" } } }],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
+              { "color": "red",    "value": null },
               { "color": "orange", "value": 0.6 },
               { "color": "yellow", "value": 0.75 },
-              { "color": "green", "value": 0.85 }
+              { "color": "green",  "value": 0.85 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+
+    {
+      "id": 26,
+      "type": "stat",
+      "title": "MiniLM Final Val Accuracy",
+      "description": "model_final_val_accuracy{encoder=\"minilm\"}",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{
+        "refId": "A",
+        "expr": "model_final_val_accuracy{encoder=\"minilm\"}",
+        "legendFormat": "MiniLM"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "noValue": "—",
+          "mappings": [{ "type": "value", "options": { "0": { "text": "—", "color": "text" } } }],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "orange", "value": 0.6 },
+              { "color": "yellow", "value": 0.75 },
+              { "color": "green",  "value": 0.85 }
             ]
           }
         }
@@ -110,7 +168,7 @@
       "id": 4,
       "type": "stat",
       "title": "P95 Prediction Latency",
-      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{
         "refId": "A",
@@ -123,10 +181,10 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
+              { "color": "green",  "value": null },
               { "color": "yellow", "value": 1 },
               { "color": "orange", "value": 3 },
-              { "color": "red", "value": 5 }
+              { "color": "red",    "value": 5 }
             ]
           }
         }
@@ -134,8 +192,39 @@
       "options": {
         "reduceOptions": { "calcs": ["lastNotNull"] },
         "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+
+    {
+      "id": 27,
+      "type": "stat",
+      "title": "MiniLM Encoder",
+      "description": "up{job=\"minilm-encoder\"}",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{
+        "refId": "A",
+        "expr": "up{job=\"minilm-encoder\"} or vector(0)",
+        "legendFormat": "minilm-encoder"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } }, "type": "value" }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
         "graphMode": "none",
-        "textMode": "auto"
+        "textMode": "value_and_name"
       }
     },
 
@@ -155,9 +244,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "refId": "A", "expr": "train_loss", "legendFormat": "Train Loss" },
-        { "refId": "B", "expr": "val_loss", "legendFormat": "Val Loss" },
-        { "refId": "C", "expr": "training_loss", "legendFormat": "Train Loss (Airflow)" },
-        { "refId": "D", "expr": "validation_loss", "legendFormat": "Val Loss (Airflow)" }
+        { "refId": "B", "expr": "val_loss",   "legendFormat": "Val Loss" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -165,8 +252,7 @@
           "custom": { "lineWidth": 2, "fillOpacity": 8, "showPoints": "auto" }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "Val Loss" }, "properties": [{ "id": "custom.lineStyle", "value": { "dash": [6, 4], "fill": "dash" } }] },
-          { "matcher": { "id": "byName", "options": "Val Loss (Airflow)" }, "properties": [{ "id": "custom.lineStyle", "value": { "dash": [6, 4], "fill": "dash" } }] }
+          { "matcher": { "id": "byName", "options": "Val Loss" }, "properties": [{ "id": "custom.lineStyle", "value": { "dash": [6, 4], "fill": "dash" } }] }
         ]
       },
       "options": {
@@ -183,9 +269,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "refId": "A", "expr": "train_accuracy", "legendFormat": "Train Accuracy" },
-        { "refId": "B", "expr": "val_accuracy", "legendFormat": "Val Accuracy" },
-        { "refId": "C", "expr": "training_accuracy", "legendFormat": "Train Acc (Airflow)" },
-        { "refId": "D", "expr": "validation_accuracy", "legendFormat": "Val Acc (Airflow)" }
+        { "refId": "B", "expr": "val_accuracy",   "legendFormat": "Val Accuracy" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -195,8 +279,7 @@
           "custom": { "lineWidth": 2, "fillOpacity": 8, "showPoints": "auto" }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "Val Accuracy" }, "properties": [{ "id": "custom.lineStyle", "value": { "dash": [6, 4], "fill": "dash" } }] },
-          { "matcher": { "id": "byName", "options": "Val Acc (Airflow)" }, "properties": [{ "id": "custom.lineStyle", "value": { "dash": [6, 4], "fill": "dash" } }] }
+          { "matcher": { "id": "byName", "options": "Val Accuracy" }, "properties": [{ "id": "custom.lineStyle", "value": { "dash": [6, 4], "fill": "dash" } }] }
         ]
       },
       "options": {
@@ -258,28 +341,40 @@
 
     {
       "id": 11,
-      "type": "stat",
-      "title": "Final Val Accuracy",
+      "type": "timeseries",
+      "title": "Final Val Accuracy — CV vs MiniLM",
+      "description": "Tracks model_final_val_accuracy per encoder after each completed training run.",
       "gridPos": { "x": 18, "y": 13, "w": 6, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "refId": "A", "expr": "model_final_val_accuracy or vector(0)", "legendFormat": "Val Acc" }],
+      "targets": [
+        { "refId": "A", "expr": "model_final_val_accuracy{encoder=\"countvectorizer\"}", "legendFormat": "CV" },
+        { "refId": "B", "expr": "model_final_val_accuracy{encoder=\"minilm\"}",           "legendFormat": "MiniLM" }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "min": 0,
           "max": 1,
+          "custom": { "lineWidth": 2, "fillOpacity": 10, "showPoints": "always" },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
+              { "color": "red",    "value": null },
               { "color": "orange", "value": 0.6 },
               { "color": "yellow", "value": 0.75 },
-              { "color": "green", "value": 0.85 }
+              { "color": "green",  "value": 0.85 }
             ]
           }
-        }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "MiniLM" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }] },
+          { "matcher": { "id": "byName", "options": "CV" },     "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] }
+        ]
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
     },
 
     {
@@ -297,8 +392,8 @@
       "gridPos": { "x": 0, "y": 18, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "refId": "A", "expr": "rate(predict_requests_total{endpoint=\"/predict-text\"}[2m])", "legendFormat": "text" },
-        { "refId": "B", "expr": "rate(predict_requests_total{endpoint=\"/predict-image\"}[2m])", "legendFormat": "image" },
+        { "refId": "A", "expr": "rate(predict_requests_total{endpoint=\"/predict-text\"}[2m])",       "legendFormat": "text" },
+        { "refId": "B", "expr": "rate(predict_requests_total{endpoint=\"/predict-image\"}[2m])",      "legendFormat": "image" },
         { "refId": "C", "expr": "rate(predict_requests_total{endpoint=\"/predict-multimodal\"}[2m])", "legendFormat": "multimodal" }
       ],
       "fieldConfig": {
@@ -370,14 +465,14 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
+              { "color": "red",    "value": null },
               { "color": "yellow", "value": 0.4 },
-              { "color": "green", "value": 0.6 }
+              { "color": "green",  "value": 0.6 }
             ]
           }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "P50 – median" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
+          { "matcher": { "id": "byName", "options": "P50 – median"  }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
           { "matcher": { "id": "byName", "options": "P10 – low tail" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
           { "matcher": { "id": "byName", "options": "P90 – high tail" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] }
         ]
@@ -447,7 +542,7 @@
       "gridPos": { "x": 0, "y": 45, "w": 24, "h": 7 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "refId": "A", "expr": "feature_text_input_mean", "legendFormat": "Text features mean" },
+        { "refId": "A", "expr": "feature_text_input_mean",  "legendFormat": "Text features mean" },
         { "refId": "B", "expr": "feature_image_input_mean", "legendFormat": "Image features mean" }
       ],
       "fieldConfig": {
@@ -463,10 +558,73 @@
     },
 
     {
+      "id": 28,
+      "type": "row",
+      "title": "Per-Encoder Model Performance",
+      "gridPos": { "x": 0, "y": 52, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+
+    {
+      "id": 29,
+      "type": "timeseries",
+      "title": "Final Val Accuracy by Encoder (training history)",
+      "description": "model_final_val_accuracy labeled by encoder — shows the accuracy achieved after each completed training run for CV and MiniLM independently.",
+      "gridPos": { "x": 0, "y": 53, "w": 14, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "model_final_val_accuracy{encoder=\"countvectorizer\"}", "legendFormat": "CV (CountVectorizer)" },
+        { "refId": "B", "expr": "model_final_val_accuracy{encoder=\"minilm\"}",           "legendFormat": "MiniLM" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": { "lineWidth": 2, "fillOpacity": 10, "showPoints": "always" }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "MiniLM" },             "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }] },
+          { "matcher": { "id": "byName", "options": "CV (CountVectorizer)" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Final Val Loss by Encoder",
+      "gridPos": { "x": 14, "y": 53, "w": 10, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "model_final_val_loss{encoder=\"countvectorizer\"}", "legendFormat": "CV val loss" },
+        { "refId": "B", "expr": "model_final_val_loss{encoder=\"minilm\"}",           "legendFormat": "MiniLM val loss" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 8, "showPoints": "always" }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "MiniLM val loss" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }] },
+          { "matcher": { "id": "byName", "options": "CV val loss" },     "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+
+    {
       "id": 20,
       "type": "row",
       "title": "Service Health",
-      "gridPos": { "x": 0, "y": 52, "w": 24, "h": 1 },
+      "gridPos": { "x": 0, "y": 61, "w": 24, "h": 1 },
       "collapsed": false
     },
 
@@ -474,15 +632,16 @@
       "id": 21,
       "type": "stat",
       "title": "Services Status",
-      "gridPos": { "x": 0, "y": 53, "w": 12, "h": 6 },
+      "gridPos": { "x": 0, "y": 62, "w": 14, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "refId": "A", "expr": "up{job=\"predict-api\"}", "legendFormat": "predict-api" },
-        { "refId": "B", "expr": "up{job=\"train-api\"}", "legendFormat": "train-api" },
-        { "refId": "C", "expr": "up{job=\"gate-api\"}", "legendFormat": "gate-api" },
-        { "refId": "D", "expr": "up{job=\"pushgateway\"}", "legendFormat": "pushgateway" },
-        { "refId": "E", "expr": "up{job=\"grafana\"}", "legendFormat": "grafana" },
-        { "refId": "F", "expr": "up{job=\"prometheus\"}", "legendFormat": "prometheus" }
+        { "refId": "A", "expr": "up{job=\"predict-api\"}",      "legendFormat": "predict-api" },
+        { "refId": "B", "expr": "up{job=\"train-api\"}",        "legendFormat": "train-api" },
+        { "refId": "C", "expr": "up{job=\"gate-api\"}",         "legendFormat": "gate-api" },
+        { "refId": "D", "expr": "up{job=\"minilm-encoder\"}",   "legendFormat": "minilm-encoder" },
+        { "refId": "E", "expr": "up{job=\"pushgateway\"}",      "legendFormat": "pushgateway" },
+        { "refId": "F", "expr": "up{job=\"grafana\"}",          "legendFormat": "grafana" },
+        { "refId": "G", "expr": "up{job=\"prometheus\"}",       "legendFormat": "prometheus" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -492,7 +651,7 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
+              { "color": "red",   "value": null },
               { "color": "green", "value": 1 }
             ]
           },
@@ -504,7 +663,8 @@
         "colorMode": "background",
         "graphMode": "none",
         "textMode": "value_and_name",
-        "orientation": "horizontal"
+        "orientation": "horizontal",
+        "text": { "titleSize": 20, "valueSize": 20 }
       }
     },
 
@@ -512,7 +672,7 @@
       "id": 22,
       "type": "timeseries",
       "title": "Prediction Error Rate",
-      "gridPos": { "x": 12, "y": 53, "w": 12, "h": 6 },
+      "gridPos": { "x": 14, "y": 62, "w": 10, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{
         "refId": "A",
@@ -527,9 +687,9 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
+              { "color": "green",  "value": null },
               { "color": "orange", "value": 0.05 },
-              { "color": "red", "value": 0.1 }
+              { "color": "red",    "value": 0.1 }
             ]
           }
         }

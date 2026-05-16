@@ -24,21 +24,36 @@ Built with FastAPI microservices, Apache Airflow, MLflow / DagsHub, and a full P
 
 ## Model Overview
 
-The classifier combines two feature branches that are reduced independently before being fused and fed to a dense classifier:
+Two text encoders are available. The image branch and classifier architecture are shared.
+
+### Encoder A — CountVectorizer (default)
 
 ```
-Text description ──► CountVectorizer (5 000) ──► IncrementalPCA (1 024-d)  ─┐
-                                                                              ├─► concat (1 324-d) ──► Dense 512 ──► Dropout ──► Dense 27 (softmax)
-Product image    ──► ResNet50 (2 048-d)       ──► IncrementalPCA  (300-d)  ─┘
+Text description ──► SpaCy lemmatise ──► CountVectorizer (5 000) ──► IncrementalPCA (1 024-d) ─┐
+                                                                                                  ├─► hstack (1 324-d) ──► Dense 512 ──► Dropout ──► Dense 256 ──► Dropout ──► Dense 27 (softmax)
+Product image    ──► ResNet50 (2 048-d)                            ──► IncrementalPCA  (300-d) ─┘
 ```
 
-| Component | Detail |
-|-----------|--------|
-| Text encoder | scikit-learn `CountVectorizer` (max 5 000 features) + French/English stop-word removal via spaCy |
-| Image encoder | Keras `ResNet50` pretrained on ImageNet (global average pooling, no top) |
-| Dimensionality reduction | `IncrementalPCA` — memory-efficient, batch-fitted |
-| Classifier | Keras `Dense(512, relu) → Dropout(0.5) → Dense(27, softmax)` |
-| Output | 27 Rakuten product categories |
+Registered in MLflow as **`rakuten_multimodal_cv`**.
+
+### Encoder B — MiniLM (multilingual)
+
+```
+Text description ──► paraphrase-multilingual-MiniLM-L12-v2 (sentence-transformers) ──► 384-d ─┐
+                                                                                                 ├─► hstack (684-d) ──► Dense 512 ──► Dropout ──► Dense 256 ──► Dropout ──► Dense 27 (softmax)
+Product image    ──► ResNet50 (2 048-d) ──► IncrementalPCA (300-d) ──────────────────────────┘
+```
+
+Registered in MLflow as **`rakuten_multimodal_minilm`**.
+
+| Component | CountVectorizer variant | MiniLM variant |
+|-----------|-------------------------|----------------|
+| Text encoding | CountVectorizer (5 000) → PCA (1 024) | MiniLM-L12-v2 → 384-d |
+| Combined input dim | 1 324 | 684 |
+| Classifier | Dense 512 → Dropout 0.3 → Dense 256 → Dropout 0.2 → Softmax 27 | same |
+| Image encoder | ResNet50 (ImageNet, global avg pool, no top) → PCA (300) | same |
+| Training stability | jemalloc `LD_PRELOAD` — prevents TF/glibc allocator conflicts | same |
+| Subprocess isolation | Full pipeline runs in `run_full_pipeline.py` child process — uvicorn heap never touched by TF | same |
 
 ---
 
@@ -47,20 +62,29 @@ Product image    ──► ResNet50 (2 048-d)       ──► IncrementalPCA  (3
 ```
 ┌─────────────┐     JWT      ┌─────────────┐
 │  Streamlit  │◄────────────►│  gate-api   │  Authentication & token validation
-│     UI      │              │  :5000      │
+│    :8501    │              │    :5004    │
 └──────┬──────┘              └─────────────┘
        │ Bearer token
        ▼
-┌─────────────┐    POST /train  ┌─────────────┐    logs     ┌──────────────┐
-│  Airflow    │────────────────►│  train-api  │────────────►│  MLflow      │
-│  DAG        │◄── poll status  │  :8000      │             │  / DagsHub   │
-└─────────────┘                 └──────┬──────┘             └──────────────┘
-                                       │ reload artifacts
-                                       ▼
-                               ┌─────────────┐
-                               │ predict-api │  /predict-text
-                               │  :8001      │  /predict-image
-                               └─────────────┘  /predict-multimodal
+┌─────────────┐  POST /train   ┌────────────────────────────────────────────┐
+│  Airflow    │───────────────►│  train-api  :5002                          │
+│    :8080    │◄─ poll status  │  ├── run_full_pipeline.py (subprocess)     │
+└─────────────┘                │  │   ├── preprocess_text / preprocess_image│
+                               │  │   ├── pca_reducer (subprocess)          │
+                               │  │   └── trainer (TF, jemalloc)            │
+                               │  └── minilm-encoder :5005 (MiniLM only)   │
+                               └───────────────┬────────────────────────────┘
+                                               │ POST /reload-artifacts
+                                               ▼
+                                    ┌──────────────────┐     ┌──────────────┐
+                                    │  predict-api     │────►│  MLflow      │
+                                    │    :5003         │     │  / DagsHub   │
+                                    │  model_cv  ─┐   │     └──────────────┘
+                                    │  model_minilm─┘  │
+                                    └──────────────────┘
+                                    /predict-text  ?model=cv|minilm
+                                    /predict-image
+                                    /predict-multimodal
 
 ┌──────────────────────────────────────────────────────┐
 │  Prometheus (:9090)  ◄──  scrapes all FastAPI apps   │
@@ -73,17 +97,19 @@ Product image    ──► ResNet50 (2 048-d)       ──► IncrementalPCA  (3
 
 ## Services
 
-| Service | Port | Role |
-|---------|------|------|
-| **gate-api** | 5000 | JWT authentication (`/login`, `/validate-token`) |
-| **train-api** | 8000 | Async model training (`POST /train` → 202 + job_id, `GET /train/status/{id}`) |
-| **predict-api** | 8001 | Multimodal inference (`/predict-text`, `/predict-image`, `/predict-multimodal`) |
-| **mlflow** | 5001 | Experiment tracking & model registry |
-| **airflow** | 8080 | DAG orchestration (trigger → poll → evaluate) |
-| **streamlit** | 8501 | Interactive demo UI |
+| Service | External port | Role |
+|---------|--------------|------|
+| **gate-api** | 5004 | JWT authentication (`/login`, `/validate-token`) |
+| **train-api** | 5002 | Async model training — CV and MiniLM sequential runs via Airflow DAG |
+| **minilm-encoder** | 5005 | Bulk MiniLM sentence encoding (`POST /encode`, `GET /status`) |
+| **predict-api** | 5003 | Multimodal inference — serves both CV and MiniLM models simultaneously |
+| **airflow** | 8080 | DAG orchestration (encode → train CV → train MiniLM → push artifacts) |
+| **streamlit** | 8501 | Interactive demo UI + pipeline presentation + live training curves |
+| **mlflow** | — | Experiment tracking hosted on DagsHub (external) |
+| **minio** | 9002 | S3-compatible object storage for MLflow artifacts |
 | **prometheus** | 9090 | Metrics collection |
 | **grafana** | 3000 | Dashboards & alerting |
-| **alertmanager** | 9093 | Alert routing |
+| **alertmanager** | 9093 | Alert routing (email / Slack) |
 
 ---
 
@@ -92,7 +118,7 @@ Product image    ──► ResNet50 (2 048-d)       ──► IncrementalPCA  (3
 ### Prerequisites
 
 - Docker ≥ 24 and Docker Compose v2
-- ~8 GB RAM available for the full stack
+- ~12 GB RAM and ~15 GB free disk for the full stack
 
 ### 1 — Clone and configure
 
@@ -119,10 +145,16 @@ docker-compose up -d --build
 
 ```bash
 docker-compose ps
-curl http://localhost:5000/health   # gate-api
-curl http://localhost:8000/health   # train-api
-curl http://localhost:8001/health   # predict-api
+curl http://localhost:5004/health   # gate-api
+curl http://localhost:5002/health   # train-api
+curl http://localhost:5003/health   # predict-api
+curl http://localhost:5005/health   # minilm-encoder
 ```
+
+### 5 — Trigger a training run (via Airflow)
+
+Open `http://localhost:8080`, enable the `rakuten_multimodal_pipeline_v5_1` DAG and trigger it manually.  
+The DAG runs CV training then MiniLM training sequentially (~3–4 h on a mid-range laptop).
 
 ---
 
@@ -134,29 +166,49 @@ curl http://localhost:8001/health   # predict-api
 POST /login              {"username": "admin", "password": "admin_pass"}
 POST /validate-token     Authorization: Bearer <token>
 GET  /health
-GET  /metrics            Prometheus scrape endpoint
+GET  /metrics
 ```
 
 ### train-api — Async Training
 
 ```
-POST /train              {"use_dev_images": true, "epochs": 10, "batch_size": 32}
+POST /train              {
+                           "use_dev_images": false,
+                           "epochs": 10,
+                           "batch_size": 32,
+                           "text_encoder": "countvectorizer"  // or "minilm"
+                         }
                          → 202 {"job_id": "...", "status": "running"}
-GET  /train/status/{id}  → {"status": "success|running|failed", "final_metrics": {...}}
+                         → 409 if another job is already running
+
+GET  /train/status/{id}  → {"status": "success|running|failed|interrupted",
+                             "step": "text_features|pca|training|...",
+                             "final_metrics": {...}, "mlflow_run_id": "..."}
 GET  /health
 GET  /metrics
 ```
 
-Training runs in a background thread.  Airflow polls `/train/status/{job_id}` every 60 s
-with a 4-hour timeout and up to 10 consecutive failure retries.
+Training runs in an isolated subprocess (`run_full_pipeline.py`) with `LD_PRELOAD=jemalloc` to prevent TF allocator crashes.  
+Airflow polls `/train/status/{job_id}` every 60 s with a 4-hour timeout.  
+Only one job runs at a time — a second `POST /train` returns **409** while a job is in progress.
+
+### minilm-encoder — Bulk Sentence Encoding
+
+```
+POST /encode             Encodes data/X_train_update.csv → text_features_minilm.npy
+                         (idempotent — skips if cache already exists)
+GET  /status             → {"status": "idle|encoding|done|error", "message": "..."}
+GET  /health
+```
 
 ### predict-api — Inference
 
 ```
-POST /predict-text        {"description": "leather handbag"}
+POST /predict-text        {"description": "leather handbag", "model": "cv"}
+                          model: "cv" (default) | "minilm"
 POST /predict-image       {"image_base64": "<base64 JPEG>"}
-POST /predict-multimodal  {"description": "...", "image_base64": "..."}
-POST /reload-artifacts    reload model + PCA + vectorizer from disk/MLflow
+POST /predict-multimodal  {"description": "...", "image_base64": "...", "model": "cv"}
+POST /reload-artifacts    reload all models + PCA + vectorizer from disk
 GET  /health
 GET  /metrics
 ```
@@ -165,11 +217,16 @@ Each prediction endpoint returns:
 ```json
 {
   "pred_class": 40,
-  "label": "product_40",
+  "label": "40",
+  "category": "Movies & DVDs",
   "probs": [[0.02, 0.85, ...]],
-  "mode": "text_only | image_only | multimodal"
+  "mode": "text_only | image_only | multimodal",
+  "encoder": "cv | minilm"
 }
 ```
+
+Both `model_cv` and `model_minilm` are loaded simultaneously at startup.  
+predict-api uses `LD_PRELOAD=jemalloc` so TF and sentence-transformers can coexist in the same process.
 
 ---
 
@@ -205,6 +262,8 @@ Grafana is auto-provisioned with a **22-panel Rakuten Drift Dashboard** at `http
 |----------|-----|
 | Code repository | https://github.com/zz75da/rakuten_z |
 | DagsHub (data + MLflow) | https://dagshub.com/zz75da/rakuten_z |
+| MLflow experiments | https://dagshub.com/zz75da/rakuten_z/experiments |
+| Model Registry | https://dagshub.com/zz75da/rakuten_z/models |
 
 ### DVC workflow
 
@@ -216,43 +275,73 @@ dvc push                  # upload new artifacts after training
 
 ### MLflow experiments
 
-Training runs log:
-- Parameters: `n_components_img`, `pca_text_n_components`, `epochs`, `batch_size`, `copy`
-- Metrics: `accuracy`, `val_accuracy`, `loss`, `val_loss` (per epoch)
-- Artefacts: `neural_network_model.keras`, `pca_image.pkl`, `pca_text.pkl`, `text_vectorizer.pkl`, `label_encoder.pkl`
-- Dataset inputs via `mlflow.log_input`
+Each training run (CV or MiniLM) logs:
+
+**Parameters** (visible as columns in DagsHub experiments):
+
+| Parameter | Description |
+|-----------|-------------|
+| `text_encoder` | `countvectorizer` or `minilm` |
+| `model_name` | `rakuten_multimodal_cv` or `rakuten_multimodal_minilm` |
+| `input_dim` | Combined feature vector size (1324 or 684) |
+| `dataset_rows` | Training set size |
+| `epochs_max` / `actual_epochs_trained` | Configured vs early-stopped |
+| `batch_size`, `learning_rate` | Optimiser settings |
+| `pca_image_components`, `pca_text_components` | PCA reduction sizes |
+
+**Metrics:** `train_loss`, `val_loss`, `train_accuracy`, `val_accuracy` (per epoch) + `final_val_accuracy`
+
+**Artefacts:**
+
+| File | Encoder |
+|------|---------|
+| `neural_network_model.keras` | CV |
+| `neural_network_model_minilm.keras` | MiniLM |
+| `train_history.json` | CV |
+| `train_history_minilm.json` | MiniLM |
+| `pca_image.pkl`, `pca_text.pkl` | CV (image PCA shared) |
+| `text_vectorizer.pkl`, `label_encoder.pkl` | both |
+
+### MLflow Model Registry
+
+Both models are registered as separate named models:
+
+- **`rakuten_multimodal_cv`** — CountVectorizer + PCA encoder
+- **`rakuten_multimodal_minilm`** — MiniLM multilingual encoder
+
+Each version is tagged with `encoder`, `task`, `dataset`, and `framework`.  
+Run names follow the pattern `cv_train_YYYYMMDD_HHMM` / `minilm_train_YYYYMMDD_HHMM`.
 
 ---
 
 ## Test Suite
 
 ```bash
-# Recommended — Python 3.12 on host
-py -3.12 -m pytest tests/unit/        # unit tests only  (~30 s)
-py -3.12 -m pytest tests/integration/ # integration tests (~3 min, spacy required)
-py -3.12 -m pytest tests/             # full suite
+# Run inside the predict-api container (correct dependency environment)
+docker run --rm -v "$(pwd):/proj" -w /proj \
+  rakuten_mlops_services-predict-api:latest \
+  sh -c "pip install pytest pyjwt pillow -q && python -m pytest tests/unit/ -q"
 ```
 
-**Current status: 96 passed, 9 skipped** (TensorFlow not required on host — image tests skip cleanly).
+**Current status: 36 unit tests passing** (TF-dependent tests skip cleanly without a real TF runtime).
 
 ### Test files
 
 | File | Scope | What it tests |
 |------|-------|---------------|
 | `tests/unit/test_gate_api.py` | Unit | Login, JWT claims, token validation |
-| `tests/unit/test_predict_api.py` | Unit | All predict endpoints, drift metrics, reload |
-| `tests/unit/test_train_api.py` | Unit | Async /train, RBAC, job registry, status polling |
-| `tests/unit/test_artifacts.py` | Unit | save_artifacts() — create / skip / overwrite |
-| `tests/unit/test_models.py` | Unit | Vectorizer, LabelEncoder, Keras architecture |
-| `tests/unit/test_pca_reducer.py` | Unit | reduce_features() shape, dtype, PCA objects |
+| `tests/unit/test_predict_api.py` | Unit | All predict endpoints, dual-model globals, drift metrics, reload, encoder field, 503 for unavailable MiniLM |
+| `tests/unit/test_train_api.py` | Unit | Async /train, RBAC, job registry, status polling, **409 concurrent-training guard** |
+| `tests/unit/test_artifacts.py` | Unit | `save_artifacts()` for CV and MiniLM — file sets, skip/overwrite, round-trip |
+| `tests/unit/test_models.py` | Unit | Vectorizer, LabelEncoder, Keras architecture for **both** input dims (1324 / 684) |
+| `tests/unit/test_pca_reducer.py` | Unit | `reduce_features()` shape, dtype, PCA objects |
 | `tests/unit/test_preprocess_text.py` | Unit | Text cleaning + CountVectorizer properties |
 | `tests/unit/test_preprocess_image.py` | Unit | ResNet50 output shape (skipped without TF) |
 | `tests/unit/test_preprocess.py` | Unit | Cross-module smoke tests |
 | `tests/integration/test_api_integration.py` | Integration | JWT login → validate cross-service flow |
 | `tests/integration/test_pipeline.py` | Integration | Text → PCA mini-pipeline, determinism |
-| `tests/integration/test_workflow.py` | Integration | Full async training job lifecycle |
+| `tests/integration/test_workflow.py` | Integration | Full async training job lifecycle, **409 concurrent rejection** |
 
-Test dependencies are in `tests/requirements-test.txt`.  
 Log files with the **last 3 runs** per category are written automatically to `tests/logs/`.
 
 ---
@@ -262,7 +351,7 @@ Log files with the **last 3 runs** per category are written automatically to `te
 ```
 rakuten_mlops_services/
 ├── airflow/
-│   ├── dags/train_dag.py          # poll-based async training DAG
+│   ├── dags/train_dag.py          # poll-based async DAG: encode → train CV → train MiniLM
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── gate-api/
@@ -270,45 +359,49 @@ rakuten_mlops_services/
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── train-api/
-│   ├── app.py                     # async training API
+│   ├── app.py                     # async training API (409 guard, job persistence)
 │   ├── services/
 │   │   ├── data_loader.py
 │   │   ├── preprocess_text.py
 │   │   ├── preprocess_image.py
-│   │   ├── pca_reducer.py
-│   │   ├── trainer.py             # MLflow logging, Keras model
-│   │   └── artifacts.py
-│   ├── Dockerfile
+│   │   ├── pca_reducer.py         # IncrementalPCA, batch-safe
+│   │   ├── run_pca.py             # PCA subprocess (writes result to temp JSON file)
+│   │   ├── run_full_pipeline.py   # full training subprocess (TF isolated from uvicorn)
+│   │   ├── trainer.py             # MLflow logging, Keras model, encoder-specific filenames
+│   │   └── artifacts.py          # save_artifacts() — CV and MiniLM file sets
+│   ├── Dockerfile                 # tensorflow:2.17.0 + libjemalloc2
+│   └── requirements.txt
+├── minilm-encoder/
+│   ├── app.py                     # FastAPI service: bulk MiniLM encoding to .npy cache
+│   ├── encode.py
+│   ├── Dockerfile                 # python:3.11-slim + CPU-only torch
 │   └── requirements.txt
 ├── predict-api/
-│   ├── app.py                     # multimodal inference + drift metrics
-│   ├── Dockerfile
-│   └── requirements.txt
-├── mlflow_docker/
-│   ├── Dockerfile
-│   ├── entrypoint.sh
+│   ├── app.py                     # dual-model inference: model_cv + model_minilm
+│   ├── Dockerfile                 # python:3.11-slim + libjemalloc2
 │   └── requirements.txt
 ├── streamlit/
-│   ├── app_streamlit.py           # demo UI + service status
+│   ├── app_streamlit.py           # demo UI + pipeline presentation + live training curves
 │   └── requirements.txt
 ├── monitoring/
 │   ├── prometheus.yml
 │   ├── alert-rules.yml
-│   ├── alertmanager.yml
+│   ├── alertmanager.yml.tmpl
 │   └── grafana_dashboards/
 │       └── rakuten_drift_dashboard.json
 ├── grafana/
 │   └── provisioning/datasources/
-│       └── prometheus.yml         # auto-provisioned datasource
+│       └── prometheus.yml
 ├── tests/
 │   ├── conftest.py                # shared fixtures + rotating log plugin
-│   ├── unit/                      # 9 unit test modules
+│   ├── unit/                      # 9 unit test modules (36 tests)
 │   ├── integration/               # 3 integration test modules
 │   ├── logs/                      # last-3-runs log files (auto-generated)
 │   └── requirements-test.txt
+├── dvc.yaml                       # data pipeline definition (displayed in DagsHub)
 ├── docker-compose.yml
 ├── pytest.ini
-└── requirements.txt
+└── params.yaml
 ```
 
 ---
@@ -319,12 +412,11 @@ Copy `.env.example` to `.env` and fill in:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MLFLOW_TRACKING_URI` | `http://mlflow:5000` | MLflow server URL |
-| `MLFLOW_TRACKING_USERNAME` | — | DagsHub username |
-| `MLFLOW_TRACKING_PASSWORD` | — | DagsHub token |
-| `MLFLOW_EXPERIMENT_NAME` | `rakuten_z` | MLflow experiment name |
-| `MLFLOW_MODEL_NAME` | `rakuten_multimodal` | Registered model name |
-| `DAGSHUB_USER` | — | DagsHub username (DVC remote) |
+| `DAGSHUB_USER` | — | DagsHub username (DVC remote + MLflow auth) |
 | `DAGSHUB_TOKEN` | — | DagsHub access token |
-| `ARTIFACTS_PATH` | `/app/data/artifacts` | Path to serialised model artefacts |
+| `MLFLOW_EXPERIMENT_NAME` | `rakuten_z` | MLflow experiment name |
+| `MLFLOW_MODEL_NAME` | `rakuten_multimodal` | Base name — suffixed `_cv` or `_minilm` at registration |
+| `ARTIFACTS_PATH` | `/app/data/artifacts` | Path to serialised model artefacts (predict-api) |
 | `GATE_API_URL` | `http://gate-api:5000` | Internal gate-api address |
+| `PREDICT_API_URL` | `http://predict-api:5003` | Internal predict-api address (used by train-api after training) |
+| `LD_PRELOAD` | `/usr/lib/x86_64-linux-gnu/libjemalloc.so.2` | jemalloc allocator — prevents TF/glibc heap corruption in train-api and predict-api |

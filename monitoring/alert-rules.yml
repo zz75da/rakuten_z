@@ -2,28 +2,8 @@ groups:
 - name: rakuten-mlops-alerts
   rules:
 
-  # --- AIRFLOW ALERTS ---
-  - alert: AirflowSchedulerDown
-    expr: airflow_scheduler_heartbeat < 1
-    for: 5m
-    labels:
-      severity: critical
-      service: airflow
-    annotations:
-      summary: Airflow scheduler is down
-      description: Airflow scheduler container is not running
+  # ── API service availability ───────────────────────────────────────────────
 
-  - alert: AirflowDagFailed
-    expr: airflow_dag_run_failed > 0
-    for: 2m
-    labels:
-      severity: warning
-      service: airflow
-    annotations:
-      summary: DAG {{ $labels.dag_id }} has failed runs
-      description: DAG run has failed
-
-  # --- API SERVICE ALERTS ---
   - alert: TrainAPIDown
     expr: up{job="train-api"} == 0
     for: 3m
@@ -31,8 +11,8 @@ groups:
       severity: critical
       service: train-api
     annotations:
-      summary: Train API container is not responding
-      description: Train API service is down
+      summary: Train API is not responding
+      description: The train-api container has been unreachable for 3 minutes.
 
   - alert: PredictAPIDown
     expr: up{job="predict-api"} == 0
@@ -41,10 +21,55 @@ groups:
       severity: critical
       service: predict-api
     annotations:
-      summary: Predict API container is not responding
-      description: Predict API service is down
+      summary: Predict API is not responding
+      description: The predict-api container has been unreachable for 3 minutes.
 
-  # --- DATABASE ALERTS ---
+  - alert: MiniLMEncoderDown
+    expr: up{job="minilm-encoder"} == 0
+    for: 3m
+    labels:
+      severity: warning
+      service: minilm-encoder
+    annotations:
+      summary: MiniLM encoder service is not responding
+      description: >
+        The minilm-encoder container has been unreachable for 3 minutes.
+        MiniLM text encoding will fail if the Airflow DAG is triggered.
+
+  - alert: GateAPIDown
+    expr: up{job="gate-api"} == 0
+    for: 2m
+    labels:
+      severity: critical
+      service: gate-api
+    annotations:
+      summary: Gate API is not responding
+      description: The gate-api (JWT auth) container has been unreachable for 2 minutes. All authenticated endpoints are blocked.
+
+  # ── Airflow ───────────────────────────────────────────────────────────────
+
+  - alert: AirflowSchedulerDown
+    expr: airflow_scheduler_heartbeat < 1
+    for: 5m
+    labels:
+      severity: critical
+      service: airflow
+    annotations:
+      summary: Airflow scheduler is down
+      description: The Airflow scheduler has not sent a heartbeat for 5 minutes.
+
+  - alert: AirflowDagFailed
+    expr: airflow_dag_run_failed > 0
+    for: 2m
+    labels:
+      severity: warning
+      service: airflow
+    annotations:
+      summary: "DAG {{ $labels.dag_id }} has failed runs"
+      description: One or more Airflow DAG runs have failed.
+
+  # ── Storage & database ────────────────────────────────────────────────────
+
   - alert: PostgresqlDown
     expr: up{job="postgres"} == 0
     for: 2m
@@ -52,20 +77,9 @@ groups:
       severity: critical
       service: postgres
     annotations:
-      summary: PostgreSQL container is not running
-      description: PostgreSQL database is down
+      summary: PostgreSQL is not running
+      description: The PostgreSQL container (used by Airflow and MLflow) has been down for 2 minutes.
 
-  - alert: PostgresqlHighConnections
-    expr: pg_stat_activity_count > 50
-    for: 5m
-    labels:
-      severity: warning
-      service: postgres
-    annotations:
-      summary: PostgreSQL has many active connections
-      description: High number of database connections
-
-  # --- STORAGE ALERTS ---
   - alert: MinIODown
     expr: up{job="minio"} == 0
     for: 3m
@@ -73,8 +87,8 @@ groups:
       severity: critical
       service: minio
     annotations:
-      summary: MinIO container is not running
-      description: MinIO storage service is down
+      summary: MinIO is not running
+      description: The MinIO object storage container is down. MLflow artifact uploads will fail.
 
   - alert: DiskSpaceLow
     expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100 < 10
@@ -83,19 +97,38 @@ groups:
       severity: critical
       service: storage
     annotations:
-      summary: Only {{ $value | printf "%.1f" }}% disk space remaining
-      description: Disk space is running low
+      summary: "Only {{ $value | printf \"%.1f\" }}% disk space remaining"
+      description: >
+        Root filesystem is nearly full. Feature caches (~2.4 GB) and model
+        artifacts will fail to write. Free space or prune Docker images.
 
-  # --- MODEL PERFORMANCE ALERTS ---
-  - alert: ModelValAccuracyLow
-    expr: val_accuracy < 0.7
+  # ── Model quality — per encoder ───────────────────────────────────────────
+
+  - alert: CVModelValAccuracyLow
+    expr: model_final_val_accuracy{encoder="countvectorizer"} < 0.70
     for: 30m
     labels:
       severity: warning
       service: train-api
     annotations:
-      summary: Model validation accuracy is {{ $value | printf "%.2f" }}
-      description: Model validation accuracy has dropped below 0.70
+      summary: "CV model val accuracy is {{ $value | printf \"%.2f\" }}"
+      description: >
+        The CountVectorizer model's validation accuracy has dropped below 0.70
+        after the latest training run. Consider retraining or checking data quality.
+
+  - alert: MiniLMModelValAccuracyLow
+    expr: model_final_val_accuracy{encoder="minilm"} < 0.70
+    for: 30m
+    labels:
+      severity: warning
+      service: train-api
+    annotations:
+      summary: "MiniLM model val accuracy is {{ $value | printf \"%.2f\" }}"
+      description: >
+        The MiniLM model's validation accuracy has dropped below 0.70
+        after the latest training run. Consider retraining or checking data quality.
+
+  # ── Prediction latency ────────────────────────────────────────────────────
 
   - alert: PredictionLatencyHigh
     expr: histogram_quantile(0.95, rate(predict_request_latency_seconds_bucket[5m])) > 5
@@ -104,50 +137,10 @@ groups:
       severity: warning
       service: predict-api
     annotations:
-      summary: P95 prediction latency is {{ $value | printf "%.1f" }}s
-      description: 95th-percentile prediction latency exceeds 5 seconds
-
-  # --- DRIFT DETECTION ALERTS ---
-  - alert: PredictionConfidenceDrift
-    expr: histogram_quantile(0.5, sum(rate(prediction_confidence_bucket[15m])) by (le)) < 0.4
-    for: 15m
-    labels:
-      severity: warning
-      service: predict-api
-    annotations:
-      summary: Median prediction confidence dropped to {{ $value | printf "%.2f" }}
+      summary: "P95 prediction latency is {{ $value | printf \"%.1f\" }}s"
       description: >
-        The median confidence of predictions is below 0.40. The model may be
-        receiving out-of-distribution inputs — possible data drift.
-
-  - alert: PredictionEntropyHigh
-    expr: histogram_quantile(0.9, sum(rate(prediction_entropy_bucket[15m])) by (le)) > 2.5
-    for: 15m
-    labels:
-      severity: warning
-      service: predict-api
-    annotations:
-      summary: P90 prediction entropy is {{ $value | printf "%.2f" }} nats
-      description: >
-        The 90th-percentile entropy of prediction distributions exceeds 2.5 nats.
-        High entropy indicates the model is uncertain — possible concept drift.
-
-  - alert: ClassDistributionSkewed
-    expr: >
-      max(rate(prediction_class_total[30m])) by (label)
-      /
-      sum(rate(prediction_class_total[30m]))
-      > 0.8
-    for: 20m
-    labels:
-      severity: warning
-      service: predict-api
-    annotations:
-      summary: One class accounts for >80% of predictions
-      description: >
-        Class distribution is heavily skewed — a single label exceeds 80% of
-        recent predictions. Check for data quality issues or feature pipeline
-        failures.
+        95th-percentile prediction latency exceeds 5 seconds. This may indicate
+        the model is overloaded or ResNet50 feature extraction is slow.
 
   - alert: HighPredictionErrorRate
     expr: >
@@ -160,10 +153,53 @@ groups:
       severity: critical
       service: predict-api
     annotations:
-      summary: Prediction error rate is {{ $value | printf "%.0f%%" }}
-      description: More than 10% of prediction requests are returning 5xx errors
+      summary: "Prediction error rate is {{ $value | printf \"%.0f%%\" }}"
+      description: More than 10% of prediction requests are returning 5xx errors.
 
-  # --- RESOURCE USAGE ALERTS ---
+  # ── Drift detection ───────────────────────────────────────────────────────
+
+  - alert: PredictionConfidenceDrift
+    expr: histogram_quantile(0.5, sum(rate(prediction_confidence_bucket[15m])) by (le, endpoint)) < 0.4
+    for: 15m
+    labels:
+      severity: warning
+      service: predict-api
+    annotations:
+      summary: "Median prediction confidence dropped to {{ $value | printf \"%.2f\" }}"
+      description: >
+        The median confidence of predictions on {{ $labels.endpoint }} is below 0.40.
+        The model may be receiving out-of-distribution inputs — possible data drift.
+
+  - alert: PredictionEntropyHigh
+    expr: histogram_quantile(0.9, sum(rate(prediction_entropy_bucket[15m])) by (le, endpoint)) > 2.5
+    for: 15m
+    labels:
+      severity: warning
+      service: predict-api
+    annotations:
+      summary: "P90 prediction entropy is {{ $value | printf \"%.2f\" }} nats on {{ $labels.endpoint }}"
+      description: >
+        The 90th-percentile entropy of prediction distributions exceeds 2.5 nats.
+        High entropy indicates the model is uncertain — possible concept drift.
+
+  - alert: ClassDistributionSkewed
+    expr: >
+      max(rate(prediction_class_total[30m])) by (label, endpoint)
+      /
+      sum(rate(prediction_class_total[30m])) by (endpoint)
+      > 0.8
+    for: 20m
+    labels:
+      severity: warning
+      service: predict-api
+    annotations:
+      summary: "Class {{ $labels.label }} accounts for >80% of predictions on {{ $labels.endpoint }}"
+      description: >
+        Class distribution is heavily skewed. A single label exceeds 80% of
+        recent predictions. Check for data quality issues or feature pipeline failures.
+
+  # ── Resource usage ────────────────────────────────────────────────────────
+
   - alert: HighMemoryUsage
     expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 90
     for: 10m
@@ -171,8 +207,10 @@ groups:
       severity: warning
       service: system
     annotations:
-      summary: Memory usage at {{ $value | printf "%.1f" }}%
-      description: System memory usage exceeds 90%
+      summary: "Memory usage at {{ $value | printf \"%.1f\" }}%"
+      description: >
+        System memory usage exceeds 90%. Training runs (~8 GB peak with both
+        CV and MiniLM) may OOM-kill if another process is competing.
 
   - alert: HighCPUUsage
     expr: 100 - (avg by(instance)(irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
@@ -181,6 +219,5 @@ groups:
       severity: warning
       service: system
     annotations:
-      summary: CPU usage at {{ $value | printf "%.1f" }}%
-      description: System CPU usage exceeds 80%
-
+      summary: "CPU usage at {{ $value | printf \"%.1f\" }}%"
+      description: System CPU usage exceeds 80%.

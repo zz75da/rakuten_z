@@ -2,37 +2,19 @@ from fastapi import FastAPI, HTTPException, Header, Depends
 from pydantic import BaseModel
 from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_client import Gauge, Counter
-from services.data_loader import load_and_merge_data
-from services.preprocess_text import extract_text_features
-from services.preprocess_image import extract_image_features
-from services.pca_reducer import reduce_features
-from services.trainer import build_and_train_model, evaluate_model
-from services.artifacts import save_artifacts
 from utils.logger import get_logger
-import requests
 import os
+import sys
 import uuid
-import pickle
+import json
 import threading
-import numpy as np
-import mlflow
+import subprocess
+import httpx
 from datetime import datetime, timezone
 from typing import Dict, Any
-import httpx
 
 logger = get_logger()
 app = FastAPI(title="Train API", description="Preprocessing + training", version="1.0")
-
-# --- MLflow Configuration ---
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
-MLFLOW_TRACKING_USERNAME = os.getenv("MLFLOW_TRACKING_USERNAME", "")
-MLFLOW_TRACKING_PASSWORD = os.getenv("MLFLOW_TRACKING_PASSWORD", "")
-EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "rakuten_z")
-
-mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-if MLFLOW_TRACKING_USERNAME and MLFLOW_TRACKING_PASSWORD:
-    mlflow.set_experiment(EXPERIMENT_NAME)
-    logger.info(f"MLflow configured with DagsHub: {MLFLOW_TRACKING_URI}")
 
 # --- Prometheus metrics ---
 train_loss_gauge = Gauge("train_loss", "Training loss per epoch")
@@ -43,20 +25,21 @@ epochs_counter = Counter("epochs_completed_total", "Total epochs completed")
 
 dataset_size_gauge = Gauge("training_dataset_size", "Number of samples in the training set")
 num_classes_gauge = Gauge("model_num_classes", "Number of target classes in the trained model")
-final_accuracy_gauge = Gauge("model_final_accuracy", "Final training accuracy of last run")
-final_val_accuracy_gauge = Gauge("model_final_val_accuracy", "Final validation accuracy of last run")
-final_loss_gauge = Gauge("model_final_loss", "Final training loss of last run")
-final_val_loss_gauge = Gauge("model_final_val_loss", "Final validation loss of last run")
+final_accuracy_gauge = Gauge("model_final_accuracy", "Final training accuracy of last run", ["encoder"])
+final_val_accuracy_gauge = Gauge("model_final_val_accuracy", "Final validation accuracy of last run", ["encoder"])
+final_loss_gauge = Gauge("model_final_loss", "Final training loss of last run", ["encoder"])
+final_val_loss_gauge = Gauge("model_final_val_loss", "Final validation loss of last run", ["encoder"])
 
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 GATE_API_URL = os.getenv("GATE_API_URL", "http://gate-api:5000")
 X_CSV = os.getenv("TRAIN_CSV_X_PATH", "/app/data/X_train_update.csv")
 Y_CSV = os.getenv("TRAIN_CSV_Y_PATH", "/app/data/Y_train_CVw08PX.csv")
+JOB_DIR = "/app/data/jobs"
 
 # --- Request model ---
 class TrainRequest(BaseModel):
-    use_dev_images: bool = True
+    use_dev_images: bool = False
     epochs: int = 30
     batch_size: int = 128
     use_cache: bool = True
@@ -66,33 +49,51 @@ class TrainRequest(BaseModel):
 _training_jobs: Dict[str, Dict[str, Any]] = {}
 
 
+def _load_persisted_jobs():
+    """Recover job results from disk on startup — prevents 404s after restarts."""
+    if not os.path.exists(JOB_DIR):
+        return
+    for fname in os.listdir(JOB_DIR):
+        if not fname.endswith(".json"):
+            continue
+        job_id = fname[:-5]
+        try:
+            with open(os.path.join(JOB_DIR, fname)) as f:
+                job = json.load(f)
+            if job.get("status") == "running":
+                job["status"] = "interrupted"
+                job["error"] = "train-api restarted while job was running — re-trigger a new DAG run"
+            _training_jobs[job_id] = job
+        except Exception as e:
+            logger.warning(f"Could not load persisted job {job_id}: {e}")
+
+
+_load_persisted_jobs()
 
 
 async def verify_jwt_token(authorization: str = Header(...)):
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid authorization header")
-    
+
     token = authorization.split(" ")[1]
-    
+
     try:
-        # On utilise un client asynchrone httpx pour ne pas bloquer l'event loop
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{GATE_API_URL}/validate-token",
                 headers={"Authorization": f"Bearer {token}"},
-                timeout=10.0, # Augmenté légèrement pour la sécurité inter-services
+                timeout=10.0,
             )
-        
+
         if resp.status_code != 200:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
-        
+
         try:
             return resp.json()
         except Exception:
             raise HTTPException(status_code=502, detail="Gate-api returned non-JSON response")
-            
+
     except httpx.RequestError as exc:
-        # Gestion spécifique des erreurs réseau httpx
         raise HTTPException(status_code=503, detail=f"Cannot reach gate-api: {exc}")
     except HTTPException:
         raise
@@ -101,133 +102,78 @@ async def verify_jwt_token(authorization: str = Header(...)):
 
 
 def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch_size: int, use_cache: bool = True, text_encoder: str = "countvectorizer"):
-    """Execute the full training pipeline in a background thread."""
+    """Spawn the full training pipeline in an isolated subprocess.
+
+    TF never initializes in the main uvicorn process — eliminates the
+    'double free or corruption (fasttop)' crash caused by TF's allocator
+    hooks conflicting with glibc's heap after PCA frees large arrays.
+    """
     mode = "DEV" if use_dev_images else "FULL TRAIN"
-    logger.info(f"[job={job_id}] Training pipeline started (mode={mode})")
+    logger.info(f"[job={job_id}] Spawning training subprocess (mode={mode})")
+
+    os.makedirs(JOB_DIR, exist_ok=True)
 
     try:
         _training_jobs[job_id]["status"] = "running"
 
-        train_data = load_and_merge_data(use_dev_images=use_dev_images)
-        os.makedirs("data/feature_cache", exist_ok=True)
-
-        IMAGE_CACHE = "data/feature_cache/image_features.npy"
-
-        # --- Text feature extraction ---
-        if text_encoder == "minilm":
-            TEXT_CACHE = "data/feature_cache/text_features_minilm.npy"
-            if not os.path.exists(TEXT_CACHE):
-                raise RuntimeError(
-                    "MiniLM feature cache not found. "
-                    "Run: docker-compose --profile minilm run --rm minilm-encoder"
-                )
-            logger.info(f"Using cached MiniLM text features: {TEXT_CACHE}")
-            text_vectorizer = None  # predict-api loads SentenceTransformer directly
-        else:
-            TEXT_CACHE = "data/feature_cache/text_features.npy"
-            VECTORIZER_CACHE = "data/artifacts/text_vectorizer.pkl"
-            if use_cache and os.path.exists(TEXT_CACHE) and os.path.exists(VECTORIZER_CACHE):
-                logger.info(f"Using cached text features: {TEXT_CACHE}")
-                with open(VECTORIZER_CACHE, "rb") as f:
-                    text_vectorizer = pickle.load(f)
-            else:
-                logger.info("Extracting text features...")
-                text_features, text_vectorizer = extract_text_features(train_data)
-                np.save(TEXT_CACHE, text_features)
-
-        # --- Image feature extraction ---
-        if use_cache and os.path.exists(IMAGE_CACHE):
-            logger.info(f"Using cached image features: {IMAGE_CACHE} — skipping 37h ResNet50 extraction")
-            image_features_path = IMAGE_CACHE
-        else:
-            logger.info("Extracting image features...")
-            image_features_path = extract_image_features(train_data)
-            if not image_features_path:
-                raise RuntimeError("Image feature extraction produced no features")
-
-        X_reduced_path, pca_img_path, pca_text_path = reduce_features(
-            text_features_path=TEXT_CACHE,
-            image_features_path=IMAGE_CACHE,
-            text_encoder=text_encoder,
-        )
-        X_reduced = np.load(X_reduced_path)
-        with open(pca_img_path, "rb") as f:
-            pca_img = pickle.load(f)
-        pca_text = None
-        if pca_text_path and os.path.exists(pca_text_path):
-            with open(pca_text_path, "rb") as f:
-                pca_text = pickle.load(f)
-        pca_models = {"image": pca_img, "text": pca_text}
-
-        y = train_data["prdtypecode"]
-        dataset_size_gauge.set(len(train_data))
-
-        (model, label_encoder, history, model_path, run_id, model_version, eval_results) = (
-            build_and_train_model(
-                X_reduced, y,
-                epochs=epochs, batch_size=batch_size,
-                pca_models=pca_models,
-                train_data=train_data,
-                x_csv_path=X_CSV,
-                y_csv_path=Y_CSV,
-                text_encoder=text_encoder,
-                use_dev_images=use_dev_images,
-            )
+        proc = subprocess.run(
+            [
+                sys.executable, "/app/services/run_full_pipeline.py",
+                job_id, text_encoder,
+                str(epochs), str(batch_size),
+                str(use_dev_images), str(use_cache),
+            ],
+            capture_output=True, text=True, cwd="/app",
         )
 
-        save_artifacts(model, text_vectorizer, pca_models, label_encoder, skip_existing=False, text_encoder=text_encoder)
+        # Read result written by subprocess
+        job_file = os.path.join(JOB_DIR, f"{job_id}.json")
+        if os.path.exists(job_file):
+            with open(job_file) as f:
+                result = json.load(f)
+            _training_jobs[job_id].update(result)
 
-        # Notify predict-api to reload artifacts from disk
-        predict_api_url = os.getenv("PREDICT_API_URL", "http://predict-api:5003")
-        try:
-            r = requests.post(f"{predict_api_url}/reload-artifacts", timeout=30)
-            if r.ok:
-                logger.info("predict-api artifacts reloaded successfully")
-            else:
-                logger.warning(f"predict-api reload returned {r.status_code}: {r.text[:200]}")
-        except Exception as reload_exc:
-            logger.warning(f"Could not notify predict-api to reload (non-blocking): {reload_exc}")
+        if proc.returncode != 0:
+            if _training_jobs[job_id].get("status") != "failed":
+                _training_jobs[job_id].update({
+                    "status": "failed",
+                    "error": f"subprocess rc={proc.returncode}: {proc.stderr[-2000:]}",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                })
+            logger.error(f"[job={job_id}] Training subprocess failed (rc={proc.returncode}): {proc.stderr[-500:]}")
+            return
 
-        # Update Prometheus
-        num_classes_gauge.set(len(label_encoder.classes_))
+        logger.info(f"[job={job_id}] Training completed successfully")
+
+        # Update Prometheus from subprocess result
+        result = _training_jobs[job_id]
+        num_classes_gauge.set(result.get("num_classes", 0))
+        dataset_size_gauge.set(result.get("dataset_size", 0))
+        history_data = result.get("history", {})
         for t_loss, v_loss, t_acc, v_acc in zip(
-            history.history.get("loss", []),
-            history.history.get("val_loss", []),
-            history.history.get("accuracy", []),
-            history.history.get("val_accuracy", []),
+            history_data.get("loss", []),
+            history_data.get("val_loss", []),
+            history_data.get("accuracy", []),
+            history_data.get("val_accuracy", []),
         ):
             train_loss_gauge.set(t_loss)
             val_loss_gauge.set(v_loss)
             train_acc_gauge.set(t_acc)
             val_acc_gauge.set(v_acc)
             epochs_counter.inc()
-
-        losses = history.history.get("loss", [])
-        val_losses = history.history.get("val_loss", [])
-        accs = history.history.get("accuracy", [])
-        val_accs = history.history.get("val_accuracy", [])
+        losses = history_data.get("loss", [])
+        val_losses = history_data.get("val_loss", [])
+        accs = history_data.get("accuracy", [])
+        val_accs = history_data.get("val_accuracy", [])
+        enc = text_encoder
         if losses:
-            final_loss_gauge.set(losses[-1])
+            final_loss_gauge.labels(encoder=enc).set(losses[-1])
         if val_losses:
-            final_val_loss_gauge.set(val_losses[-1])
+            final_val_loss_gauge.labels(encoder=enc).set(val_losses[-1])
         if accs:
-            final_accuracy_gauge.set(accs[-1])
+            final_accuracy_gauge.labels(encoder=enc).set(accs[-1])
         if val_accs:
-            final_val_accuracy_gauge.set(val_accs[-1])
-
-        result = {
-            "status": "success",
-            "mode": mode,
-            "model_path": model_path,
-            "mlflow_run_id": run_id,
-            "mlflow_model_version": model_version,
-            "train_params": {"epochs": epochs, "batch_size": batch_size},
-            "final_metrics": eval_results,
-            "history": {k: [float(v) for v in vals] for k, vals in history.history.items()},
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        }
-        _training_jobs[job_id].update(result)
-        logger.info(f"[job={job_id}] Training completed successfully")
+            final_val_accuracy_gauge.labels(encoder=enc).set(val_accs[-1])
 
     except Exception as exc:
         logger.exception(f"[job={job_id}] Training failed: {exc}")
@@ -248,6 +194,14 @@ async def train_model(
     """Start training asynchronously. Returns a job_id to poll with GET /train/status/{job_id}."""
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Only admin can trigger training")
+
+    # Reject if a job is already running — all jobs share the same feature cache paths
+    running = [j for j in _training_jobs.values() if j.get("status") == "running"]
+    if running:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Training job {running[0]['job_id']} already in progress — wait for it to finish",
+        )
 
     job_id = str(uuid.uuid4())
     _training_jobs[job_id] = {
@@ -273,12 +227,66 @@ async def train_model(
 
 
 @app.get("/train/status/{job_id}")
-async def training_status(job_id: str, user: dict = Depends(verify_jwt_token)):
-    """Poll training job status. Status: running | success | failed."""
+async def training_status(job_id: str, _user: dict = Depends(verify_jwt_token)):
+    """Poll training job status. Status: running | success | failed | interrupted."""
     job = _training_jobs.get(job_id)
+    if job is None:
+        # Fallback: check persisted file (survives restarts)
+        job_file = os.path.join(JOB_DIR, f"{job_id}.json")
+        if os.path.exists(job_file):
+            with open(job_file) as f:
+                job = json.load(f)
+            _training_jobs[job_id] = job
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
     return job
+
+
+@app.post("/push-cache")
+async def push_cache_endpoint():
+    """
+    Run `dvc add -f` on all existing .npy feature cache files then `dvc push`.
+    Called automatically by the Airflow DAG after both training runs complete.
+    """
+    cache_dir = "/app/data/feature_cache"
+    npy_files = [
+        "image_features.npy",
+        "text_features.npy",
+        "text_features_minilm.npy",
+    ]
+
+    results = {}
+
+    for fname in npy_files:
+        fpath = os.path.join(cache_dir, fname)
+        if os.path.exists(fpath):
+            r = subprocess.run(
+                ["dvc", "add", "-f", fpath],
+                capture_output=True, text=True, cwd="/app",
+            )
+            results[f"add_{fname}"] = {
+                "rc": r.returncode, "stdout": r.stdout.strip(), "stderr": r.stderr.strip()
+            }
+            if r.returncode != 0:
+                logger.warning(f"dvc add {fname} failed: {r.stderr.strip()}")
+            else:
+                logger.info(f"dvc add {fname}: OK")
+        else:
+            results[f"add_{fname}"] = {"rc": -1, "stdout": "", "stderr": "file not found — skipped"}
+
+    push = subprocess.run(
+        ["dvc", "push"],
+        capture_output=True, text=True, cwd="/app",
+    )
+    results["push"] = {
+        "rc": push.returncode, "stdout": push.stdout.strip(), "stderr": push.stderr.strip()
+    }
+    if push.returncode != 0:
+        logger.error(f"dvc push failed: {push.stderr.strip()}")
+        raise HTTPException(status_code=500, detail=f"dvc push failed: {push.stderr.strip()[:500]}")
+
+    logger.info("DVC feature cache pushed to remote successfully")
+    return {"status": "ok", "details": results}
 
 
 @app.get("/health")

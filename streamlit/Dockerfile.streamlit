@@ -31,9 +31,6 @@ RUN pip install --no-cache-dir --upgrade pip
 # Install Python packages
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install SpaCy French model
-RUN python -m spacy download fr_core_news_sm
-
 # === Stage 2: Final image ===
 FROM base AS final
 

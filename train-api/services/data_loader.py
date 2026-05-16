@@ -51,15 +51,27 @@ def load_and_merge_data(image_folder: str = None, use_dev_images: bool = None):
     # user has manually pruned images from image_train/ (or image_sample/).
     mode_label = "DEV" if "image_sample" in image_folder else "FULL"
 
+    # Build existence set with a single os.scandir call (one syscall) instead of
+    # one os.path.exists() per row (~85 k individual stat syscalls).
+    try:
+        existing_files = {e.name for e in os.scandir(IMAGE_PATH) if e.is_file()}
+    except FileNotFoundError:
+        existing_files = set()
+
     def construct_image_path(row):
         fname = f"image_{row['imageid']}_product_{row['productid']}.jpg"
-        full_path = os.path.join(IMAGE_PATH, fname)
-        if not os.path.exists(full_path):
-            logger.warning(f"[{mode_label} MODE] Missing image skipped: {full_path}")
+        if fname not in existing_files:
             return None
-        return full_path
+        return os.path.join(IMAGE_PATH, fname)
 
     train_data["image_path"] = train_data.apply(construct_image_path, axis=1)
+
+    # Log a sample of missing image names (not all 85k if entire folder is wrong)
+    missing_mask = train_data["image_path"].isna()
+    if missing_mask.any():
+        sample = train_data.loc[missing_mask, ["imageid", "productid"]].head(3)
+        for _, r in sample.iterrows():
+            logger.warning(f"[{mode_label} MODE] Missing image: image_{r['imageid']}_product_{r['productid']}.jpg")
 
     # Drop rows whose image is missing on disk.
     before = len(train_data)

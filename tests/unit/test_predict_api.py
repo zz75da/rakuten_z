@@ -85,13 +85,25 @@ app = _predict_fastapi_app
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def inject_mock_artifacts(mock_model, mock_label_encoder, mock_pca_image,
-                          mock_pca_text, mock_vectorizer):
-    """Inject mock ML objects into predict-api module globals."""
-    predict_app.model          = mock_model
-    predict_app.label_encoder  = mock_label_encoder
-    predict_app.pca_image      = mock_pca_image
-    predict_app.pca_text       = mock_pca_text
+                          mock_pca_text, mock_vectorizer, mock_minilm_encoder):
+    """Inject mock ML objects into predict-api module globals.
+
+    predict-api now has separate model_cv / model_minilm globals (dual-model
+    architecture).  model_minilm and minilm_encoder are set to None by default
+    so CV-only tests don't accidentally resolve the MiniLM branch.
+    resnet_model is mocked so extract_image_features() doesn't hit real ResNet.
+    """
+    mock_resnet = MagicMock()
+    mock_resnet.predict.return_value = np.zeros((1, 2048), dtype=np.float32)
+
+    predict_app.model_cv        = mock_model
+    predict_app.model_minilm    = None
+    predict_app.minilm_encoder  = None
+    predict_app.label_encoder   = mock_label_encoder
+    predict_app.pca_image       = mock_pca_image
+    predict_app.pca_text        = mock_pca_text
     predict_app.text_vectorizer = mock_vectorizer
+    predict_app.resnet_model    = mock_resnet
     yield
 
 
@@ -117,8 +129,9 @@ def client(valid_admin_token):
 # ---------------------------------------------------------------------------
 class TestHealth:
     def test_health_ok(self):
-        with TestClient(app) as c:
-            resp = c.get("/health")
+        with patch.object(predict_app, "load_artifacts"):
+            with TestClient(app) as c:
+                resp = c.get("/health")
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
@@ -135,10 +148,24 @@ class TestPredictText:
         assert "pred_class" in data
         assert "label" in data
         assert "probs" in data
+        assert "encoder" in data
         assert data["mode"] == "text_only"
+        assert data["encoder"] == "cv"  # default encoder
+
+    def test_encoder_field_reflects_selection(self, client):
+        resp = client.post("/predict-text",
+                           json={"description": "shoes", "model": "cv"})
+        assert resp.status_code == 200
+        assert resp.json()["encoder"] == "cv"
+
+    def test_minilm_unavailable_returns_503(self, client):
+        # model_minilm is None (set by inject_mock_artifacts) → 503
+        resp = client.post("/predict-text",
+                           json={"description": "shoes", "model": "minilm"})
+        assert resp.status_code == 503
 
     def test_probs_sum_to_one(self, client):
-        predict_app.model.predict.return_value = np.array([[0.2, 0.5, 0.1, 0.1, 0.1]])
+        predict_app.model_cv.predict.return_value = np.array([[0.2, 0.5, 0.1, 0.1, 0.1]])
         resp = client.post("/predict-text", json={"description": "shoes"})
         assert resp.status_code == 200
         probs = resp.json()["probs"][0]
@@ -217,8 +244,10 @@ class TestReloadArtifacts:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "reloaded"
-        assert "pca_text_components" in data
+        assert "cv_model_loaded" in data
+        assert "minilm_model_loaded" in data
         assert "pca_image_components" in data
+        assert data["pca_image_components"] == 300
 
     def test_reload_failure_returns_500(self, client):
         with patch.object(predict_app, "load_artifacts", side_effect=RuntimeError("disk error")):

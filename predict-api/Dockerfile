@@ -1,26 +1,26 @@
 # predict-api/Dockerfile
-# Base image
 FROM python:3.11-slim
 
 WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies (needed by OpenCV and TensorFlow)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     libglib2.0-0 libsm6 libxrender1 libxext6 libgl1 \
+    libjemalloc2 \
+    && JEMALLOC=$(find /usr/lib -name 'libjemalloc.so.2' 2>/dev/null | head -1) \
+    && [ -n "$JEMALLOC" ] && ln -sf "$JEMALLOC" /usr/local/lib/libjemalloc.so.2 || true \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
 COPY requirements.txt ./requirements.txt
 
-# Install project dependencies (and OpenCV if not in requirements.txt)
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir opencv-python-headless
+# Pre-install CPU-only torch so sentence-transformers doesn't pull CUDA wheels
+# (nvidia 2.7 GB + triton 700 MB) from the PyPI default index.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
-# Copy app source code
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY . .
 
 EXPOSE 5003

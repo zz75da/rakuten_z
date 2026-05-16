@@ -30,19 +30,18 @@ tmp/
 !dvc.lock
 
 # === Large data & artifacts (handled by DVC, not Git) ===
-data/
-artifacts/
-plots/
+# Use data/** (not data/) so git can traverse the directory and find .dvc pointer files
+data/**
+!data/**/
+!data/**/*.dvc
+!data/**/.gitignore
+artifacts/**
+!artifacts/**/
+!artifacts/**/*.dvc
+plots/**
+!plots/**/*.dvc
 metrics.json
 data-file.bin
-
-# BUT: never ignore DVC metafiles, even inside data/ or nested dirs
-!data/*.dvc
-!data/**/*.dvc
-!artifacts.dvc
-!artifacts/*.dvc
-!plots.dvc
-!plots/*.dvc
 
 # === Python ===
 __pycache__/

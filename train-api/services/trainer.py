@@ -1,179 +1,162 @@
 import os
+import gc
 import pickle
 import json
 import numpy as np
 import pandas as pd
 import mlflow
-import mlflow.tensorflow
 import mlflow.sklearn
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score, classification_report
-from tensorflow.keras import Model, Input
-from tensorflow.keras.layers import Dense, Dropout
-from tensorflow.keras.optimizers import Adam
-import dagshub
-import dagshub.auth
-from dagshub import get_repo_bucket_client
 from mlflow.models.signature import infer_signature
 from dotenv import load_dotenv
 
-# Load environment variables from .env if present
 load_dotenv()
 
-# --- Global config ---
-ARTIFACTS_DIR = "artifacts"  # Changed to relative path for DVC
-LOCAL_ARTIFACTS_DIR = "/app/data/artifacts"  # For Docker container
-os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-os.makedirs(LOCAL_ARTIFACTS_DIR, exist_ok=True)
-
+ARTIFACTS_DIR     = "/app/data/artifacts"
 MLFLOW_EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT_NAME", "rakuten_z")
 MLFLOW_MODEL_NAME = os.getenv("MLFLOW_MODEL_NAME", "rakuten_multimodal")
 
-# --- DagsHub / MLflow token setup ---
-DAGSHUB_USER = os.getenv("DAGSHUB_USER")
-DAGSHUB_TOKEN = os.getenv("DAGSHUB_TOKEN")
-DAGSHUB_CACHE = os.getenv("DAGSHUB_CLIENT_TOKENS_CACHE")
+os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 
-def _acquire_dagshub_token():
-    # Prefer explicit token from env
-    if DAGSHUB_TOKEN:
-        print("Using DAGSHUB_TOKEN from environment")
-        try:
-            if DAGSHUB_CACHE:
-                dagshub.auth.add_app_token(DAGSHUB_TOKEN, cache_location=DAGSHUB_CACHE)
-            else:
-                dagshub.auth.add_app_token(DAGSHUB_TOKEN)
-            print("Stored DAGSHUB_TOKEN in token cache via add_app_token()")
-        except Exception as e:
-            print(f"Warning: failed to add token to cache: {e}")
-        return DAGSHUB_TOKEN
+# Read env vars at module level — no network calls here
+_DAGSHUB_USER  = os.getenv("DAGSHUB_USER")
+_DAGSHUB_TOKEN = os.getenv("DAGSHUB_TOKEN")
+_DAGSHUB_CACHE = os.getenv("DAGSHUB_CLIENT_TOKENS_CACHE")
 
-    # Try token cache
-    try:
-        if DAGSHUB_CACHE:
-            token = dagshub.auth.get_token(fail_if_no_token=True, cache_location=DAGSHUB_CACHE)
-        else:
-            token = dagshub.auth.get_token(fail_if_no_token=True)
-        print("Loaded Dagshub token from cache")
-        return token
-    except RuntimeError:
-        print("No Dagshub token found in cache (fail_if_no_token=True). Skipping OAuth.")
-        return None
-    except Exception as e:
-        print(f"Warning: error while attempting to load Dagshub token from cache: {e}")
-        return None
 
-_token = _acquire_dagshub_token()
-
-# --- Initialize Dagshub ---
-if _token and DAGSHUB_USER:
-    os.environ["DAGSHUB_TOKEN"] = _token
-    try:
-        dagshub.init(repo_owner=DAGSHUB_USER, repo_name="rakuten_z", mlflow=True)
-        print("DagsHub initialized successfully")
-    except Exception as e:
-        print(f"Warning: Dagshub init failed: {e}")
-
-# --- MLflow tracking URI ---
-if _token and DAGSHUB_USER:
-    # URL-style authentication
-    MLFLOW_TRACKING_URI = f"https://{DAGSHUB_USER}:{_token}@dagshub.com/{DAGSHUB_USER}/rakuten_z.mlflow"
-    # Also set environment variables for S3 access
-    os.environ["MLFLOW_S3_ENDPOINT_URL"] = "https://dagshub.com"
-    os.environ["AWS_ACCESS_KEY_ID"] = DAGSHUB_USER
-    os.environ["AWS_SECRET_ACCESS_KEY"] = _token
-    os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
-else:
-    # fallback, no token
-    MLFLOW_TRACKING_URI = f"https://dagshub.com/{DAGSHUB_USER}/rakuten_z.mlflow" if DAGSHUB_USER else "http://localhost:5000"
-
-print(f"MLflow Tracking URI: {MLFLOW_TRACKING_URI.split('@')[-1] if '@' in MLFLOW_TRACKING_URI else MLFLOW_TRACKING_URI}")
-mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-
-# --- Experiment setup ---
-try:
-    mlflow.set_experiment(MLFLOW_EXPERIMENT)
-    print(f"MLflow experiment set to '{MLFLOW_EXPERIMENT}'")
-except Exception as e:
-    print(f"Warning: could not set MLflow experiment: {e}")
-
-# Disable autolog — manual logging only
-mlflow.tensorflow.autolog(disable=True)
-
-# --- Helper functions ---
-def evaluate_model(model, X, y, label_encoder):
-    y_encoded = label_encoder.transform(y)
-    probs = model.predict(X)
-    y_pred = np.argmax(probs, axis=1)
-    acc = accuracy_score(y_encoded, y_pred)
-    report = classification_report(y_encoded, y_pred, output_dict=True)
-
-    # Log metrics
-    try:
-        mlflow.log_metric("final_accuracy", float(acc))
-        for label, metrics in report.items():
-            if isinstance(metrics, dict) and "f1-score" in metrics:
-                key = f"f1_{label}"
-                mlflow.log_metric(key, float(np.asarray(metrics["f1-score"]).item()))
-    except Exception as e:
-        print(f"Warning: failed to log final metrics: {e}")
-
-    return {"accuracy": acc, "report": report}
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _to_python_native(obj):
+    """Recursively convert numpy scalars/arrays to plain Python types for JSON."""
     if isinstance(obj, dict):
         return {k: _to_python_native(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_to_python_native(v) for v in obj]
     if isinstance(obj, np.ndarray):
         return obj.tolist()
-    if isinstance(obj, (np.generic,)):
+    if isinstance(obj, np.generic):
         return obj.item()
     return obj
 
-def save_training_history(history, artifacts_dir="/app/data/artifacts"):
-    """Save training history in format expected by Airflow DAG"""
-    history_path = os.path.join(artifacts_dir, "train_history.json")
-    
-    # Convert numpy types to Python native for JSON serialization
-    history_serializable = {}
-    for key, values in history.history.items():
-        history_serializable[key] = [float(val) for val in values]
-    
-    with open(history_path, 'w') as f:
-        json.dump(history_serializable, f, indent=2)
-    
-    print(f"Training history saved to: {history_path}")
-    return history_path
 
-# --- Training function ---
+def save_training_history(history, artifacts_dir=ARTIFACTS_DIR, text_encoder="countvectorizer"):
+    filename = "train_history_minilm.json" if text_encoder == "minilm" else "train_history.json"
+    path = os.path.join(artifacts_dir, filename)
+    with open(path, "w") as f:
+        json.dump({k: [float(v) for v in vals] for k, vals in history.history.items()}, f, indent=2)
+    print(f"Training history saved: {path}")
+    return path
+
+
+def evaluate_model(model, X_val, y_val_encoded, label_encoder):
+    """Evaluate on the held-out validation set.
+
+    Accepts pre-encoded y so the full X_reduced can be freed before this call.
+    Returns plain-Python dict (no numpy types) ready for JSON serialisation.
+    """
+    probs = model.predict(X_val, verbose=0)
+    y_pred = np.argmax(probs, axis=1)
+    acc = accuracy_score(y_val_encoded, y_pred)
+    report = classification_report(y_val_encoded, y_pred, output_dict=True)
+
+    try:
+        mlflow.log_metric("final_val_accuracy", float(acc))
+        for label, metrics in report.items():
+            if isinstance(metrics, dict) and "f1-score" in metrics:
+                mlflow.log_metric(f"f1_{label}", float(np.asarray(metrics["f1-score"]).item()))
+    except Exception as e:
+        print(f"Warning: failed to log final metrics: {e}")
+
+    return _to_python_native({"accuracy": acc, "report": report})
+
+
 def _log_datasets(train_data, x_csv_path, y_csv_path, X_reduced):
-    """Log source CSVs and reduced feature matrix to the active MLflow run."""
     try:
         cols = [c for c in ["imageid", "productid", "description", "prdtypecode"] if c in train_data.columns]
-        src_dataset = mlflow.data.from_pandas(
-            train_data[cols],
-            source=x_csv_path or "X_train_update.csv",
-            name="rakuten_train",
-            targets="prdtypecode",
+        mlflow.log_input(
+            mlflow.data.from_pandas(train_data[cols], source=x_csv_path or "X_train_update.csv",
+                                    name="rakuten_train", targets="prdtypecode"),
+            context="training",
         )
-        mlflow.log_input(src_dataset, context="training")
-        print(f"Logged dataset 'rakuten_train': {len(train_data)} rows, source={x_csv_path}")
+        print(f"Logged dataset 'rakuten_train': {len(train_data)} rows")
     except Exception as e:
         print(f"Warning: failed to log source dataset: {e}")
 
     try:
-        reduced_dataset = mlflow.data.from_numpy(
-            X_reduced,
-            source=x_csv_path or "X_train_update.csv",
-            name="X_reduced_features",
+        mlflow.log_input(
+            mlflow.data.from_numpy(X_reduced, source=x_csv_path or "X_train_update.csv",
+                                   name="X_reduced_features"),
+            context="training",
         )
-        mlflow.log_input(reduced_dataset, context="training")
-        print(f"Logged dataset 'X_reduced_features': shape={X_reduced.shape}")
+        print(f"Logged 'X_reduced_features': shape={X_reduced.shape}")
     except Exception as e:
-        print(f"Warning: failed to log reduced features dataset: {e}")
+        print(f"Warning: failed to log reduced features: {e}")
 
+
+def _init_mlflow():
+    """Acquire DagsHub credentials and configure MLflow tracking.
+
+    Called once at the start of build_and_train_model — never at import time —
+    so subprocess startup does not block on network I/O.
+    Returns the tracking URI string.
+    """
+    import dagshub
+    import dagshub.auth
+
+    token = _DAGSHUB_TOKEN
+    if token:
+        try:
+            kw = {"cache_location": _DAGSHUB_CACHE} if _DAGSHUB_CACHE else {}
+            dagshub.auth.add_app_token(token, **kw)
+            print("Stored DAGSHUB_TOKEN in token cache")
+        except Exception as e:
+            print(f"Warning: failed to add token to cache: {e}")
+    else:
+        try:
+            kw = {"cache_location": _DAGSHUB_CACHE} if _DAGSHUB_CACHE else {}
+            token = dagshub.auth.get_token(fail_if_no_token=True, **kw)
+            print("Loaded Dagshub token from cache")
+        except RuntimeError:
+            print("No Dagshub token found — MLflow will use local fallback")
+        except Exception as e:
+            print(f"Warning: error loading Dagshub token: {e}")
+
+    if token and _DAGSHUB_USER:
+        os.environ["DAGSHUB_TOKEN"] = token
+        try:
+            dagshub.init(repo_owner=_DAGSHUB_USER, repo_name="rakuten_z", mlflow=True)
+            print("DagsHub initialized successfully")
+        except Exception as e:
+            print(f"Warning: Dagshub init failed: {e}")
+        tracking_uri = (
+            f"https://{_DAGSHUB_USER}:{token}@dagshub.com/{_DAGSHUB_USER}/rakuten_z.mlflow"
+        )
+        os.environ.update({
+            "MLFLOW_S3_ENDPOINT_URL": "https://dagshub.com",
+            "AWS_ACCESS_KEY_ID":       _DAGSHUB_USER,
+            "AWS_SECRET_ACCESS_KEY":   token,
+            "AWS_DEFAULT_REGION":      "us-east-1",
+        })
+    else:
+        tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+
+    mlflow.set_tracking_uri(tracking_uri)
+    try:
+        mlflow.set_experiment(MLFLOW_EXPERIMENT)
+        print(f"MLflow experiment set to '{MLFLOW_EXPERIMENT}'")
+    except Exception as e:
+        print(f"Warning: could not set MLflow experiment: {e}")
+
+    return tracking_uri
+
+
+# ---------------------------------------------------------------------------
+# Training entry point
+# ---------------------------------------------------------------------------
 
 def build_and_train_model(
     X, y,
@@ -182,111 +165,104 @@ def build_and_train_model(
     train_data=None, x_csv_path=None, y_csv_path=None,
     text_encoder="countvectorizer", use_dev_images=False,
 ):
-    # Architecture constants — logged to MLflow for reproducibility
-    RANDOM_SEED      = 42
-    VAL_SPLIT        = 0.2
-    LEARNING_RATE    = 0.001
-    HIDDEN_1         = 512
-    HIDDEN_2         = 256
-    DROPOUT_1        = 0.3
-    DROPOUT_2        = 0.2
-    ES_PATIENCE      = 5
-    LR_PATIENCE      = 2
-    LR_FACTOR        = 0.3
-    LR_MIN           = 1e-6
+    # Network I/O happens here, not at import time
+    tracking_uri = _init_mlflow()
+
+    # Deferred TF imports (CPU image: no BFCAllocator, safe after any numpy work)
+    import tensorflow as tf
+    import mlflow.tensorflow
+    from tensorflow.keras import Model, Input
+    from tensorflow.keras.layers import Dense, Dropout
+    from tensorflow.keras.optimizers import Adam
+    from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+    mlflow.tensorflow.autolog(disable=True)
+
+    # Architecture / training constants
+    RANDOM_SEED   = 42
+    VAL_SPLIT     = 0.2
+    LEARNING_RATE = 0.001
+    HIDDEN_1, HIDDEN_2   = 512, 256
+    DROPOUT_1, DROPOUT_2 = 0.3, 0.2
+    ES_PATIENCE  = 5
+    LR_PATIENCE, LR_FACTOR, LR_MIN = 2, 0.3, 1e-6
 
     label_encoder = LabelEncoder()
     y_encoded = label_encoder.fit_transform(y)
 
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y_encoded, test_size=VAL_SPLIT, random_state=RANDOM_SEED
-    )
+    # Capture shape and class count before freeing X
+    input_dim = X.shape[1]
+    n_classes  = len(label_encoder.classes_)
 
-    inputs = Input(shape=(X.shape[1],))
-    x = Dense(HIDDEN_1, activation="relu")(inputs)
-    x = Dropout(DROPOUT_1)(x)
-    x = Dense(HIDDEN_2, activation="relu")(x)
-    x = Dropout(DROPOUT_2)(x)
-    outputs = Dense(len(label_encoder.classes_), activation="softmax")(x)
-
-    model = Model(inputs, outputs)
-    model.compile(
-        optimizer=Adam(learning_rate=LEARNING_RATE),
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"],
-    )
-
-    # Repo bucket client optional
+    # End any stale MLflow run before starting ours
     try:
-        _ = get_repo_bucket_client(f"{DAGSHUB_USER}/rakuten_z", flavor="boto")
-        print("Repo bucket client obtained")
-    except Exception as e:
-        print(f"Warning: could not obtain repo bucket client: {e}")
-
-    # End any active run
-    try:
-        if mlflow.active_run() is not None:
+        if mlflow.active_run():
             mlflow.end_run()
-    except Exception as e:
-        print(f"Warning: error ending active run: {e}")
+    except Exception:
+        pass
 
     with mlflow.start_run(run_name=run_name) as run:
-        # Log params
-        try:
-            # Training config
-            mlflow.log_param("text_encoder",           text_encoder)
-            mlflow.log_param("use_dev_images",         use_dev_images)
-            mlflow.log_param("epochs_max",             epochs)
-            mlflow.log_param("batch_size",             batch_size)
-            mlflow.log_param("random_seed",            RANDOM_SEED)
-            mlflow.log_param("val_split",              VAL_SPLIT)
-            mlflow.log_param("input_dim",              X.shape[1])
-            mlflow.log_param("num_classes",            len(label_encoder.classes_))
-            mlflow.log_param("dataset_rows",           int(len(X)))
-            # Architecture
-            mlflow.log_param("learning_rate",          LEARNING_RATE)
-            mlflow.log_param("hidden_1",               HIDDEN_1)
-            mlflow.log_param("hidden_2",               HIDDEN_2)
-            mlflow.log_param("dropout_1",              DROPOUT_1)
-            mlflow.log_param("dropout_2",              DROPOUT_2)
-            mlflow.log_param("class_weights",          "balanced")
-            # Early stopping / LR schedule
-            mlflow.log_param("early_stopping_patience", ES_PATIENCE)
-            mlflow.log_param("lr_reduce_patience",     LR_PATIENCE)
-            mlflow.log_param("lr_reduce_factor",       LR_FACTOR)
-            mlflow.log_param("lr_min",                 LR_MIN)
-            # PCA
-            if pca_models:
-                pca_img = pca_models.get("image")
-                pca_txt = pca_models.get("text")
-                if pca_img:
-                    mlflow.log_param("pca_image_components", pca_img.n_components_)
-                    mlflow.log_param("pca_text_components",  pca_txt.n_components_ if pca_txt else "n/a")
-        except Exception as e:
-            print(f"Warning: failed to log params: {e}")
 
-        # Log datasets (source CSVs + reduced feature matrix)
+        # Log datasets while X is still in scope
         if train_data is not None:
             _log_datasets(train_data, x_csv_path, y_csv_path, X)
 
-        from sklearn.utils.class_weight import compute_class_weight
-        import numpy as np
-        class_weights = compute_class_weight(
-            class_weight="balanced", classes=np.unique(y_train), y=y_train
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y_encoded, test_size=VAL_SPLIT, random_state=RANDOM_SEED
         )
-        class_weight_dict = dict(enumerate(class_weights))
+        # Free the full feature matrix (~2 GB) before model.fit to avoid OOM.
+        # X_train and X_val are independent copies; input_dim is already captured.
+        del X
+        gc.collect()
 
-        from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-        callbacks = [
-            EarlyStopping(
-                monitor="val_accuracy", patience=ES_PATIENCE,
-                restore_best_weights=True, verbose=1,
-            ),
-            ReduceLROnPlateau(
-                monitor="val_loss", factor=LR_FACTOR,
-                patience=LR_PATIENCE, min_lr=LR_MIN, verbose=1,
-            ),
-        ]
+        # Build model
+        inp = Input(shape=(input_dim,))
+        h = Dense(HIDDEN_1, activation="relu")(inp)
+        h = Dropout(DROPOUT_1)(h)
+        h = Dense(HIDDEN_2, activation="relu")(h)
+        h = Dropout(DROPOUT_2)(h)
+        out = Dense(n_classes, activation="softmax")(h)
+
+        model = Model(inp, out)
+        model.compile(
+            optimizer=Adam(learning_rate=LEARNING_RATE),
+            loss="sparse_categorical_crossentropy",
+            metrics=["accuracy"],
+        )
+
+        # Log all hyperparameters in one call
+        _effective_model_name = (
+            f"{MLFLOW_MODEL_NAME}_minilm" if text_encoder == "minilm"
+            else f"{MLFLOW_MODEL_NAME}_cv"
+        )
+        try:
+            params = {
+                "text_encoder": text_encoder, "use_dev_images": use_dev_images,
+                "epochs_max": epochs, "batch_size": batch_size,
+                "random_seed": RANDOM_SEED, "val_split": VAL_SPLIT,
+                "input_dim": input_dim, "num_classes": n_classes,
+                "dataset_rows": int(len(y_encoded)),
+                "learning_rate": LEARNING_RATE,
+                "hidden_1": HIDDEN_1, "hidden_2": HIDDEN_2,
+                "dropout_1": DROPOUT_1, "dropout_2": DROPOUT_2,
+                "class_weights": "balanced",
+                "early_stopping_patience": ES_PATIENCE,
+                "lr_reduce_patience": LR_PATIENCE,
+                "lr_reduce_factor": LR_FACTOR, "lr_min": LR_MIN,
+                "model_name": _effective_model_name,
+            }
+            if pca_models:
+                pca_img = pca_models.get("image")
+                pca_txt = pca_models.get("text")
+                params["pca_image_components"] = pca_img.n_components_ if pca_img else "n/a"
+                params["pca_text_components"]  = pca_txt.n_components_ if pca_txt else "n/a"
+            mlflow.log_params(params)
+        except Exception as e:
+            print(f"Warning: failed to log params: {e}")
+
+        from sklearn.utils.class_weight import compute_class_weight
+        class_weight_dict = dict(enumerate(
+            compute_class_weight("balanced", classes=np.unique(y_train), y=y_train)
+        ))
 
         history = model.fit(
             X_train, y_train,
@@ -294,133 +270,135 @@ def build_and_train_model(
             epochs=epochs,
             batch_size=batch_size,
             class_weight=class_weight_dict,
-            callbacks=callbacks,
+            callbacks=[
+                EarlyStopping(monitor="val_accuracy", patience=ES_PATIENCE,
+                              restore_best_weights=True, verbose=1),
+                ReduceLROnPlateau(monitor="val_loss", factor=LR_FACTOR,
+                                  patience=LR_PATIENCE, min_lr=LR_MIN, verbose=1),
+            ],
             verbose=1,
         )
 
-        # Log actual epochs trained (early stopping may reduce this below epochs_max)
         actual_epochs = len(history.history.get("loss", []))
-        mlflow.log_param("actual_epochs_trained", actual_epochs)
-
-        # Log metrics per epoch
-        for epoch in range(actual_epochs):
-            mlflow.log_metric("train_loss", float(history.history["loss"][epoch]), step=epoch)
-            if "val_loss" in history.history:
-                mlflow.log_metric("val_loss", float(history.history["val_loss"][epoch]), step=epoch)
-            if "accuracy" in history.history:
-                mlflow.log_metric("train_accuracy", float(history.history["accuracy"][epoch]), step=epoch)
-            if "val_accuracy" in history.history:
-                mlflow.log_metric("val_accuracy", float(history.history["val_accuracy"][epoch]), step=epoch)
-
-        # Save in .keras format (Keras 3 native) — avoids legacy H5 deserialisation issues
-        model_path_dvc = os.path.join(ARTIFACTS_DIR, "neural_network_model.keras")
-        model_path_local = os.path.join(LOCAL_ARTIFACTS_DIR, "neural_network_model.keras")
-
-        print(f"Saving model to DVC path: {model_path_dvc}")
-        print(f"Saving model to local path: {model_path_local}")
-
-        model.save(model_path_dvc)
-        model.save(model_path_local)
-        
-        encoder_path_dvc = os.path.join(ARTIFACTS_DIR, "label_encoder.pkl")
-        encoder_path_local = os.path.join(LOCAL_ARTIFACTS_DIR, "label_encoder.pkl")
-        
-        with open(encoder_path_dvc, "wb") as f:
-            pickle.dump(label_encoder, f)
-        with open(encoder_path_local, "wb") as f:
-            pickle.dump(label_encoder, f)
-
-        # ✅ ENHANCEMENT: Save training history for Airflow DAG
-        history_path_dvc = os.path.join(ARTIFACTS_DIR, "train_history.json")
-        history_path_local = save_training_history(history, LOCAL_ARTIFACTS_DIR)
-        
-        # Also save to DVC artifacts directory
-        history_serializable = {}
-        for key, values in history.history.items():
-            history_serializable[key] = [float(val) for val in values]
-        
-        with open(history_path_dvc, 'w') as f:
-            json.dump(history_serializable, f, indent=2)
-        print(f"Training history saved to DVC path: {history_path_dvc}")
-
-        # Log artifacts to MLflow
         try:
-            mlflow.log_artifact(model_path_dvc, artifact_path="artifacts")
-            mlflow.log_artifact(encoder_path_dvc, artifact_path="artifacts")
-            mlflow.log_artifact(history_path_dvc, artifact_path="artifacts")
-            print("Artifacts logged to MLflow")
+            mlflow.log_param("actual_epochs_trained", actual_epochs)
+            # Batch all 4 metrics into one HTTP call per epoch (was 4 calls)
+            for epoch in range(actual_epochs):
+                epoch_metrics = {"train_loss": float(history.history["loss"][epoch])}
+                if "val_loss"      in history.history:
+                    epoch_metrics["val_loss"]      = float(history.history["val_loss"][epoch])
+                if "accuracy"      in history.history:
+                    epoch_metrics["train_accuracy"] = float(history.history["accuracy"][epoch])
+                if "val_accuracy"  in history.history:
+                    epoch_metrics["val_accuracy"]   = float(history.history["val_accuracy"][epoch])
+                mlflow.log_metrics(epoch_metrics, step=epoch)
         except Exception as e:
-            print(f"Warning: failed to log artifacts to MLflow: {e}")
+            print(f"Warning: failed to log epoch metrics: {e}")
 
-        # Log PCA sklearn models so DagsHub shows their params
+        # Save model — filename matches save_artifacts convention so MiniLM never
+        # overwrites the CV model file and both can coexist on disk.
+        model_filename = (
+            "neural_network_model_minilm.keras" if text_encoder == "minilm"
+            else "neural_network_model.keras"
+        )
+        model_path = os.path.join(ARTIFACTS_DIR, model_filename)
+        encoder_path = os.path.join(ARTIFACTS_DIR, "label_encoder.pkl")
+        model.save(model_path)
+        with open(encoder_path, "wb") as f:
+            pickle.dump(label_encoder, f)
+        history_path = save_training_history(history, text_encoder=text_encoder)
+        print(f"Model saved: {model_path}")
+
+        try:
+            mlflow.log_artifact(model_path,   artifact_path="artifacts")
+            mlflow.log_artifact(encoder_path, artifact_path="artifacts")
+            mlflow.log_artifact(history_path, artifact_path="artifacts")
+        except Exception as e:
+            print(f"Warning: failed to log artifacts: {e}")
+
         if pca_models:
             try:
                 if pca_models.get("image"):
                     mlflow.sklearn.log_model(pca_models["image"], artifact_path="pca_image")
                 if pca_models.get("text"):
-                    mlflow.sklearn.log_model(pca_models["text"], artifact_path="pca_text")
-                print("PCA models logged to MLflow")
+                    mlflow.sklearn.log_model(pca_models["text"],  artifact_path="pca_text")
             except Exception as e:
                 print(f"Warning: failed to log PCA models: {e}")
 
-        # Log model with signature to MLflow
         try:
-            preds_for_signature = model.predict(X_train[: min(64, len(X_train))])
-            signature = infer_signature(X_train[: min(64, len(X_train))], preds_for_signature)
-            mlflow.tensorflow.log_model(model, artifact_path="model", signature=signature)
-            print("Model logged to MLflow")
+            n_sample = min(64, len(X_train))
+            sig = infer_signature(X_train[:n_sample], model.predict(X_train[:n_sample], verbose=0))
+            mlflow.tensorflow.log_model(model, artifact_path="model", signature=sig)
         except Exception as e:
             print(f"Warning: mlflow.tensorflow.log_model failed: {e}")
 
-        # Evaluate and log final metrics
-        eval_results = evaluate_model(model, X, y, label_encoder)
-
+        # Evaluate on held-out val set (X already freed; X_val still in scope)
+        eval_results = evaluate_model(model, X_val, y_val, label_encoder)
         run_id = run.info.run_id
-        print(f"MLflow Run ID: {run_id}")
 
     # Register model in MLflow Model Registry
-    client = mlflow.tracking.MlflowClient(tracking_uri=MLFLOW_TRACKING_URI)
+    _DESCRIPTIONS = {
+        "minilm": (
+            "Rakuten multimodal product classifier — MiniLM text encoder. "
+            "Text: paraphrase-multilingual-MiniLM-L12-v2 (384-dim). "
+            "Image: ResNet50 → IncrementalPCA(300). Dense 512→256→Dropout→27 classes."
+        ),
+        "countvectorizer": (
+            "Rakuten multimodal product classifier — CountVectorizer text encoder. "
+            "Text: CountVectorizer(max_features=5000) → IncrementalPCA(1024). "
+            "Image: ResNet50 → IncrementalPCA(300). Dense 512→256→Dropout→27 classes."
+        ),
+    }
+    _desc = _DESCRIPTIONS.get(text_encoder, "Rakuten multimodal product classifier")
+    # Use encoder-specific registered model name so CV and MiniLM appear as separate
+    # entries in the Model Registry rather than competing versions of the same model.
+    effective_model_name = (
+        f"{MLFLOW_MODEL_NAME}_minilm" if text_encoder == "minilm"
+        else f"{MLFLOW_MODEL_NAME}_cv"
+    )
+    client = mlflow.tracking.MlflowClient(tracking_uri=tracking_uri)
     registered_version_number = None
     try:
         try:
-            client.create_registered_model(MLFLOW_MODEL_NAME)
-            print(f"Created registered model: {MLFLOW_MODEL_NAME}")
+            client.create_registered_model(
+                effective_model_name,
+                description=_desc,
+                tags={"encoder": text_encoder, "task": "product_classification",
+                      "dataset": "rakuten_84916", "framework": "tensorflow/keras"},
+            )
         except Exception:
-            print(f"Registered model {MLFLOW_MODEL_NAME} already exists")
-        
-        model_uri = f"runs:/{run_id}/model"
+            # Already exists — refresh description and tags
+            try:
+                client.update_registered_model(effective_model_name, description=_desc)
+                for k, v in {"encoder": text_encoder, "task": "product_classification",
+                             "dataset": "rakuten_84916", "framework": "tensorflow/keras"}.items():
+                    client.set_registered_model_tag(effective_model_name, k, v)
+            except Exception:
+                pass
         registered_version = client.create_model_version(
-            name=MLFLOW_MODEL_NAME,
-            source=model_uri,
-            run_id=run_id
+            name=effective_model_name,
+            source=f"runs:/{run_id}/model",
+            run_id=run_id,
+            description=f"encoder={text_encoder} | run_id={run_id}",
+            tags={"encoder": text_encoder},
         )
         client.transition_model_version_stage(
-            name=MLFLOW_MODEL_NAME,
+            name=effective_model_name,
             version=registered_version.version,
             stage="Staging",
-            archive_existing_versions=False
+            archive_existing_versions=False,
         )
         registered_version_number = registered_version.version
-        print(f"Model registered successfully: {MLFLOW_MODEL_NAME} v{registered_version.version}")
+        print(f"Model registered: {effective_model_name} v{registered_version.version}")
     except Exception as e:
         print(f"Warning: failed to register model: {e}")
 
-    # Close run
     try:
         mlflow.end_run()
     except Exception:
         pass
 
-    if not os.path.exists(model_path_dvc):
-        raise FileNotFoundError(f"Model file not created at DVC path: {model_path_dvc}")
-    if not os.path.exists(encoder_path_dvc):
-        raise FileNotFoundError(f"Encoder file not created at DVC path: {encoder_path_dvc}")
-    if not os.path.exists(history_path_dvc):
-        raise FileNotFoundError(f"History file not created at DVC path: {history_path_dvc}")
-    
-    print(f"✅ Model saved locally at: {model_path_dvc}")
-    print(f"✅ Model saved locally at: {model_path_local}")
-    print(f"✅ Training history saved at: {history_path_local}")
-    print(f"✅ Model logged to DagsHub MLflow: {MLFLOW_TRACKING_URI}")
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model not saved: {model_path}")
 
-    return model, label_encoder, history, model_path_dvc, run_id, registered_version_number, eval_results
+    return model, label_encoder, history, model_path, run_id, registered_version_number, eval_results

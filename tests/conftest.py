@@ -18,6 +18,7 @@ Fixtures provided :
   mock_pca_image         — MagicMock IncrementalPCA (300 components)
   mock_pca_text          — MagicMock IncrementalPCA (1024 components)
   mock_vectorizer        — MagicMock CountVectorizer returning (1, 5000) array
+  mock_minilm_encoder    — MagicMock SentenceTransformer returning (1, 384) float32 array
   sample_image_b64       — 32x32 RGB JPEG as base64 string (via Pillow)
 
 Rotating log plugin (last 3 runs retained per file) :
@@ -170,6 +171,13 @@ def mock_vectorizer():
     sparse_out.toarray.return_value = np.zeros((1, 5000), dtype=np.float32)
     vec.transform.return_value = sparse_out
     return vec
+
+@pytest.fixture
+def mock_minilm_encoder():
+    """MagicMock SentenceTransformer: encode() returns a (1, 384) float32 array."""
+    enc = MagicMock()
+    enc.encode.return_value = np.zeros((1, 384), dtype=np.float32)
+    return enc
 
 
 # ---------------------------------------------------------------------------

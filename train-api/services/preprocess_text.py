@@ -14,7 +14,10 @@ TEXT_FEATURES_LIMIT = 5000
 TEXT_FEATURES_FILE = "data/feature_cache/text_features.npy"
 TEXT_VECTORIZER_FILE = "data/text_vectorizer.pkl"
 BATCH_SIZE = 5000  # adjust based on memory
-N_CORES = 6  # your Core i7
+# n_process=1 is faster than 6 inside Docker/WSL2: forking 6 worker processes
+# per batch (17 batches × fork/join overhead) exceeds the gain from parallelism
+# for this dataset size. Set via env var to allow easy tuning.
+N_CORES = int(os.getenv("SPACY_N_PROCESS", "1"))
 
 # === Logging setup ===
 logging.basicConfig(
@@ -58,21 +61,19 @@ def extract_text_features(data: pd.DataFrame, max_features: int = TEXT_FEATURES_
     all_texts = data["description"].fillna("").tolist()
     processed_descriptions = []
 
-    logging.info(f"Total samples: {len(all_texts)}")
+    logging.info(f"Total samples: {len(all_texts)}, n_process={N_CORES}")
     log_memory("Before preprocessing")
 
-    # Process in batches to avoid memory overload
-    for i in tqdm(range(0, len(all_texts), BATCH_SIZE), desc="Text Preprocessing Batches"):
-        batch = all_texts[i:i+BATCH_SIZE]
-        processed_batch = [
-            doc for doc in nlp.pipe(batch, n_process=N_CORES, batch_size=1000)
-        ]
-        processed_batch = [
-            " ".join([t.lemma_.lower() for t in doc if not t.is_stop and t.is_alpha])
-            for doc in processed_batch
-        ]
-        processed_descriptions.extend(processed_batch)
-        log_memory(f"After processing batch {i}-{i+len(batch)}")
+    # Single nlp.pipe pass over all texts — avoids fork/join overhead of
+    # per-batch loops while keeping memory bounded via spaCy's internal streaming.
+    processed_descriptions = [
+        " ".join(t.lemma_.lower() for t in doc if not t.is_stop and t.is_alpha)
+        for doc in tqdm(
+            nlp.pipe(all_texts, n_process=N_CORES, batch_size=BATCH_SIZE),
+            total=len(all_texts), desc="SpaCy lemmatise",
+        )
+    ]
+    log_memory("After SpaCy")
 
     data["processed_description"] = processed_descriptions
     logging.info("Vectorizing text features...")

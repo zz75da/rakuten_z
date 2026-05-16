@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from airflow import DAG
 from airflow.models import Variable
 from airflow.operators.bash import BashOperator
@@ -6,9 +6,11 @@ from airflow.providers.http.sensors.http import HttpSensor
 from airflow.operators.python import PythonOperator
 from airflow.sensors.base import BaseSensorOperator
 from airflow.exceptions import AirflowException
+from airflow.utils.trigger_rule import TriggerRule
 import requests
 import pandas as pd
 import os
+from pathlib import Path
 
 default_args = {
     "owner": "airflow",
@@ -84,6 +86,12 @@ def _trigger_training_job(job_var_key, text_encoder, context):
                 print(f"Job {existing_job_id} gone (train-api restarted). Starting fresh.")
                 Variable.delete(job_var_key)
                 existing_job_id = None
+            elif probe.status_code == 200:
+                probe_status = probe.json().get("status")
+                if probe_status in ("interrupted", "failed"):
+                    print(f"Job {existing_job_id} status={probe_status} — starting fresh.")
+                    Variable.delete(job_var_key)
+                    existing_job_id = None
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
             print(f"Probe timed out for {existing_job_id} — assuming still running.")
         if existing_job_id:
@@ -174,17 +182,57 @@ class TrainingCompleteSensor(BaseSensorOperator):
             )
         resp.raise_for_status()
 
-        job   = resp.json()
+        job    = resp.json()
         status = job.get("status")
-        print(f"Job {job_id} [{self.job_var_key}]: status={status}")
+        step   = job.get("step", "")
+
+        # Build a detailed log line for every poke
+        log_parts = [f"Job {job_id} [{self.job_var_key}]: status={status}"]
+        if step:
+            log_parts.append(f"step={step}")
+        started_at = job.get("started_at")
+        if started_at:
+            try:
+                from dateutil import parser as _dtparser
+                elapsed_s = (datetime.now(timezone.utc) - _dtparser.parse(started_at)).total_seconds()
+                log_parts.append(f"elapsed={elapsed_s / 60:.1f}min")
+            except Exception:
+                pass
+        if job.get("dataset_size"):
+            log_parts.append(f"dataset_size={job['dataset_size']}")
+        if job.get("num_classes"):
+            log_parts.append(f"num_classes={job['num_classes']}")
+        print(" | ".join(log_parts))
 
         if status == "success":
             Variable.delete(self.job_var_key)
+            final = job.get("final_metrics", {})
+            history = job.get("history", {})
+            val_accs = history.get("val_accuracy", [])
+            print(
+                f"  ✓ Training complete — "
+                f"accuracy={final.get('accuracy', 'N/A')} | "
+                f"best_val_acc={max(val_accs):.4f} | "
+                f"epochs={len(history.get('loss', []))} | "
+                f"mlflow_run={job.get('mlflow_run_id', 'N/A')}"
+            )
             context["ti"].xcom_push(key="training_result", value=job)
             return True
+
         if status == "failed":
             Variable.delete(self.job_var_key)
-            raise AirflowException(f"Training job {job_id} failed: {job.get('error')}")
+            raise AirflowException(
+                f"Training job {job_id} failed at step={step!r}: {job.get('error', 'unknown error')}"
+            )
+
+        if status == "interrupted":
+            Variable.delete(self.job_var_key)
+            raise AirflowException(
+                f"Job {job_id} was interrupted (train-api restarted mid-training). "
+                "Clear this DAG run and re-trigger."
+            )
+
+        # status == "running" → reschedule
         return False
 
 
@@ -247,42 +295,96 @@ def get_model_version(**context):
 
 
 def push_training_metrics(**context):
-    """Push CV training metrics to Prometheus Pushgateway."""
-    result = context["ti"].xcom_pull(task_ids="wait_for_cv_training", key="training_result") or {}
-    final  = result.get("final_metrics", {})
-    history = result.get("history", {})
+    """Push training metrics for both CV and MiniLM to Prometheus Pushgateway."""
+    from dateutil import parser as dtparser
 
-    accuracy     = final.get("accuracy", 0)
-    val_accuracy = history.get("val_accuracy", [0])[-1]
-    loss         = history.get("loss", [0])[-1]
-    val_loss     = history.get("val_loss", [0])[-1]
-    epochs_done  = len(history.get("loss", []))
+    runs = [
+        ("wait_for_cv_training",    "countvectorizer"),
+        ("wait_for_minilm_training", "minilm"),
+    ]
+    for task_id, encoder in runs:
+        result  = context["ti"].xcom_pull(task_ids=task_id, key="training_result") or {}
+        final   = result.get("final_metrics", {})
+        history = result.get("history", {})
+        if not history:
+            print(f"No history for {encoder} — skipping push")
+            continue
 
-    started_at   = result.get("started_at", "")
-    completed_at = result.get("completed_at", "")
-    if started_at and completed_at:
-        from dateutil import parser as dtparser
-        elapsed = (dtparser.parse(completed_at) - dtparser.parse(started_at)).total_seconds()
-    else:
+        val_accuracy = (history.get("val_accuracy") or [0])[-1]
+        loss         = (history.get("loss") or [0])[-1]
+        val_loss     = (history.get("val_loss") or [0])[-1]
+        epochs_done  = len(history.get("loss") or [])
+
+        started_at   = result.get("started_at", "")
+        completed_at = result.get("completed_at", "")
         elapsed = 0
+        if started_at and completed_at:
+            try:
+                elapsed = (dtparser.parse(completed_at) - dtparser.parse(started_at)).total_seconds()
+            except Exception:
+                pass
 
-    metrics = {
-        "training_accuracy":       accuracy,
-        "validation_accuracy":     val_accuracy,
-        "training_loss":           loss,
-        "validation_loss":         val_loss,
-        "epochs_completed":        epochs_done,
-        "training_time_seconds":   elapsed,
-    }
-    metrics_text = "\n".join(f"{k} {v}" for k, v in metrics.items())
-    try:
-        resp = requests.post(
-            "http://pushgateway:9091/metrics/job/rakuten_mlops",
-            data=metrics_text, timeout=10,
-        )
-        print(f"CV metrics pushed (HTTP {resp.status_code}): {metrics}")
-    except Exception as exc:
-        print(f"Prometheus push failed (non-blocking): {exc}")
+        # Use encoder label in the Pushgateway job path so both encoders
+        # can coexist without overwriting each other's metrics.
+        metrics = {
+            "training_accuracy":     final.get("accuracy", 0),
+            "validation_accuracy":   val_accuracy,
+            "training_loss":         loss,
+            "validation_loss":       val_loss,
+            "epochs_completed":      epochs_done,
+            "training_time_seconds": elapsed,
+        }
+        metrics_text = "\n".join(f"{k} {v}" for k, v in metrics.items())
+        try:
+            resp = requests.post(
+                f"http://pushgateway:9091/metrics/job/rakuten_mlops/encoder/{encoder}",
+                data=metrics_text, timeout=10,
+            )
+            print(f"{encoder} metrics pushed (HTTP {resp.status_code}): {metrics}")
+        except Exception as exc:
+            print(f"Prometheus push failed for {encoder} (non-blocking): {exc}")
+
+
+def push_feature_cache(**context):
+    """
+    DVC-add all .npy feature cache files and push to DagsHub remote.
+    Runs DVC directly in the Airflow container (project root at /opt/airflow).
+    Skipped when the DAG is triggered with conf={'push_dvc_cache': false}.
+    """
+    import subprocess
+
+    push_enabled = True
+    if context.get("dag_run") and context["dag_run"].conf:
+        push_enabled = context["dag_run"].conf.get("push_dvc_cache", True)
+    if not push_enabled:
+        print("push_dvc_cache=false — skipping DVC cache push")
+        return {"skipped": True}
+
+    dvc_root = "/opt/airflow"
+    cache_dir = os.path.join(dvc_root, "data", "feature_cache")
+    npy_files = ["image_features.npy", "text_features.npy", "text_features_minilm.npy"]
+
+    for fname in npy_files:
+        fpath = os.path.join(cache_dir, fname)
+        if os.path.exists(fpath):
+            r = subprocess.run(
+                ["dvc", "add", "-f", fpath],
+                capture_output=True, text=True, cwd=dvc_root,
+            )
+            print(f"dvc add {fname}: rc={r.returncode} | {r.stdout.strip()} | {r.stderr.strip()}")
+        else:
+            print(f"Skipping {fname} — file not found")
+
+    push = subprocess.run(
+        ["dvc", "push"],
+        capture_output=True, text=True, cwd=dvc_root,
+    )
+    print(f"dvc push: rc={push.returncode} | {push.stdout.strip()} | {push.stderr.strip()}")
+
+    if push.returncode != 0:
+        raise Exception(f"dvc push failed: {push.stderr.strip()[:500]}")
+
+    return {"status": "ok", "push_output": push.stdout.strip()}
 
 
 def evaluate_from_result(**context):
@@ -304,15 +406,82 @@ def evaluate_from_result(**context):
     return {}
 
 
+_RUN_LOG = Path("/opt/airflow/data/dag_runs.log")
+_RUN_SEP = "=" * 72
+_MAX_RUNS = 3
+
+
+def write_run_summary(**context):
+    """
+    Always runs (TriggerRule.ALL_DONE) — writes a compact run summary to
+    /opt/airflow/data/dag_runs.log, keeping only the last 3 complete runs.
+    This gives a quick human-readable audit trail without opening the Airflow UI.
+    """
+    dag_run = context["dag_run"]
+    ti      = context["ti"]
+
+    cv_result = ti.xcom_pull(task_ids="wait_for_cv_training",    key="training_result") or {}
+    ml_result = ti.xcom_pull(task_ids="wait_for_minilm_training", key="training_result") or {}
+
+    def _model_lines(label, result):
+        h = result.get("history", {})
+        val_accs = h.get("val_accuracy", [])
+        return [
+            f"  {label}:",
+            f"    best_val_acc : {max(val_accs):.4f}" if val_accs else "    best_val_acc : N/A",
+            f"    epochs       : {len(h.get('loss', []))}",
+            f"    mlflow_run   : {result.get('mlflow_run_id', 'N/A')}",
+            f"    model_version: {result.get('mlflow_model_version', 'N/A')}",
+        ]
+
+    block_lines = [
+        f"RUN  : {dag_run.run_id}",
+        f"State: {dag_run.state}",
+        f"Start: {dag_run.start_date}",
+        f"End  : {dag_run.end_date}",
+        "",
+    ] + _model_lines("CV  (countvectorizer)", cv_result) + [""] + _model_lines("MiniLM", ml_result)
+
+    block = "\n".join(block_lines)
+
+    _RUN_LOG.parent.mkdir(parents=True, exist_ok=True)
+    existing = _RUN_LOG.read_text() if _RUN_LOG.exists() else ""
+    blocks = [b for b in existing.split(_RUN_SEP) if b.strip()]
+    blocks.append(block)
+    blocks = blocks[-_MAX_RUNS:]
+    _RUN_LOG.write_text(f"\n{_RUN_SEP}\n".join(blocks))
+    print(f"Run summary written → {_RUN_LOG}  (last {len(blocks)} runs kept)")
+
+
+def _dag_failure_callback(context):
+    """DAG-level callback: logs which task failed and its error to the run log."""
+    failed_ti = context.get("task_instance")
+    dag_run   = context.get("dag_run")
+    exception = context.get("exception", "unknown")
+
+    msg = (
+        f"DAG FAILED  run_id={dag_run.run_id if dag_run else '?'}  "
+        f"task={failed_ti.task_id if failed_ti else '?'}  "
+        f"error={str(exception)[:300]}"
+    )
+    print(msg)
+
+    # Append one-liner to the run log so failures are visible without the UI
+    _RUN_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with _RUN_LOG.open("a") as fh:
+        fh.write(f"\n[FAIL] {msg}\n")
+
+
 # --- DAG Definition ---
 with DAG(
-    dag_id="rakuten_multimodal_pipeline_v5_1",
+    dag_id="rakuten_multimodal_pipeline_v5_2",
     default_args=default_args,
     description="Sequential CV + MiniLM dual-model training with MLflow & Prometheus",
     schedule_interval=None,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=["mlops", "training", "production", "monitoring"],
+    on_failure_callback=_dag_failure_callback,
 ) as dag:
 
     check_data = BashOperator(
@@ -422,7 +591,14 @@ with DAG(
         soft_fail=False,
     )
 
-    # ── 4. Post-processing ────────────────────────────────────────────────────
+    # ── 4. DVC cache push (optional — set push_dvc_cache=false in DAG run conf to skip) ──
+    push_cache = PythonOperator(
+        task_id="push_feature_cache",
+        python_callable=push_feature_cache,
+        provide_context=True,
+    )
+
+    # ── 5. Post-processing ────────────────────────────────────────────────────
     get_version = PythonOperator(
         task_id="get_model_version",
         python_callable=get_model_version,
@@ -447,15 +623,20 @@ with DAG(
             "echo '=== Verifying MLflow registration on DagsHub ===' && "
             "DAGSHUB_USER=${DAGSHUB_USER:-} && "
             "DAGSHUB_TOKEN=${DAGSHUB_TOKEN:-} && "
-            "MODEL=rakuten_multimodal && "
-            "if [ -z \"$DAGSHUB_USER\" ]; then echo 'DAGSHUB_USER not set, skipping'; exit 0; fi && "
-            "URL=\"https://dagshub.com/${DAGSHUB_USER}/rakuten_z.mlflow/api/2.0/mlflow/registered-models/get?name=${MODEL}\" && "
-            "response=$(curl -s -u \"${DAGSHUB_USER}:${DAGSHUB_TOKEN}\" \"$URL\") && "
-            "if echo \"$response\" | grep -q '\"name\"'; then "
-            "    echo \"✓ Model '${MODEL}' registered in DagsHub MLflow\"; "
-            "else "
-            "    echo \"Model not found: $response\"; exit 1; "
-            "fi"
+            "BASE=rakuten_multimodal && "
+            "if [ -z \"$DAGSHUB_USER\" ]; then echo 'DAGSHUB_USER not set — skipping'; exit 0; fi && "
+            "FAILED=0 && "
+            "for VARIANT in _cv _minilm; do "
+            "  MODEL=\"${BASE}${VARIANT}\" && "
+            "  URL=\"https://dagshub.com/${DAGSHUB_USER}/rakuten_z.mlflow/api/2.0/mlflow/registered-models/get?name=${MODEL}\" && "
+            "  response=$(curl -s -u \"${DAGSHUB_USER}:${DAGSHUB_TOKEN}\" \"$URL\") && "
+            "  if echo \"$response\" | grep -q '\"name\"'; then "
+            "    echo \"✓ ${MODEL} registered\"; "
+            "  else "
+            "    echo \"✗ ${MODEL} not found: ${response:0:200}\"; FAILED=1; "
+            "  fi; "
+            "done && "
+            "exit $FAILED"
         ),
     )
 
@@ -467,8 +648,17 @@ with DAG(
             "echo 'MiniLM model: artifacts/neural_network_model_minilm.keras' && "
             "echo 'Grafana  : http://localhost:3000' && "
             "echo 'Streamlit: http://localhost:8501' && "
+            "echo 'Run log  : /opt/airflow/data/dag_runs.log  (last 3 runs)' && "
             "echo 'Pipeline executed: {{ ds }}'"
         ),
+    )
+
+    # Always runs — writes last-3-runs summary to /opt/airflow/data/dag_runs.log
+    run_summary = PythonOperator(
+        task_id="write_run_summary",
+        python_callable=write_run_summary,
+        provide_context=True,
+        trigger_rule=TriggerRule.ALL_DONE,  # runs on success AND failure
     )
 
     # --- Task Dependencies ---
@@ -483,8 +673,10 @@ with DAG(
         >> wait_for_encoding
         >> trigger_minilm
         >> wait_for_minilm
+        >> push_cache
         >> [get_version, push_metrics]
         >> eval_results
         >> verify_mlflow
         >> success_message
+        >> run_summary
     )

@@ -102,7 +102,7 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: "1800"
       # Give tasks 30 min without a heartbeat before declaring zombie (default: 5 min)
       # Prevents task kills during Postgres DNS outages or system pressure under heavy CPU/RAM load
-      AIRFLOW__SCHEDULER__SCHEDULER_ZOMBIE_TASK_THRESHOLD: "1800"
+      AIRFLOW__SCHEDULER__SCHEDULER_ZOMBIE_TASK_THRESHOLD: "14400"
       # Reduce gunicorn workers (default 4) to avoid OOM when train-api consumes 3-4 GB
       AIRFLOW__WEBSERVER__WORKERS: "2"
       AIRFLOW__WEBSERVER__WORKER_TIMEOUT: "120"
@@ -187,6 +187,7 @@ services:
     build:
       context: ./train-api
       dockerfile: Dockerfile
+      provenance: false
     container_name: train-api
     image: rakuten_mlops_services-train-api:latest
     restart: unless-stopped
@@ -205,10 +206,10 @@ services:
       DAGSHUB_CLIENT_TOKENS_CACHE: /root/.dagshub_tokens
       LOG_LEVEL: INFO
 
-      # Force CPU — host CUDA driver too old for TF GPU runtime
+      # Replace glibc with jemalloc: eliminates tcache/fasttop corruption from TF's
+      # BFCAllocator during model.fit().  Inherited by all child subprocesses.
+      LD_PRELOAD: "/usr/lib/x86_64-linux-gnu/libjemalloc.so.2"
       CUDA_VISIBLE_DEVICES: ""
-      # Limit glibc memory arenas to prevent double-free with numpy/TF/torch
-      MALLOC_ARENA_MAX: "2"
 
       # Airflow connections
       AIRFLOW_CONN_GATE_API: http://gate-api:5000
@@ -238,6 +239,7 @@ services:
       - ./data/Y_train_CVw08PX.csv:/app/data/Y_train_CVw08PX.csv:ro,delegated
       - ./data/artifacts:/app/data/artifacts
       - ./data/feature_cache:/app/data/feature_cache
+      - ./data/jobs:/app/data/jobs
     command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5002"]
     deploy:
       resources:
@@ -293,6 +295,8 @@ services:
       MLFLOW_EXPERIMENT_NAME: rakuten_z
       #MLFLOW_TRACKING_USERNAME: ${DAGSHUB_USER}
       #MLFLOW_TRACKING_PASSWORD: ${DAGSHUB_TOKEN}
+      ARTIFACTS_PATH: /app/data/artifacts
+      LD_PRELOAD: "/usr/local/lib/libjemalloc.so.2"
       # Optimization for large dataset
       SKIP_DVC_PULL: "0"
     volumes:
@@ -451,7 +455,7 @@ services:
     container_name: minilm-encoder
     restart: unless-stopped
     ports:
-      - "5004:5004"
+      - "5005:5004"
     environment:
       - TRAIN_CSV_X_PATH=/app/data/X_train_update.csv
       - MINILM_CACHE_PATH=/app/data/feature_cache/text_features_minilm.npy

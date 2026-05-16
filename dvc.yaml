@@ -1,54 +1,128 @@
+# DVC pipeline definition
+# Displayed as a DAG in DagsHub: https://dagshub.com/zz75da/rakuten_z
+#
+# Two parallel text-encoding paths feed into two independent training stages.
+# The image branch and PCA are shared between both encoders.
+# All stages run inside Docker via train-api/predict-api (see docker-compose.yml).
+
 stages:
-  preprocess_text:
+
+  # ── Text encoding ─────────────────────────────────────────────────────────
+
+  preprocess_text_cv:
+    desc: "SpaCy lemmatisation + CountVectorizer(5000) → text_features.npy + text_vectorizer.pkl"
     cmd: python train-api/services/preprocess_text.py
     deps:
-    - data/X_train_update.csv
-    - train-api/services/preprocess_text.py
+      - data/X_train_update.csv
+      - train-api/services/preprocess_text.py
     outs:
-    - artifacts/text_vectorizer.pkl
-    - data/text_features.npy
+      - data/feature_cache/text_features.npy
+      - data/artifacts/text_vectorizer.pkl
+
+  preprocess_text_minilm:
+    desc: "paraphrase-multilingual-MiniLM-L12-v2 sentence embeddings → text_features_minilm.npy"
+    cmd: python minilm-encoder/encode.py
+    deps:
+      - data/X_train_update.csv
+      - minilm-encoder/encode.py
+      - minilm-encoder/app.py
+    outs:
+      - data/feature_cache/text_features_minilm.npy
+
+  # ── Image encoding ────────────────────────────────────────────────────────
+
   preprocess_image:
+    desc: "ResNet50 (ImageNet, global avg pool, no top) → image_features.npy (2048-d per sample)"
     cmd: python train-api/services/preprocess_image.py
     deps:
-    - data/images/image_train
-    - train-api/services/preprocess_image.py
+      - data/images/image_train
+      - train-api/services/preprocess_image.py
     outs:
-    - data/image_features.npy
-  train_model:
-    cmd: python train-api/services/trainer.py
+      - data/feature_cache/image_features.npy
+
+  # ── Dimensionality reduction ──────────────────────────────────────────────
+
+  reduce_features_cv:
+    desc: "IncrementalPCA: text 5000→1024, image 2048→300 — produces shared pca_image.pkl"
+    cmd: python train-api/services/run_pca.py
+              data/feature_cache/text_features.npy
+              data/feature_cache/image_features.npy
+              countvectorizer
+              /tmp/pca_out_cv.json
     deps:
-    - artifacts/X_reduced.npy
-    - data/Y_train_CVw08PX.csv
-    - train-api/services/trainer.py
-    # params:
-    # - plots/history.json
+      - data/feature_cache/text_features.npy
+      - data/feature_cache/image_features.npy
+      - train-api/services/pca_reducer.py
+      - train-api/services/run_pca.py
     outs:
-    - artifacts/label_encoder.pkl
-    - artifacts/neural_network_model.keras
-    - artifacts/train_history.json
-    - plots/history.json
+      - data/artifacts/pca_text.pkl
+      - data/artifacts/pca_image.pkl
+
+  reduce_features_minilm:
+    desc: "IncrementalPCA: image 2048→300 (reuses pca_image.pkl) for MiniLM 384-d text features"
+    cmd: python train-api/services/run_pca.py
+              data/feature_cache/text_features_minilm.npy
+              data/feature_cache/image_features.npy
+              minilm
+              /tmp/pca_out_minilm.json
+    deps:
+      - data/feature_cache/text_features_minilm.npy
+      - data/feature_cache/image_features.npy
+      - data/artifacts/pca_image.pkl
+      - train-api/services/pca_reducer.py
+      - train-api/services/run_pca.py
+
+  # ── Model training ────────────────────────────────────────────────────────
+
+  train_cv:
+    desc: "Train Dense(512→256→27) on 1324-d features — registers rakuten_multimodal_cv in MLflow"
+    cmd: python train-api/services/run_full_pipeline.py
+              cv_dvc countvectorizer 10 32 false true
+    deps:
+      - data/artifacts/pca_text.pkl
+      - data/artifacts/pca_image.pkl
+      - data/feature_cache/text_features.npy
+      - data/feature_cache/image_features.npy
+      - data/artifacts/text_vectorizer.pkl
+      - data/Y_train_CVw08PX.csv
+      - train-api/services/trainer.py
+      - train-api/services/run_full_pipeline.py
+    outs:
+      - data/artifacts/neural_network_model.keras
+      - data/artifacts/label_encoder.pkl
+      - data/artifacts/train_history.json
     metrics:
-    - metrics.json:
-        cache: false
-  reduce_features:
-    cmd: python train-api/services/pca_reducer.py
+      - data/artifacts/metrics_cv.json:
+          cache: false
+
+  train_minilm:
+    desc: "Train Dense(512→256→27) on 684-d features — registers rakuten_multimodal_minilm in MLflow"
+    cmd: python train-api/services/run_full_pipeline.py
+              minilm_dvc minilm 10 32 false true
     deps:
-    - data/image_features.npy
-    - data/text_features.npy
-    - train-api/services/pca_reducer.py
+      - data/artifacts/pca_image.pkl
+      - data/feature_cache/text_features_minilm.npy
+      - data/feature_cache/image_features.npy
+      - data/Y_train_CVw08PX.csv
+      - train-api/services/trainer.py
+      - train-api/services/run_full_pipeline.py
     outs:
-    - artifacts/X_reduced.npy
-    - artifacts/pca_image.pkl
-    - artifacts/pca_text.pkl
-  predict_model:
-    cmd: python predict-api/app.py
+      - data/artifacts/neural_network_model_minilm.keras
+      - data/artifacts/train_history_minilm.json
+    metrics:
+      - data/artifacts/metrics_minilm.json:
+          cache: false
+
+  # ── Inference service ─────────────────────────────────────────────────────
+
+  predict:
+    desc: "predict-api loads both models at startup — serves /predict-text?model=cv|minilm"
+    cmd: uvicorn app:app --host 0.0.0.0 --port 5003
     deps:
-      # All artifacts loaded by the API's load_artifacts function:
-      - artifacts/neural_network_model.keras
-      - artifacts/label_encoder.pkl
-      - artifacts/text_vectorizer.pkl
-      - artifacts/pca_text.pkl
-      - artifacts/pca_image.pkl
-      # The application code itself (if code changes, the stage is outdated)
+      - data/artifacts/neural_network_model.keras
+      - data/artifacts/neural_network_model_minilm.keras
+      - data/artifacts/label_encoder.pkl
+      - data/artifacts/text_vectorizer.pkl
+      - data/artifacts/pca_text.pkl
+      - data/artifacts/pca_image.pkl
       - predict-api/app.py
-    # No 'outs' as it produces a service, not a data file.

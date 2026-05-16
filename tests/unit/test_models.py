@@ -111,6 +111,8 @@ class TestModelArchitecture:
 
 
 class TestFeatureConcatenation:
+    """CV encoder: text=1024-d, image=300-d → combined=1324-d."""
+
     def test_hstack_shape(self):
         text = np.random.rand(10, 1024)
         image = np.random.rand(10, 300)
@@ -136,3 +138,65 @@ class TestFeatureConcatenation:
         combined = np.hstack([text, dummy_image])
         assert combined.shape == (1, 1324)
         np.testing.assert_array_equal(combined[:, 1024:], 0)
+
+
+class TestFeatureConcatenationMiniLM:
+    """MiniLM encoder: text=384-d, image=300-d → combined=684-d."""
+
+    def test_hstack_shape(self):
+        text = np.random.rand(10, 384)
+        image = np.random.rand(10, 300)
+        assert np.hstack([text, image]).shape == (10, 684)
+
+    def test_text_slice_preserved(self):
+        text = np.random.rand(5, 384)
+        image = np.random.rand(5, 300)
+        combined = np.hstack([text, image])
+        np.testing.assert_array_equal(combined[:, :384], text)
+
+    def test_image_slice_preserved(self):
+        text = np.random.rand(5, 384)
+        image = np.random.rand(5, 300)
+        combined = np.hstack([text, image])
+        np.testing.assert_array_equal(combined[:, 384:], image)
+
+    def test_dummy_zeros_substitution(self):
+        dummy_text = np.zeros((1, 384))
+        image = np.random.rand(1, 300)
+        combined = np.hstack([dummy_text, image])
+        assert combined.shape == (1, 684)
+        np.testing.assert_array_equal(combined[:, :384], 0)
+
+
+class TestModelArchitectureMiniLM:
+    """MiniLM variant: input_dim=684, same Dense→Dropout→Softmax topology."""
+
+    @requires_tf
+    def test_model_builds_with_minilm_input(self):
+        from tensorflow.keras.layers import Input, Dense, Dropout
+        from tensorflow.keras import Model
+        inp = Input(shape=(684,))
+        x = Dense(512, activation="relu")(inp)
+        x = Dropout(0.3)(x)
+        x = Dense(256, activation="relu")(x)
+        x = Dropout(0.2)(x)
+        out = Dense(27, activation="softmax")(x)
+        model = Model(inputs=inp, outputs=out)
+        model.compile(optimizer="adam",
+                      loss="sparse_categorical_crossentropy",
+                      metrics=["accuracy"])
+        assert model.input_shape == (None, 684)
+        assert model.output_shape == (None, 27)
+
+    @requires_tf
+    def test_minilm_model_output_sums_to_one(self):
+        from tensorflow.keras.layers import Input, Dense, Dropout
+        from tensorflow.keras import Model
+        inp = Input(shape=(684,))
+        x = Dense(64, activation="relu")(inp)
+        x = Dropout(0.0)(x)
+        out = Dense(27, activation="softmax")(x)
+        model = Model(inputs=inp, outputs=out)
+        model.compile(optimizer="adam", loss="sparse_categorical_crossentropy")
+        preds = model.predict(np.random.rand(4, 684), verbose=0)
+        np.testing.assert_allclose(preds.sum(axis=1), np.ones(4), atol=1e-5)

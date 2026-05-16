@@ -1,5 +1,5 @@
-# train-api  (tensorflow/tensorflow:2.17.0-gpu bundles CUDA 12 + cuDNN — no host install needed)
-FROM tensorflow/tensorflow:2.17.0-gpu
+# CPU-only TF: no BFCAllocator/CUDA memory arena, no glibc heap corruption during model.fit()
+FROM tensorflow/tensorflow:2.17.0
 
 WORKDIR /app
 
@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     curl \
+    libjemalloc2 \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Copie EXPLICITE du requirements

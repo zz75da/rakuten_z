@@ -7,7 +7,6 @@ import logging
 from time import time
 from tqdm import tqdm
 
-os.makedirs("artifacts", exist_ok=True)
 # --- Logging setup ---
 logging.basicConfig(
     level=logging.INFO,
@@ -77,8 +76,11 @@ def reduce_features(
             if batch_size < 16:
                 raise MemoryError("Cannot fit even a single image batch into memory")
 
-    logging.info("Transforming image features using PCA")
-    image_features_reduced = pca_img.transform(image_features)
+    logging.info("Transforming image features using PCA (batched)")
+    image_features_reduced = np.vstack([
+        pca_img.transform(image_features[i:i + batch_size])
+        for i in range(0, image_features.shape[0], batch_size)
+    ])
     logging.info(f"Image features reduced shape: {image_features_reduced.shape}")
     log_memory_usage("After image PCA transform")
 
@@ -121,8 +123,11 @@ def reduce_features(
                 if batch_size < 16:
                     raise MemoryError("Cannot fit even a single text batch into memory")
 
-        logging.info("Transforming text features using PCA")
-        text_features_reduced = pca_text.transform(text_features)
+        logging.info("Transforming text features using PCA (batched)")
+        text_features_reduced = np.vstack([
+            pca_text.transform(text_features[i:i + batch_size])
+            for i in range(0, text_features.shape[0], batch_size)
+        ])
         logging.info(f"Text features reduced shape: {text_features_reduced.shape}")
         log_memory_usage("After text PCA transform")
 
@@ -148,6 +153,15 @@ def reduce_features(
 
     logging.info(f"Saved X_reduced -> {X_reduced_path}")
     logging.info(f"Saved PCA image model -> {pca_img_path}")
+
+    # Explicitly free large arrays before returning so glibc releases them
+    # via munmap() (mmap threshold) rather than tcache, preventing double-free
+    # when TensorFlow's allocator initialises in the same process shortly after.
+    import gc
+    del text_features, image_features, X_reduced
+    del image_features_reduced, text_features_reduced
+    gc.collect()
+    logging.info("PCA arrays freed, gc collected")
 
     return X_reduced_path, pca_img_path, pca_text_path
 

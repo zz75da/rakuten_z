@@ -18,6 +18,7 @@ import threading
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI
+from prometheus_client import make_asgi_app
 
 logging.basicConfig(
     level=logging.INFO,
@@ -115,3 +116,6 @@ def status():
             _state.update({"status": "done"})
     with _lock:
         return dict(_state)
+
+
+app.mount("/metrics", make_asgi_app())

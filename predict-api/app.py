@@ -5,7 +5,9 @@ import requests
 import tensorflow as tf
 from tensorflow.keras.applications import ResNet50
 from tensorflow.keras.applications.resnet50 import preprocess_input as resnet_preprocess
+import json
 from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi.responses import StreamingResponse
 from prometheus_client import make_asgi_app, Counter, Histogram, Gauge
 from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import IncrementalPCA
@@ -70,7 +72,7 @@ FEATURE_IMAGE_MEAN = Gauge(
 )
 
 # --- Configuration ---
-ARTIFACTS_PATH = os.getenv("ARTIFACTS_PATH", "/app/data/artifacts")
+ARTIFACTS_PATH = os.getenv("ARTIFACTS_PATH") or "/app/data/artifacts"
 GATE_API_URL = os.getenv("GATE_API_URL", "http://gate-api:5000")
 
 # --- Globals ---
@@ -131,6 +133,11 @@ class MultimodalRequest(BaseModel):
     description: str = None
     image_base64: str = None
     model: str = "cv"  # "cv" | "minilm"
+
+
+class BatchStreamRequest(BaseModel):
+    items: list[MultimodalRequest]
+    batch_size: int = 50
 
 
 # --- Auth helper ---
@@ -407,6 +414,43 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
         "pred_class": pred, "label": label, "category": category,
         "probs": probs.tolist(), "mode": "multimodal", "encoder": req.model,
     }
+
+
+@app.post("/predict-multimodal-batch-stream")
+def predict_multimodal_batch_stream(req: BatchStreamRequest, user: dict = Depends(verify_jwt_token)):
+    def generate():
+        for item in req.items:
+            try:
+                active_model, text_dim = _resolve_model(item.model)
+                text_features = (
+                    extract_text_features_minilm(item.description)
+                    if item.model == "minilm"
+                    else extract_text_features(item.description)
+                ) if item.description else np.zeros((1, text_dim))
+                image_features = (
+                    extract_image_features(item.image_base64)
+                    if item.image_base64
+                    else np.zeros((1, pca_image.n_components_))
+                )
+                combined = np.hstack([text_features, image_features])
+                probs = active_model.predict(combined, verbose=0)
+                pred  = int(np.argmax(probs, axis=1)[0])
+                label = str(label_encoder.inverse_transform([pred])[0])
+                result = {
+                    "pred_class": pred,
+                    "label":      label,
+                    "category":   CATEGORY_NAMES.get(label, label),
+                    "probs":      probs.tolist(),
+                    "encoder":    item.model,
+                }
+                _record_drift_metrics(probs[0], label, "/predict-multimodal-batch-stream")
+                REQUEST_COUNT.labels("/predict-multimodal-batch-stream", "POST", "200").inc()
+            except Exception as e:
+                result = {"error": str(e)}
+                REQUEST_COUNT.labels("/predict-multimodal-batch-stream", "POST", "500").inc()
+            yield json.dumps(result) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
 # --- Prometheus metrics ---

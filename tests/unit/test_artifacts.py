@@ -25,13 +25,14 @@ class _DummyModel:
             f.write("dummy-keras-model")
 
 
-def _make_kwargs(skip_existing=False):
+def _make_kwargs(skip_existing=False, text_encoder="countvectorizer"):
     return dict(
         model=_DummyModel(),
         vectorizer={"vocab": [1, 2, 3]},
         pca_models={"image": np.eye(3), "text": np.eye(2)},
         label_encoder={"classes": [0, 1]},
         skip_existing=skip_existing,
+        text_encoder=text_encoder,
     )
 
 
@@ -46,10 +47,31 @@ class TestSaveArtifacts:
         finally:
             artifacts_module.ARTIFACTS_PATH = orig
 
-        # Format is now .keras, not .h5
+        # CV encoder: full artifact set including vectorizer and pca_text
         for fname in ["neural_network_model.keras", "text_vectorizer.pkl",
                       "pca_image.pkl", "pca_text.pkl", "label_encoder.pkl"]:
             assert (save_path / fname).exists(), f"Missing: {fname}"
+
+    def test_minilm_creates_correct_files(self, temp_dir, artifacts_module):
+        save_path = temp_dir / "arts_minilm"
+        save_path.mkdir()
+        orig = artifacts_module.ARTIFACTS_PATH
+        artifacts_module.ARTIFACTS_PATH = str(save_path)
+        try:
+            artifacts_module.save_artifacts(**_make_kwargs(text_encoder="minilm"))
+        finally:
+            artifacts_module.ARTIFACTS_PATH = orig
+
+        # MiniLM encoder: separate model file, no vectorizer or pca_text
+        assert (save_path / "neural_network_model_minilm.keras").exists()
+        assert (save_path / "pca_image.pkl").exists()
+        assert (save_path / "label_encoder.pkl").exists()
+        assert not (save_path / "neural_network_model.keras").exists(), \
+            "CV model file must not be written during a MiniLM run"
+        assert not (save_path / "text_vectorizer.pkl").exists(), \
+            "text_vectorizer.pkl must not be written for MiniLM encoder"
+        assert not (save_path / "pca_text.pkl").exists(), \
+            "pca_text.pkl must not be written for MiniLM encoder"
 
     def test_skip_existing_preserves_original(self, temp_dir, artifacts_module):
         save_path = temp_dir / "arts_skip"

@@ -76,7 +76,15 @@ def regular_user():
     return {"username": "user", "role": "user"}
 
 @pytest.fixture
-def admin_client(admin_user):
+def clear_running_jobs():
+    """Mark all running jobs as success before each test so the 409 guard doesn't fire."""
+    for job in _training_jobs.values():
+        if job.get("status") == "running":
+            job["status"] = "success"
+    yield
+
+@pytest.fixture
+def admin_client(admin_user, clear_running_jobs):
     app.dependency_overrides[verify_jwt_token] = lambda: admin_user
     with TestClient(app) as c:
         yield c
@@ -146,6 +154,14 @@ class TestTrainEndpoint:
         assert len(new_keys) == 1
         job_id = new_keys.pop()
         assert _training_jobs[job_id]["status"] == "running"
+
+    def test_concurrent_submission_returns_409(self, admin_client):
+        """Second POST /train while a job is still running must return 409."""
+        with patch("app._run_training_pipeline"):
+            admin_client.post("/train", json={"epochs": 1})
+        # Job is now "running" — a second attempt must be rejected
+        resp = admin_client.post("/train", json={"epochs": 1})
+        assert resp.status_code == 409
 
     def test_background_thread_is_started(self, admin_client):
         started = []

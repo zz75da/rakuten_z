@@ -22,6 +22,10 @@ route:
     - receiver: 'email-warning'
       match:
         severity: 'warning'
+    # minilm-encoder is warning-only (training can fall back to CV)
+    - receiver: 'email-warning'
+      match:
+        service: 'minilm-encoder'
 
 receivers:
   - name: 'email-critical'
@@ -29,28 +33,40 @@ receivers:
       - to: '__ALERT_EMAIL_TO__'
         send_resolved: true
         headers:
-          Subject: '[CRITICAL] {{ .CommonLabels.alertname }} - {{ .CommonLabels.service }}'
+          Subject: '[CRITICAL] {{ .CommonLabels.alertname }} — {{ .CommonLabels.service }}'
         html: |-
-          <h2>CRITICAL ALERT</h2>
-          <p><strong>Service:</strong> {{ .CommonLabels.service }}</p>
-          <p><strong>Alert:</strong> {{ .CommonLabels.alertname }}</p>
-          <p><strong>Severity:</strong> {{ .CommonLabels.severity }}</p>
-          <p><strong>Description:</strong> {{ .CommonAnnotations.description }}</p>
-          <p><strong>Time:</strong> {{ .StartsAt }}</p>
+          <h2 style="color:#c0392b">&#x1F6A8; CRITICAL ALERT</h2>
+          <table style="border-collapse:collapse;font-family:monospace;font-size:13px">
+            <tr><td style="padding:4px 12px;font-weight:bold">Service</td><td>{{ .CommonLabels.service }}</td></tr>
+            <tr><td style="padding:4px 12px;font-weight:bold">Alert</td><td>{{ .CommonLabels.alertname }}</td></tr>
+            <tr><td style="padding:4px 12px;font-weight:bold">Severity</td><td>{{ .CommonLabels.severity }}</td></tr>
+            {{ if .CommonLabels.encoder }}<tr><td style="padding:4px 12px;font-weight:bold">Encoder</td><td>{{ .CommonLabels.encoder }}</td></tr>{{ end }}
+            <tr><td style="padding:4px 12px;font-weight:bold">Description</td><td>{{ .CommonAnnotations.description }}</td></tr>
+          </table>
+          {{ range .Alerts }}
+          <p style="font-size:12px;color:#666">Started: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}</p>
+          {{ end }}
+          <p><a href="http://localhost:3000">View Grafana Dashboard</a></p>
 
   - name: 'email-warning'
     email_configs:
       - to: '__ALERT_EMAIL_TO__'
         send_resolved: true
         headers:
-          Subject: '[WARNING] {{ .CommonLabels.alertname }} - {{ .CommonLabels.service }}'
+          Subject: '[WARNING] {{ .CommonLabels.alertname }} — {{ .CommonLabels.service }}'
         html: |-
-          <h2>WARNING ALERT</h2>
-          <p><strong>Service:</strong> {{ .CommonLabels.service }}</p>
-          <p><strong>Alert:</strong> {{ .CommonLabels.alertname }}</p>
-          <p><strong>Severity:</strong> {{ .CommonLabels.severity }}</p>
-          <p><strong>Description:</strong> {{ .CommonAnnotations.description }}</p>
-          <p><strong>Time:</strong> {{ .StartsAt }}</p>
+          <h2 style="color:#e67e22">&#x26A0;&#xFE0F; WARNING ALERT</h2>
+          <table style="border-collapse:collapse;font-family:monospace;font-size:13px">
+            <tr><td style="padding:4px 12px;font-weight:bold">Service</td><td>{{ .CommonLabels.service }}</td></tr>
+            <tr><td style="padding:4px 12px;font-weight:bold">Alert</td><td>{{ .CommonLabels.alertname }}</td></tr>
+            <tr><td style="padding:4px 12px;font-weight:bold">Severity</td><td>{{ .CommonLabels.severity }}</td></tr>
+            {{ if .CommonLabels.encoder }}<tr><td style="padding:4px 12px;font-weight:bold">Encoder</td><td>{{ .CommonLabels.encoder }}</td></tr>{{ end }}
+            <tr><td style="padding:4px 12px;font-weight:bold">Description</td><td>{{ .CommonAnnotations.description }}</td></tr>
+          </table>
+          {{ range .Alerts }}
+          <p style="font-size:12px;color:#666">Started: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}</p>
+          {{ end }}
+          <p><a href="http://localhost:3000">View Grafana Dashboard</a></p>
 
 inhibit_rules:
   - source_match:

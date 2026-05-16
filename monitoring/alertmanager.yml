@@ -41,7 +41,7 @@ route:
         severity: 'critical'
       continue: false
 
-    # --- WARNING ALERTS ---  
+    # --- WARNING ALERTS ---
     - receiver: 'slack-warnings'
       match:
         severity: 'warning'
@@ -91,6 +91,11 @@ route:
         - receiver: 'slack-warnings'
           match:
             severity: 'warning'
+
+    # --- MINILM ENCODER (warning-only — training can fall back to CV) ---
+    - receiver: 'slack-warnings'
+      match:
+        service: 'minilm-encoder'
 
     # --- DATABASE ALERTS ---
     - receiver: 'slack-database'
@@ -208,10 +213,9 @@ receivers:
         title: '🤖 Train-API: {{ .CommonLabels.alertname }}'
         text: |-
           *Status:* {{ .CommonLabels.severity }}
-          *Model:* {{ .CommonLabels.model_name }}
-          *Accuracy:* {{ .CommonAnnotations.accuracy }}
-          *Loss:* {{ .CommonAnnotations.loss }}
+          *Encoder:* {{ if .CommonLabels.encoder }}{{ .CommonLabels.encoder }}{{ else }}n/a{{ end }}
           *Description:* {{ .CommonAnnotations.description }}
+          *Summary:* {{ .CommonAnnotations.summary }}
         color: '{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
 
   - name: 'slack-predict-api'
@@ -221,9 +225,8 @@ receivers:
         title: '🔮 Predict-API: {{ .CommonLabels.alertname }}'
         text: |-
           *Status:* {{ .CommonLabels.severity }}
-          *Model:* {{ .CommonLabels.model_name }}
-          *Latency:* {{ .CommonAnnotations.latency }}
-          *Success Rate:* {{ .CommonAnnotations.success_rate }}
+          *Endpoint:* {{ if .CommonLabels.endpoint }}{{ .CommonLabels.endpoint }}{{ else }}n/a{{ end }}
+          *Summary:* {{ .CommonAnnotations.summary }}
           *Description:* {{ .CommonAnnotations.description }}
         color: '{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
 

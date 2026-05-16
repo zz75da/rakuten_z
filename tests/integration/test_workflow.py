@@ -70,6 +70,10 @@ from app import app, verify_jwt_token, _training_jobs
 def admin_override():
     app.dependency_overrides[verify_jwt_token] = lambda: {
         "username": "admin", "role": "admin"}
+    # Clear any running jobs from prior tests so the 409 guard doesn't fire
+    for job in _training_jobs.values():
+        if job.get("status") == "running":
+            job["status"] = "success"
     yield
     app.dependency_overrides.clear()
 
@@ -142,16 +146,16 @@ class TestAsyncTrainingWorkflow:
         resp = client.get("/train/status/does-not-exist-at-all")
         assert resp.status_code == 404
 
-    def test_multiple_concurrent_jobs_are_independent(self, client):
-        ids = []
-        for _ in range(3):
-            with patch.object(train_app_mod, "_run_training_pipeline"):
-                resp = client.post("/train", json={"epochs": 1})
-            ids.append(resp.json()["job_id"])
-
-        assert len(set(ids)) == 3, "Each job must have a unique job_id"
-        for jid in ids:
-            assert jid in _training_jobs
+    def test_second_submission_while_running_returns_409(self, client):
+        """The 409 guard prevents a second training job from starting while one
+        is already running (both runs share the same feature-cache paths)."""
+        with patch.object(train_app_mod, "_run_training_pipeline"):
+            first = client.post("/train", json={"epochs": 1})
+        assert first.status_code == 202
+        # First job is still "running" — second attempt must be rejected
+        second = client.post("/train", json={"epochs": 1})
+        assert second.status_code == 409
+        assert "already in progress" in second.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------
