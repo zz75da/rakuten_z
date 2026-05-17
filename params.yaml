@@ -48,3 +48,5 @@ minilm:
   # MiniLM encoder settings — safe to experiment
   normalize_embeddings: false  # project embeddings onto unit sphere before training
                                # try: true  (often improves linear classifiers)
+                               # NOTE: requires rebuilding minilm-encoder container
+                               # after changing (docker-compose up -d --build minilm-encoder)
