@@ -302,6 +302,7 @@ services:
     volumes:
       - ./params.yaml:/app/params.yaml:ro,delegated
       - ./data/artifacts:/app/data/artifacts
+      - ./data/hf_cache:/root/.cache/huggingface
     command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5003"]
     depends_on:
       train-api:
