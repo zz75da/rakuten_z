@@ -32,6 +32,21 @@ CSV_PATH    = os.getenv("TRAIN_CSV_X_PATH",  "/app/data/X_train_update.csv")
 OUTPUT_PATH = os.getenv("MINILM_CACHE_PATH", "/app/data/feature_cache/text_features_minilm.npy")
 BATCH_SIZE  = int(os.getenv("MINILM_BATCH_SIZE", "256"))
 
+def _load_params() -> dict:
+    for path in ["/app/params.yaml", "params.yaml"]:
+        if os.path.exists(path):
+            try:
+                import yaml
+                with open(path) as f:
+                    return yaml.safe_load(f) or {}
+            except Exception:
+                pass
+    return {}
+
+_PARAMS = _load_params()
+NORMALIZE_EMBEDDINGS = bool(_PARAMS.get("minilm", {}).get("normalize_embeddings", False))
+logging.info(f"normalize_embeddings={NORMALIZE_EMBEDDINGS} (from params.yaml)")
+
 _lock  = threading.Lock()
 _state = {"status": "idle", "message": "Ready"}
 
@@ -61,7 +76,7 @@ def _encode_worker():
             batch_size=BATCH_SIZE,
             show_progress_bar=False,
             convert_to_numpy=True,
-            normalize_embeddings=False,
+            normalize_embeddings=NORMALIZE_EMBEDDINGS,
         )
 
         os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)

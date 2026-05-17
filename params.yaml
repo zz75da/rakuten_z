@@ -1,12 +1,50 @@
+# =============================================================================
+# Rakuten MLOps — Experiment Parameters
+# =============================================================================
+# Edit this file to run a new experiment. The DAG reads it at training time
+# and MLflow logs every value automatically, so each DAG run is one
+# comparable experiment point in DagsHub → Experiments.
+#
+# SAFE TO CHANGE:  model.*, minilm.normalize_embeddings, preprocess.pca_components,
+#                  preprocess.cv_max_features, train.epochs
+# DO NOT CHANGE:   preprocess.image_batch_size, preprocess.minilm_batch_size,
+#                  train.batch_size  — RAM/OOM risk on this machine (10 GB disk,
+#                  training already peaks at ~3 GB RAM)
+# =============================================================================
+
 preprocess:
   image_size: [224, 224]
-  batch_size: 16
-  text_features_limit: 5000
-  pca_components: 300
-  pca_batch_size: 512
-  
+
+  # --- Batch sizes: DO NOT INCREASE (RAM / OOM risk) ---
+  image_batch_size: 64        # ResNet50 feature extraction; 64 × 3×224×224 ≈ 18 MB/batch
+  minilm_batch_size: 256      # sentence-transformers encoding batch
+  pca_batch_size: 512         # IncrementalPCA fitting batch
+
+  # --- Safe to experiment ---
+  pca_components: 300         # PCA output dim for both image and text branches
+                              # try: 256, 384, 512  (disk: +50 MB per +100 components)
+  cv_max_features: 5000       # CountVectorizer vocabulary size (CV encoder only)
+                              # try: 10000, 20000, 50000
 
 train:
-  epochs: 10
-  batch_size: 32
+  # --- DO NOT INCREASE batch_size (OOM risk) ---
+  batch_size: 128
+
+  # --- Safe to experiment ---
+  epochs: 30                  # hard cap; early stopping usually triggers before this
   random_seed: 42
+
+model:
+  # Neural network architecture — all safe to experiment
+  learning_rate: 0.001        # try: 0.0005, 0.002
+  hidden_1: 512               # first dense layer units; try: 256, 768
+  hidden_2: 256               # second dense layer units; try: 128, 512
+  dropout_1: 0.3              # dropout after hidden_1; try: 0.2, 0.4, 0.5
+  dropout_2: 0.2              # dropout after hidden_2; try: 0.1, 0.3
+  early_stopping_patience: 5  # epochs without val_loss improvement before stopping
+                              # try: 3 (faster), 8 or 10 (more exploration)
+
+minilm:
+  # MiniLM encoder settings — safe to experiment
+  normalize_embeddings: false  # project embeddings onto unit sphere before training
+                               # try: true  (often improves linear classifiers)

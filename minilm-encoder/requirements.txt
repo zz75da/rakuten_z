@@ -6,3 +6,4 @@ psutil>=5.9.0
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 prometheus-client>=0.20.0
+pyyaml>=6.0

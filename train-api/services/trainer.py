@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import mlflow
 import mlflow.sklearn
+import yaml
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score, classification_report
@@ -15,6 +16,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ARTIFACTS_DIR     = "/app/data/artifacts"
+
+
+def _load_params() -> dict:
+    """Load params.yaml; fall back to empty dict so hardcoded defaults still work."""
+    for path in ["/app/params.yaml", "params.yaml"]:
+        if os.path.exists(path):
+            with open(path) as f:
+                return yaml.safe_load(f) or {}
+    return {}
+
+
+_PARAMS = _load_params()
 MLFLOW_EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT_NAME", "rakuten_z")
 MLFLOW_MODEL_NAME = os.getenv("MLFLOW_MODEL_NAME", "rakuten_multimodal")
 
@@ -177,13 +190,17 @@ def build_and_train_model(
     from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
     mlflow.tensorflow.autolog(disable=True)
 
-    # Architecture / training constants
-    RANDOM_SEED   = 42
+    # Architecture / training constants — read from params.yaml, fall back to defaults
+    _m = _PARAMS.get("model", {})
+    _t = _PARAMS.get("train", {})
+    RANDOM_SEED   = _t.get("random_seed", 42)
     VAL_SPLIT     = 0.2
-    LEARNING_RATE = 0.001
-    HIDDEN_1, HIDDEN_2   = 512, 256
-    DROPOUT_1, DROPOUT_2 = 0.3, 0.2
-    ES_PATIENCE  = 5
+    LEARNING_RATE = _m.get("learning_rate", 0.001)
+    HIDDEN_1      = _m.get("hidden_1", 512)
+    HIDDEN_2      = _m.get("hidden_2", 256)
+    DROPOUT_1     = _m.get("dropout_1", 0.3)
+    DROPOUT_2     = _m.get("dropout_2", 0.2)
+    ES_PATIENCE   = _m.get("early_stopping_patience", 5)
     LR_PATIENCE, LR_FACTOR, LR_MIN = 2, 0.3, 1e-6
 
     label_encoder = LabelEncoder()
@@ -235,6 +252,7 @@ def build_and_train_model(
             else f"{MLFLOW_MODEL_NAME}_cv"
         )
         try:
+            _p = _PARAMS.get("preprocess", {})
             params = {
                 "text_encoder": text_encoder, "use_dev_images": use_dev_images,
                 "epochs_max": epochs, "batch_size": batch_size,
@@ -249,6 +267,9 @@ def build_and_train_model(
                 "lr_reduce_patience": LR_PATIENCE,
                 "lr_reduce_factor": LR_FACTOR, "lr_min": LR_MIN,
                 "model_name": _effective_model_name,
+                "pca_components": _p.get("pca_components", 300),
+                "cv_max_features": _p.get("cv_max_features", 5000),
+                "normalize_embeddings": _PARAMS.get("minilm", {}).get("normalize_embeddings", False),
             }
             if pca_models:
                 pca_img = pca_models.get("image")
