@@ -21,10 +21,11 @@ preprocess:
   pca_batch_size: 512         # IncrementalPCA fitting batch
 
   # --- Safe to experiment ---
-  pca_components: 300         # PCA output dim for both image and text branches
-                              # try: 256, 384, 512  (disk: +50 MB per +100 components)
-  cv_max_features: 5000       # CountVectorizer vocabulary size (CV encoder only)
-                              # try: 10000, 20000, 50000
+  pca_components: 384         # was 300 — more expressive features; aligns with hidden_1=768
+                              # disk impact: X_reduced.npy grows ~57 MB (204→261 MB)
+                              # CV input: 384+384=768-d  MiniLM input: 384+384=768-d
+  cv_max_features: 10000      # was 5000 — richer vocabulary for CountVectorizer
+                              # no disk impact (PCA output size unchanged)
 
 train:
   # --- DO NOT INCREASE batch_size (OOM risk) ---
@@ -36,17 +37,20 @@ train:
 
 model:
   # Neural network architecture — all safe to experiment
-  learning_rate: 0.001        # try: 0.0005, 0.002
-  hidden_1: 512               # first dense layer units; try: 256, 768
-  hidden_2: 256               # second dense layer units; try: 128, 512
-  dropout_1: 0.3              # dropout after hidden_1; try: 0.2, 0.4, 0.5
-  dropout_2: 0.2              # dropout after hidden_2; try: 0.1, 0.3
-  early_stopping_patience: 5  # epochs without val_loss improvement before stopping
-                              # try: 3 (faster), 8 or 10 (more exploration)
+  # Rationale: observed 11% train/val gap (83% vs 72%) → overfitting.
+  # Fix: lower LR to slow convergence, raise dropout to regularise,
+  #      widen layers to match larger 768-d input, give early stopping more room.
+  learning_rate: 0.0005       # was 0.001 — slower, more stable convergence
+  hidden_1: 768               # was 512 — matches 768-d input dim (pca_components×2)
+  hidden_2: 384               # was 256 — proportional to hidden_1
+  dropout_1: 0.4              # was 0.3 — stronger regularisation (overfitting observed)
+  dropout_2: 0.3              # was 0.2 — stronger regularisation
+  early_stopping_patience: 8  # was 5 — more exploration before stopping;
+                              # lower LR means slower progress, needs more patience
 
 minilm:
   # MiniLM encoder settings — safe to experiment
-  normalize_embeddings: false  # project embeddings onto unit sphere before training
-                               # try: true  (often improves linear classifiers)
+  normalize_embeddings: true   # was false — projects embeddings onto unit sphere;
+                               # unit-norm features consistently improve downstream NN
                                # NOTE: requires rebuilding minilm-encoder container
                                # after changing (docker-compose up -d --build minilm-encoder)
