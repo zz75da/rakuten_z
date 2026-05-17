@@ -364,6 +364,17 @@ def push_feature_cache(**context):
     cache_dir = os.path.join(dvc_root, "data", "feature_cache")
     npy_files = ["image_features.npy", "text_features.npy", "text_features_minilm.npy"]
 
+    # Configure dagshub HTTP remote credentials from env (config.local is gitignored)
+    dagshub_user  = os.getenv("DAGSHUB_USER", "")
+    dagshub_token = os.getenv("DAGSHUB_TOKEN", "")
+    if dagshub_user and dagshub_token:
+        for key, val in [("auth", "basic"), ("user", dagshub_user), ("password", dagshub_token)]:
+            subprocess.run(
+                ["dvc", "remote", "modify", "dagshub", "--local", key, val],
+                capture_output=True, cwd=dvc_root,
+            )
+        print(f"dagshub HTTP remote credentials configured for user={dagshub_user}")
+
     for fname in npy_files:
         fpath = os.path.join(cache_dir, fname)
         if os.path.exists(fpath):
@@ -375,16 +386,22 @@ def push_feature_cache(**context):
         else:
             print(f"Skipping {fname} — file not found")
 
-    push = subprocess.run(
-        ["dvc", "push"],
-        capture_output=True, text=True, cwd=dvc_root,
-    )
-    print(f"dvc push: rc={push.returncode} | {push.stdout.strip()} | {push.stderr.strip()}")
+    results = {}
+    for remote in ["origin", "dagshub"]:
+        push = subprocess.run(
+            ["dvc", "push", "--remote", remote],
+            capture_output=True, text=True, cwd=dvc_root,
+        )
+        print(f"dvc push --remote {remote}: rc={push.returncode} | {push.stdout.strip()} | {push.stderr.strip()}")
+        if push.returncode != 0:
+            # dagshub HTTP remote failure is non-fatal — S3 is the authoritative store
+            if remote == "dagshub":
+                print(f"Warning: push to dagshub HTTP remote failed (non-fatal): {push.stderr.strip()[:300]}")
+            else:
+                raise Exception(f"dvc push to {remote} failed: {push.stderr.strip()[:500]}")
+        results[remote] = push.stdout.strip()
 
-    if push.returncode != 0:
-        raise Exception(f"dvc push failed: {push.stderr.strip()[:500]}")
-
-    return {"status": "ok", "push_output": push.stdout.strip()}
+    return {"status": "ok", "push_output": results}
 
 
 def evaluate_from_result(**context):

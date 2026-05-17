@@ -22,6 +22,7 @@ val_loss_gauge = Gauge("val_loss", "Validation loss per epoch")
 train_acc_gauge = Gauge("train_accuracy", "Training accuracy per epoch")
 val_acc_gauge = Gauge("val_accuracy", "Validation accuracy per epoch")
 epochs_counter = Counter("epochs_completed_total", "Total epochs completed")
+last_run_epochs_gauge = Gauge("model_last_run_epochs", "Epochs trained in the last completed run")
 
 dataset_size_gauge = Gauge("training_dataset_size", "Number of samples in the training set")
 num_classes_gauge = Gauge("model_num_classes", "Number of target classes in the trained model")
@@ -68,7 +69,59 @@ def _load_persisted_jobs():
             logger.warning(f"Could not load persisted job {job_id}: {e}")
 
 
+def _restore_metrics_from_jobs():
+    """Restore Prometheus Gauges from the most recent successful job files.
+
+    Gauges reset to 0 on every restart. Scanning job files lets Grafana show
+    real values immediately without waiting for the next training run.
+    """
+    if not os.path.isdir(JOB_DIR):
+        return
+    best: Dict[str, Any] = {}  # encoder -> most recent successful job
+    for fname in os.listdir(JOB_DIR):
+        if not fname.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(JOB_DIR, fname)) as f:
+                job = json.load(f)
+            if job.get("status") != "success":
+                continue
+            enc = "minilm" if "_minilm" in job.get("model_path", "") else "countvectorizer"
+            if enc not in best or job.get("completed_at", "") > best[enc].get("completed_at", ""):
+                best[enc] = job
+        except Exception:
+            continue
+
+    if not best:
+        return
+
+    # Shared metrics: use the most recent job across all encoders
+    most_recent = max(best.values(), key=lambda j: j.get("completed_at", ""))
+    num_classes_gauge.set(most_recent.get("num_classes", 0))
+    dataset_size_gauge.set(most_recent.get("dataset_size", 0))
+
+    # Per-encoder metrics
+    for enc, job in best.items():
+        history = job.get("history", {})
+        losses    = history.get("loss", [])
+        val_losses = history.get("val_loss", [])
+        accs      = history.get("accuracy", [])
+        val_accs  = history.get("val_accuracy", [])
+        if losses:
+            final_loss_gauge.labels(encoder=enc).set(losses[-1])
+        if val_losses:
+            final_val_loss_gauge.labels(encoder=enc).set(val_losses[-1])
+        if accs:
+            final_accuracy_gauge.labels(encoder=enc).set(accs[-1])
+        if val_accs:
+            final_val_accuracy_gauge.labels(encoder=enc).set(val_accs[-1])
+        last_run_epochs_gauge.set(len(losses))
+
+    logger.info(f"Prometheus metrics restored from job files: encoders={list(best.keys())}")
+
+
 _load_persisted_jobs()
+_restore_metrics_from_jobs()
 
 
 async def verify_jwt_token(authorization: str = Header(...)):
@@ -150,8 +203,9 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
         num_classes_gauge.set(result.get("num_classes", 0))
         dataset_size_gauge.set(result.get("dataset_size", 0))
         history_data = result.get("history", {})
+        epoch_losses = history_data.get("loss", [])
         for t_loss, v_loss, t_acc, v_acc in zip(
-            history_data.get("loss", []),
+            epoch_losses,
             history_data.get("val_loss", []),
             history_data.get("accuracy", []),
             history_data.get("val_accuracy", []),
@@ -161,6 +215,7 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
             train_acc_gauge.set(t_acc)
             val_acc_gauge.set(v_acc)
             epochs_counter.inc()
+        last_run_epochs_gauge.set(len(epoch_losses))
         losses = history_data.get("loss", [])
         val_losses = history_data.get("val_loss", [])
         accs = history_data.get("accuracy", [])

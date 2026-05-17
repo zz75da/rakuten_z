@@ -50,31 +50,13 @@ client = MlflowClient(tracking_uri=MLFLOW_TRACKING_URI)
 # UTILS
 # ======================
 @st.cache_data(ttl=300, show_spinner=False)
-def list_model_versions_and_stages(model_name: str):
+def list_model_versions(model_name: str) -> list:
+    """Return numeric versions for a registered model, newest first."""
     try:
         versions = client.search_model_versions(f"name='{model_name}'")
-        version_numbers = sorted({v.version for v in versions}, key=lambda x: int(x))
-        return set(["Production", "Staging"]).union(version_numbers)
-    except Exception as e:
-        st.warning(f"Could not retrieve MLflow versions: {e}")
-        return {"Production", "Staging"}
-
-
-def get_model_uri(stage_or_version="Production"):
-    try:
-        if str(stage_or_version).isdigit():
-            v = client.get_model_version(name=MODEL_NAME, version=str(stage_or_version))
-            return f"models:/{MODEL_NAME}/{v.version}", v.version, v.current_stage or "None"
-        else:
-            versions = client.get_latest_versions(MODEL_NAME, stages=[stage_or_version])
-            if versions:
-                v = versions[0]
-                return f"models:/{MODEL_NAME}/{stage_or_version}", v.version, v.current_stage
-            st.warning(f"No model found in MLflow for stage '{stage_or_version}'.")
-            return None, None, None
-    except Exception as e:
-        st.error(f"Failed to fetch model from MLflow: {e}")
-        return None, None, None
+        return sorted({v.version for v in versions}, key=lambda x: int(x), reverse=True)
+    except Exception:
+        return []
 
 
 def authenticate_user(username, password):
@@ -635,34 +617,36 @@ def show_prediction_page():
         st.session_state.pop("logged_username", None)
         st.rerun()
 
-    st.sidebar.subheader("MLflow Model")
-    available = list_model_versions_and_stages(MODEL_NAME)
-    available_sorted = sorted(
-        available,
-        key=lambda x: (not str(x).isdigit(), -int(x) if str(x).isdigit() else x),
+    st.sidebar.subheader("MLflow Models")
+
+    cv_versions     = list_model_versions("rakuten_multimodal_cv")
+    minilm_versions = list_model_versions("rakuten_multimodal_minilm")
+
+    cv_sel = st.sidebar.selectbox(
+        "rakuten_multimodal_cv",
+        cv_versions if cv_versions else ["—"],
+        index=0,
     )
-    numeric_versions = [v for v in available_sorted if str(v).isdigit()]
-    default_val   = str(max(numeric_versions, key=int)) if numeric_versions else available_sorted[0]
-    default_index = available_sorted.index(default_val) if default_val in available_sorted else 0
-    stage_or_version = st.sidebar.selectbox("Version / Stage", available_sorted, index=default_index)
-
-    model_uri, version_num, current_stage = get_model_uri(str(stage_or_version))
-    if not model_uri:
-        st.stop()
-
-    st.sidebar.markdown(f"**Model:** `{MODEL_NAME}`")
-    st.sidebar.markdown(f"**URI:** `{model_uri}`")
-    st.sidebar.markdown(f"**Version:** `{version_num}`  |  **Stage:** `{current_stage}`")
+    minilm_sel = st.sidebar.selectbox(
+        "rakuten_multimodal_minilm",
+        minilm_versions if minilm_versions else ["—"],
+        index=0,
+    )
 
     st.sidebar.subheader("Text encoder")
     encoder_options = {
         "CountVectorizer + PCA (1 024-d)": "cv",
         "MiniLM multilingual (384-d)":     "minilm",
     }
-    encoder_label   = st.sidebar.radio("Text model", list(encoder_options.keys()), index=0)
+    encoder_label    = st.sidebar.radio("Text model", list(encoder_options.keys()), index=0)
     selected_encoder = encoder_options[encoder_label]
     if selected_encoder == "minilm":
         st.sidebar.info("paraphrase-multilingual-MiniLM-L12-v2 — 384 dims, multilingual.")
+
+    # Build active model URI from the version selected for the active encoder
+    _ver = cv_sel if selected_encoder == "cv" else minilm_sel
+    _name = "rakuten_multimodal_cv" if selected_encoder == "cv" else "rakuten_multimodal_minilm"
+    model_uri = f"models:/{_name}/{_ver}" if _ver != "—" else None
 
     st.subheader("Single Prediction")
     description    = st.text_input("Product description")

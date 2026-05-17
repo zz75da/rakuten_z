@@ -5,18 +5,36 @@
   "schemaVersion": 38,
   "version": 2,
   "refresh": "30s",
-  "time": { "from": "now-3h", "to": "now" },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
   "templating": {
     "list": [
       {
         "name": "encoder",
         "label": "Encoder",
         "type": "custom",
-        "current": { "text": "All", "value": "$__all" },
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
         "options": [
-          { "selected": true,  "text": "All",                  "value": "$__all" },
-          { "selected": false, "text": "CV (CountVectorizer)",  "value": "countvectorizer" },
-          { "selected": false, "text": "MiniLM",               "value": "minilm" }
+          {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": false,
+            "text": "CV (CountVectorizer)",
+            "value": "countvectorizer"
+          },
+          {
+            "selected": false,
+            "text": "MiniLM",
+            "value": "minilm"
+          }
         ],
         "includeAll": true,
         "multi": false,
@@ -24,46 +42,81 @@
       }
     ]
   },
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": []
+  },
   "panels": [
-
     {
       "id": 1,
       "type": "stat",
       "title": "Total Predictions",
-      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{
-        "refId": "A",
-        "expr": "sum(predict_requests_total) or vector(0)",
-        "legendFormat": "Total"
-      }],
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(predict_requests_total) or vector(0)",
+          "legendFormat": "Total"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "fixed", "fixedColor": "blue" },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
           "unit": "short",
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         }
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
         "colorMode": "background",
         "graphMode": "none",
         "textMode": "auto"
       }
     },
-
     {
       "id": 2,
       "type": "stat",
       "title": "Median Confidence (P50)",
-      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{
-        "refId": "A",
-        "expr": "histogram_quantile(0.5, sum(rate(prediction_confidence_bucket[10m])) by (le)) or vector(0)",
-        "legendFormat": "P50 Confidence"
-      }],
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum(rate(prediction_confidence_bucket[10m])) by (le)) or vector(0)",
+          "legendFormat": "P50 Confidence"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -72,633 +125,1489 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",    "value": null },
-              { "color": "orange", "value": 0.35 },
-              { "color": "yellow", "value": 0.5 },
-              { "color": "green",  "value": 0.65 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.35
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.65
+              }
             ]
           }
         }
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
         "colorMode": "background",
         "graphMode": "none",
         "textMode": "auto"
       }
     },
-
     {
       "id": 3,
       "type": "stat",
       "title": "CV Final Val Accuracy",
       "description": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
-      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{
-        "refId": "A",
-        "expr": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
-        "legendFormat": "CV"
-      }],
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
+          "legendFormat": "CV"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "min": 0,
           "max": 1,
-          "noValue": "—",
-          "mappings": [{ "type": "value", "options": { "0": { "text": "—", "color": "text" } } }],
+          "noValue": "\u00e2\u20ac\u201d",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "\u2014",
+                  "color": "text"
+                }
+              }
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",    "value": null },
-              { "color": "orange", "value": 0.6 },
-              { "color": "yellow", "value": 0.75 },
-              { "color": "green",  "value": 0.85 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6
+              },
+              {
+                "color": "yellow",
+                "value": 0.75
+              },
+              {
+                "color": "green",
+                "value": 0.85
+              }
             ]
           }
         }
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
         "colorMode": "background",
         "graphMode": "none",
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "\u2014"
       }
     },
-
     {
       "id": 26,
       "type": "stat",
       "title": "MiniLM Final Val Accuracy",
       "description": "model_final_val_accuracy{encoder=\"minilm\"}",
-      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{
-        "refId": "A",
-        "expr": "model_final_val_accuracy{encoder=\"minilm\"}",
-        "legendFormat": "MiniLM"
-      }],
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "model_final_val_accuracy{encoder=\"minilm\"}",
+          "legendFormat": "MiniLM"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "min": 0,
           "max": 1,
-          "noValue": "—",
-          "mappings": [{ "type": "value", "options": { "0": { "text": "—", "color": "text" } } }],
+          "noValue": "\u00e2\u20ac\u201d",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "\u2014",
+                  "color": "text"
+                }
+              }
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",    "value": null },
-              { "color": "orange", "value": 0.6 },
-              { "color": "yellow", "value": 0.75 },
-              { "color": "green",  "value": 0.85 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6
+              },
+              {
+                "color": "yellow",
+                "value": 0.75
+              },
+              {
+                "color": "green",
+                "value": 0.85
+              }
             ]
           }
         }
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
         "colorMode": "background",
         "graphMode": "none",
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "\u2014"
       }
     },
-
     {
       "id": 4,
       "type": "stat",
       "title": "P95 Prediction Latency",
-      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{
-        "refId": "A",
-        "expr": "histogram_quantile(0.95, sum(rate(predict_request_latency_seconds_bucket[5m])) by (le)) or vector(0)",
-        "legendFormat": "P95 Latency"
-      }],
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(predict_request_latency_seconds_bucket[5m])) by (le)) or vector(0)",
+          "legendFormat": "P95 Latency"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "s",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green",  "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "orange", "value": 3 },
-              { "color": "red",    "value": 5 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 3
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
             ]
           }
         }
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
         "colorMode": "background",
         "graphMode": "none"
       }
     },
-
     {
       "id": 27,
+      "title": "Training Dataset Size",
       "type": "stat",
-      "title": "MiniLM Encoder",
-      "description": "up{job=\"minilm-encoder\"}",
-      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{
-        "refId": "A",
-        "expr": "up{job=\"minilm-encoder\"} or vector(0)",
-        "legendFormat": "minilm-encoder"
-      }],
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "expr": "training_dataset_size",
+          "refId": "A",
+          "legendFormat": "samples"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "noValue": "\u2014"
+      },
       "fieldConfig": {
         "defaults": {
-          "mappings": [
-            { "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } }, "type": "value" }
-          ],
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }]
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
           },
-          "color": { "mode": "thresholds" }
-        }
-      },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "value_and_name"
+          "mappings": []
+        },
+        "overrides": []
       }
     },
-
     {
       "id": 5,
       "type": "row",
       "title": "Training Metrics",
-      "gridPos": { "x": 0, "y": 4, "w": 24, "h": 1 },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 1
+      },
       "collapsed": false
     },
-
     {
       "id": 6,
       "type": "timeseries",
       "title": "Train / Validation Loss",
-      "gridPos": { "x": 0, "y": 5, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "refId": "A", "expr": "train_loss", "legendFormat": "Train Loss" },
-        { "refId": "B", "expr": "val_loss",   "legendFormat": "Val Loss" }
+        {
+          "refId": "A",
+          "expr": "train_loss",
+          "legendFormat": "Train Loss"
+        },
+        {
+          "refId": "B",
+          "expr": "val_loss",
+          "legendFormat": "Val Loss"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": { "lineWidth": 2, "fillOpacity": 8, "showPoints": "auto" }
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "auto"
+          }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "Val Loss" }, "properties": [{ "id": "custom.lineStyle", "value": { "dash": [6, 4], "fill": "dash" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Val Loss"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    6,
+                    4
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
         ]
       },
       "options": {
-        "tooltip": { "mode": "multi", "sort": "none" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     },
-
     {
       "id": 7,
       "type": "timeseries",
       "title": "Train / Validation Accuracy",
-      "gridPos": { "x": 12, "y": 5, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "refId": "A", "expr": "train_accuracy", "legendFormat": "Train Accuracy" },
-        { "refId": "B", "expr": "val_accuracy",   "legendFormat": "Val Accuracy" }
+        {
+          "refId": "A",
+          "expr": "train_accuracy",
+          "legendFormat": "Train Accuracy"
+        },
+        {
+          "refId": "B",
+          "expr": "val_accuracy",
+          "legendFormat": "Val Accuracy"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "min": 0,
           "max": 1,
-          "custom": { "lineWidth": 2, "fillOpacity": 8, "showPoints": "auto" }
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "auto"
+          }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "Val Accuracy" }, "properties": [{ "id": "custom.lineStyle", "value": { "dash": [6, 4], "fill": "dash" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Val Accuracy"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    6,
+                    4
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
         ]
       },
       "options": {
-        "tooltip": { "mode": "multi", "sort": "none" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     },
-
     {
       "id": 8,
       "type": "stat",
       "title": "Epochs Completed",
-      "gridPos": { "x": 0, "y": 13, "w": 6, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "refId": "A", "expr": "epochs_completed_total or vector(0)", "legendFormat": "Epochs" }],
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "epochs_completed_total or vector(0)",
+          "legendFormat": "Epochs"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "fixed", "fixedColor": "purple" },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          },
           "unit": "short",
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "purple",
+                "value": null
+              }
+            ]
+          }
         }
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
     },
-
     {
       "id": 9,
       "type": "stat",
       "title": "Training Dataset Size",
-      "gridPos": { "x": 6, "y": 13, "w": 6, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "refId": "A", "expr": "training_dataset_size or vector(0)", "legendFormat": "Rows" }],
+      "gridPos": {
+        "x": 6,
+        "y": 13,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "training_dataset_size or vector(0)",
+          "legendFormat": "Rows"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "fixed", "fixedColor": "teal" },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "teal"
+          },
           "unit": "short",
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "teal", "value": null }] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "teal",
+                "value": null
+              }
+            ]
+          }
         }
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
     },
-
     {
       "id": 10,
       "type": "stat",
       "title": "Number of Classes",
-      "gridPos": { "x": 12, "y": 13, "w": 6, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "refId": "A", "expr": "model_num_classes or vector(0)", "legendFormat": "Classes" }],
+      "gridPos": {
+        "x": 12,
+        "y": 13,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "model_num_classes or vector(0)",
+          "legendFormat": "Classes"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "fixed", "fixedColor": "orange" },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          },
           "unit": "short",
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "orange", "value": null }] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
+          }
         }
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
     },
-
     {
       "id": 11,
       "type": "timeseries",
-      "title": "Final Val Accuracy — CV vs MiniLM",
+      "title": "Final Val Accuracy \u00e2\u20ac\u201d CV vs MiniLM",
       "description": "Tracks model_final_val_accuracy per encoder after each completed training run.",
-      "gridPos": { "x": 18, "y": 13, "w": 6, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "x": 18,
+        "y": 13,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "refId": "A", "expr": "model_final_val_accuracy{encoder=\"countvectorizer\"}", "legendFormat": "CV" },
-        { "refId": "B", "expr": "model_final_val_accuracy{encoder=\"minilm\"}",           "legendFormat": "MiniLM" }
+        {
+          "refId": "A",
+          "expr": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
+          "legendFormat": "CV"
+        },
+        {
+          "refId": "B",
+          "expr": "model_final_val_accuracy{encoder=\"minilm\"}",
+          "legendFormat": "MiniLM"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "min": 0,
           "max": 1,
-          "custom": { "lineWidth": 2, "fillOpacity": 10, "showPoints": "always" },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "always"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",    "value": null },
-              { "color": "orange", "value": 0.6 },
-              { "color": "yellow", "value": 0.75 },
-              { "color": "green",  "value": 0.85 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6
+              },
+              {
+                "color": "yellow",
+                "value": 0.75
+              },
+              {
+                "color": "green",
+                "value": 0.85
+              }
             ]
           }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "MiniLM" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }] },
-          { "matcher": { "id": "byName", "options": "CV" },     "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "MiniLM"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CV"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
         ]
       },
       "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     },
-
     {
       "id": 12,
       "type": "row",
       "title": "Prediction Activity",
-      "gridPos": { "x": 0, "y": 17, "w": 24, "h": 1 },
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 1
+      },
       "collapsed": false
     },
-
     {
       "id": 13,
       "type": "timeseries",
       "title": "Request Rate by Endpoint (req/s)",
-      "gridPos": { "x": 0, "y": 18, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "refId": "A", "expr": "rate(predict_requests_total{endpoint=\"/predict-text\"}[2m])",       "legendFormat": "text" },
-        { "refId": "B", "expr": "rate(predict_requests_total{endpoint=\"/predict-image\"}[2m])",      "legendFormat": "image" },
-        { "refId": "C", "expr": "rate(predict_requests_total{endpoint=\"/predict-multimodal\"}[2m])", "legendFormat": "multimodal" }
+        {
+          "refId": "A",
+          "expr": "rate(predict_requests_total{endpoint=\"/predict-text\"}[2m])",
+          "legendFormat": "text"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(predict_requests_total{endpoint=\"/predict-image\"}[2m])",
+          "legendFormat": "image"
+        },
+        {
+          "refId": "C",
+          "expr": "rate(predict_requests_total{endpoint=\"/predict-multimodal\"}[2m])",
+          "legendFormat": "multimodal"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "custom": { "lineWidth": 2, "fillOpacity": 15 }
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
         }
       },
       "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     },
-
     {
       "id": 14,
       "type": "timeseries",
       "title": "Prediction Latency Percentiles",
-      "gridPos": { "x": 12, "y": 18, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(predict_request_latency_seconds_bucket[2m])) by (le))", "legendFormat": "P50" },
-        { "refId": "B", "expr": "histogram_quantile(0.90, sum(rate(predict_request_latency_seconds_bucket[2m])) by (le))", "legendFormat": "P90" },
-        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(predict_request_latency_seconds_bucket[2m])) by (le))", "legendFormat": "P99" }
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum(rate(predict_request_latency_seconds_bucket[2m])) by (le))",
+          "legendFormat": "P50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.90, sum(rate(predict_request_latency_seconds_bucket[2m])) by (le))",
+          "legendFormat": "P90"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum(rate(predict_request_latency_seconds_bucket[2m])) by (le))",
+          "legendFormat": "P99"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "custom": { "lineWidth": 2, "fillOpacity": 5 }
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5
+          }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "P99" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
-          { "matcher": { "id": "byName", "options": "P90" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
-          { "matcher": { "id": "byName", "options": "P50" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "P99"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "P90"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "P50"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
         ]
       },
       "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     },
-
     {
       "id": 15,
       "type": "row",
       "title": "Drift Detection",
-      "gridPos": { "x": 0, "y": 26, "w": 24, "h": 1 },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 1
+      },
       "collapsed": false
     },
-
     {
       "id": 16,
       "type": "timeseries",
       "title": "Prediction Confidence Over Time (P10 / P50 / P90)",
       "description": "Drop in median confidence (P50 < 0.4) indicates possible data drift. Low P10 means the model is consistently uncertain on a subset of inputs.",
-      "gridPos": { "x": 0, "y": 27, "w": 12, "h": 9 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 12,
+        "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "refId": "A", "expr": "histogram_quantile(0.10, sum(rate(prediction_confidence_bucket[5m])) by (le))", "legendFormat": "P10 – low tail" },
-        { "refId": "B", "expr": "histogram_quantile(0.50, sum(rate(prediction_confidence_bucket[5m])) by (le))", "legendFormat": "P50 – median" },
-        { "refId": "C", "expr": "histogram_quantile(0.90, sum(rate(prediction_confidence_bucket[5m])) by (le))", "legendFormat": "P90 – high tail" }
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.10, sum(rate(prediction_confidence_bucket[5m])) by (le))",
+          "legendFormat": "P10 \u00e2\u20ac\u201c low tail"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.50, sum(rate(prediction_confidence_bucket[5m])) by (le))",
+          "legendFormat": "P50 \u00e2\u20ac\u201c median"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.90, sum(rate(prediction_confidence_bucket[5m])) by (le))",
+          "legendFormat": "P90 \u00e2\u20ac\u201c high tail"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "min": 0,
           "max": 1,
-          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",    "value": null },
-              { "color": "yellow", "value": 0.4 },
-              { "color": "green",  "value": 0.6 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.4
+              },
+              {
+                "color": "green",
+                "value": 0.6
+              }
             ]
           }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "P50 – median"  }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
-          { "matcher": { "id": "byName", "options": "P10 – low tail" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
-          { "matcher": { "id": "byName", "options": "P90 – high tail" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "P50 \u00e2\u20ac\u201c median"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "P10 \u00e2\u20ac\u201c low tail"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "P90 \u00e2\u20ac\u201c high tail"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
         ]
       },
       "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     },
-
     {
       "id": 17,
       "type": "timeseries",
       "title": "Prediction Entropy Over Time (uncertainty indicator)",
-      "description": "Shannon entropy of the softmax distribution. High entropy (>2.5 nats) means the model is uncertain — a rise signals possible concept drift. Max entropy for 27 classes ≈ 3.3 nats.",
-      "gridPos": { "x": 12, "y": 27, "w": 12, "h": 9 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Shannon entropy of the softmax distribution. High entropy (>2.5 nats) means the model is uncertain \u00e2\u20ac\u201d a rise signals possible concept drift. Max entropy for 27 classes \u00e2\u2030\u02c6 3.3 nats.",
+      "gridPos": {
+        "x": 12,
+        "y": 27,
+        "w": 12,
+        "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(prediction_entropy_bucket[5m])) by (le))", "legendFormat": "P50 entropy" },
-        { "refId": "B", "expr": "histogram_quantile(0.90, sum(rate(prediction_entropy_bucket[5m])) by (le))", "legendFormat": "P90 entropy" }
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum(rate(prediction_entropy_bucket[5m])) by (le))",
+          "legendFormat": "P50 entropy"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.90, sum(rate(prediction_entropy_bucket[5m])) by (le))",
+          "legendFormat": "P90 entropy"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "P90 entropy" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
-          { "matcher": { "id": "byName", "options": "P50 entropy" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "P90 entropy"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "P50 entropy"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
         ]
       },
       "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     },
-
     {
       "id": 18,
       "type": "timeseries",
       "title": "Prediction Class Distribution (req/s per label)",
       "description": "Rate of predictions per class label. Sudden dominance of one class, or disappearance of classes, signals distribution shift in incoming data.",
-      "gridPos": { "x": 0, "y": 36, "w": 24, "h": 9 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{
-        "refId": "A",
-        "expr": "sum(rate(prediction_class_total[5m])) by (label)",
-        "legendFormat": "{{ label }}"
-      }],
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(prediction_class_total[5m])) by (label)",
+          "legendFormat": "{{ label }}"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "custom": { "lineWidth": 1, "fillOpacity": 5 }
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 5
+          }
         }
       },
       "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"] }
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ]
+        }
       }
     },
-
     {
       "id": 19,
       "type": "timeseries",
       "title": "Feature Input Statistics (drift proxy)",
       "description": "Mean of text and image feature vectors per prediction. A sustained shift in these means the input distribution has changed.",
-      "gridPos": { "x": 0, "y": 45, "w": 24, "h": 7 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "x": 0,
+        "y": 45,
+        "w": 24,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "refId": "A", "expr": "feature_text_input_mean",  "legendFormat": "Text features mean" },
-        { "refId": "B", "expr": "feature_image_input_mean", "legendFormat": "Image features mean" }
+        {
+          "refId": "A",
+          "expr": "feature_text_input_mean",
+          "legendFormat": "Text features mean"
+        },
+        {
+          "refId": "B",
+          "expr": "feature_image_input_mean",
+          "legendFormat": "Image features mean"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": { "lineWidth": 2, "fillOpacity": 8 }
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8
+          }
         }
       },
       "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     },
-
     {
       "id": 28,
       "type": "row",
       "title": "Per-Encoder Model Performance",
-      "gridPos": { "x": 0, "y": 52, "w": 24, "h": 1 },
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 24,
+        "h": 1
+      },
       "collapsed": false
     },
-
     {
       "id": 29,
       "type": "timeseries",
       "title": "Final Val Accuracy by Encoder (training history)",
-      "description": "model_final_val_accuracy labeled by encoder — shows the accuracy achieved after each completed training run for CV and MiniLM independently.",
-      "gridPos": { "x": 0, "y": 53, "w": 14, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "model_final_val_accuracy labeled by encoder \u00e2\u20ac\u201d shows the accuracy achieved after each completed training run for CV and MiniLM independently.",
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 14,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "refId": "A", "expr": "model_final_val_accuracy{encoder=\"countvectorizer\"}", "legendFormat": "CV (CountVectorizer)" },
-        { "refId": "B", "expr": "model_final_val_accuracy{encoder=\"minilm\"}",           "legendFormat": "MiniLM" }
+        {
+          "refId": "A",
+          "expr": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
+          "legendFormat": "CV (CountVectorizer)"
+        },
+        {
+          "refId": "B",
+          "expr": "model_final_val_accuracy{encoder=\"minilm\"}",
+          "legendFormat": "MiniLM"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "min": 0,
           "max": 1,
-          "custom": { "lineWidth": 2, "fillOpacity": 10, "showPoints": "always" }
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "always"
+          }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "MiniLM" },             "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }] },
-          { "matcher": { "id": "byName", "options": "CV (CountVectorizer)" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "MiniLM"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CV (CountVectorizer)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
         ]
       },
       "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     },
-
     {
       "id": 30,
       "type": "timeseries",
       "title": "Final Val Loss by Encoder",
-      "gridPos": { "x": 14, "y": 53, "w": 10, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "x": 14,
+        "y": 53,
+        "w": 10,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "refId": "A", "expr": "model_final_val_loss{encoder=\"countvectorizer\"}", "legendFormat": "CV val loss" },
-        { "refId": "B", "expr": "model_final_val_loss{encoder=\"minilm\"}",           "legendFormat": "MiniLM val loss" }
+        {
+          "refId": "A",
+          "expr": "model_final_val_loss{encoder=\"countvectorizer\"}",
+          "legendFormat": "CV val loss"
+        },
+        {
+          "refId": "B",
+          "expr": "model_final_val_loss{encoder=\"minilm\"}",
+          "legendFormat": "MiniLM val loss"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": { "lineWidth": 2, "fillOpacity": 8, "showPoints": "always" }
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "always"
+          }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "MiniLM val loss" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }] },
-          { "matcher": { "id": "byName", "options": "CV val loss" },     "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "MiniLM val loss"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CV val loss"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
         ]
       },
       "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     },
-
     {
       "id": 20,
       "type": "row",
       "title": "Service Health",
-      "gridPos": { "x": 0, "y": 61, "w": 24, "h": 1 },
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 24,
+        "h": 1
+      },
       "collapsed": false
     },
-
     {
       "id": 21,
       "type": "stat",
       "title": "Services Status",
-      "gridPos": { "x": 0, "y": 62, "w": 14, "h": 6 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "x": 0,
+        "y": 62,
+        "w": 14,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        { "refId": "A", "expr": "up{job=\"predict-api\"}",      "legendFormat": "predict-api" },
-        { "refId": "B", "expr": "up{job=\"train-api\"}",        "legendFormat": "train-api" },
-        { "refId": "C", "expr": "up{job=\"gate-api\"}",         "legendFormat": "gate-api" },
-        { "refId": "D", "expr": "up{job=\"minilm-encoder\"}",   "legendFormat": "minilm-encoder" },
-        { "refId": "E", "expr": "up{job=\"pushgateway\"}",      "legendFormat": "pushgateway" },
-        { "refId": "F", "expr": "up{job=\"grafana\"}",          "legendFormat": "grafana" },
-        { "refId": "G", "expr": "up{job=\"prometheus\"}",       "legendFormat": "prometheus" }
+        {
+          "refId": "A",
+          "expr": "up{job=\"predict-api\"} or on() vector(0)",
+          "legendFormat": "predict-api"
+        },
+        {
+          "refId": "B",
+          "expr": "up{job=\"train-api\"} or on() vector(0)",
+          "legendFormat": "train-api"
+        },
+        {
+          "refId": "C",
+          "expr": "up{job=\"gate-api\"} or on() vector(0)",
+          "legendFormat": "gate-api"
+        },
+        {
+          "refId": "D",
+          "expr": "up{job=\"minilm-encoder\"} or on() vector(0)",
+          "legendFormat": "minilm-encoder"
+        },
+        {
+          "refId": "E",
+          "expr": "up{job=\"pushgateway\"} or on() vector(0)",
+          "legendFormat": "pushgateway"
+        },
+        {
+          "refId": "F",
+          "expr": "up{job=\"grafana\"} or on() vector(0)",
+          "legendFormat": "grafana"
+        },
+        {
+          "refId": "G",
+          "expr": "up{job=\"prometheus\"} or on() vector(0)",
+          "legendFormat": "prometheus"
+        }
       ],
       "fieldConfig": {
         "defaults": {
           "mappings": [
-            { "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } }, "type": "value" }
+            {
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              },
+              "type": "value"
+            }
           ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",   "value": null },
-              { "color": "green", "value": 1 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
             ]
           },
-          "color": { "mode": "thresholds" }
+          "color": {
+            "mode": "thresholds"
+          }
         }
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ]
+        },
         "colorMode": "background",
         "graphMode": "none",
         "textMode": "value_and_name",
         "orientation": "horizontal",
-        "text": { "titleSize": 20, "valueSize": 20 }
+        "text": {
+          "titleSize": 20,
+          "valueSize": 20
+        },
+        "noValue": "\u2014"
       }
     },
-
     {
       "id": 22,
       "type": "timeseries",
       "title": "Prediction Error Rate",
-      "gridPos": { "x": 14, "y": 62, "w": 10, "h": 6 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{
-        "refId": "A",
-        "expr": "rate(predict_requests_total{status=~\"5..\"}[2m]) / rate(predict_requests_total[2m])",
-        "legendFormat": "5xx error rate"
-      }],
+      "gridPos": {
+        "x": 14,
+        "y": 62,
+        "w": 10,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(predict_requests_total{status=~\"5..\"}[2m]) / rate(predict_requests_total[2m])",
+          "legendFormat": "5xx error rate"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "min": 0,
-          "custom": { "lineWidth": 2, "fillOpacity": 20 },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green",  "value": null },
-              { "color": "orange", "value": 0.05 },
-              { "color": "red",    "value": 0.1 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.05
+              },
+              {
+                "color": "red",
+                "value": 0.1
+              }
             ]
           }
         }
       },
       "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     }
-
   ]
 }
