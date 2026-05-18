@@ -251,11 +251,21 @@ def build_and_train_model(
             f"{MLFLOW_MODEL_NAME}_minilm" if text_encoder == "minilm"
             else f"{MLFLOW_MODEL_NAME}_cv"
         )
+        # Link run to git commit so DagsHub can resolve params.yaml DVC columns
+        try:
+            import subprocess as _sp
+            _commit = _sp.check_output(
+                ["git", "rev-parse", "HEAD"], cwd="/opt/airflow", stderr=_sp.DEVNULL
+            ).decode().strip()
+            mlflow.set_tag("mlflow.source.git.commit", _commit)
+        except Exception:
+            pass
+
         try:
             _p = _PARAMS.get("preprocess", {})
             params = {
                 "text_encoder": text_encoder, "use_dev_images": use_dev_images,
-                "epochs_max": epochs, "batch_size": batch_size,
+                "epochs": epochs, "batch_size": batch_size,
                 "random_seed": RANDOM_SEED, "val_split": VAL_SPLIT,
                 "input_dim": input_dim, "num_classes": n_classes,
                 "dataset_rows": int(len(y_encoded)),
