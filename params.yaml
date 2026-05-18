@@ -47,6 +47,8 @@ model:
   dropout_2: 0.3              # was 0.2 — stronger regularisation
   early_stopping_patience: 8  # was 5 — more exploration before stopping;
                               # lower LR means slower progress, needs more patience
+  lr_patience: 4              # was 2 — epochs without val_loss improvement before LR drop
+  lr_factor: 0.5              # was 0.3 — gentler LR reduction (0.001 → 0.0005 vs → 0.0003)
 
 minilm:
   # MiniLM encoder settings — safe to experiment

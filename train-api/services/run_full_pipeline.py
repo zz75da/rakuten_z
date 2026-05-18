@@ -56,6 +56,21 @@ try:
     X_CSV = os.getenv("TRAIN_CSV_X_PATH", "/app/data/X_train_update.csv")
     Y_CSV = os.getenv("TRAIN_CSV_Y_PATH", "/app/data/Y_train_CVw08PX.csv")
 
+    # Read pca_components from params.yaml (falls back to 300 if file absent)
+    def _read_pca_components() -> int:
+        for path in ["/app/params.yaml", "params.yaml"]:
+            if os.path.exists(path):
+                try:
+                    import yaml
+                    with open(path) as _f:
+                        p = yaml.safe_load(_f) or {}
+                    return int(p.get("preprocess", {}).get("pca_components", 300))
+                except Exception:
+                    pass
+        return 300
+
+    pca_components = _read_pca_components()
+
     # --- Load data ---
     _write_step("loading_data")
     train_data = load_and_merge_data(use_dev_images=use_dev_images)
@@ -111,6 +126,16 @@ try:
             required.append(_pca_text_cached)
         if not all(os.path.exists(p) for p in required):
             return False
+        # Invalidate if pca_components changed since last run
+        try:
+            with open(_pca_img_cached, "rb") as _f:
+                _cached_pca = pickle.load(_f)
+            if _cached_pca.n_components_ != pca_components:
+                print(f"PCA cache stale: cached n_components={_cached_pca.n_components_} "
+                      f"!= requested {pca_components} — rerunning PCA")
+                return False
+        except Exception:
+            return False
         # Cache is stale if either feature file is newer than X_reduced
         x_mtime = os.path.getmtime(_X_reduced_cached)
         return (os.path.getmtime(TEXT_CACHE) <= x_mtime and
@@ -127,7 +152,8 @@ try:
         import tempfile
         pca_out = tempfile.mktemp(suffix=".json", dir="/tmp")
         pca_proc = _sub.run(
-            [sys.executable, "/app/services/run_pca.py", TEXT_CACHE, IMAGE_CACHE, text_encoder, pca_out],
+            [sys.executable, "/app/services/run_pca.py",
+             TEXT_CACHE, IMAGE_CACHE, text_encoder, pca_out, str(pca_components)],
             capture_output=True, text=True, cwd="/app",
         )
         if pca_proc.returncode != 0:

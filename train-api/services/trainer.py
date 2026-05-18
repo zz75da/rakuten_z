@@ -200,8 +200,10 @@ def build_and_train_model(
     HIDDEN_2      = _m.get("hidden_2", 256)
     DROPOUT_1     = _m.get("dropout_1", 0.3)
     DROPOUT_2     = _m.get("dropout_2", 0.2)
-    ES_PATIENCE   = _m.get("early_stopping_patience", 5)
-    LR_PATIENCE, LR_FACTOR, LR_MIN = 2, 0.3, 1e-6
+    ES_PATIENCE = _m.get("early_stopping_patience", 5)
+    LR_PATIENCE = _m.get("lr_patience", 2)
+    LR_FACTOR   = _m.get("lr_factor", 0.3)
+    LR_MIN      = 1e-6
 
     label_encoder = LabelEncoder()
     y_encoded = label_encoder.fit_transform(y)
