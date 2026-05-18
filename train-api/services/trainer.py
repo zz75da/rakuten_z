@@ -188,6 +188,7 @@ def build_and_train_model(
     from tensorflow.keras.layers import Dense, Dropout
     from tensorflow.keras.optimizers import Adam
     from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+    from tensorflow.keras.regularizers import l2 as keras_l2
     mlflow.tensorflow.autolog(disable=True)
 
     # Architecture / training constants — read from params.yaml, fall back to defaults
@@ -200,10 +201,12 @@ def build_and_train_model(
     HIDDEN_2      = _m.get("hidden_2", 256)
     DROPOUT_1     = _m.get("dropout_1", 0.3)
     DROPOUT_2     = _m.get("dropout_2", 0.2)
-    ES_PATIENCE = _m.get("early_stopping_patience", 5)
-    LR_PATIENCE = _m.get("lr_patience", 2)
-    LR_FACTOR   = _m.get("lr_factor", 0.3)
-    LR_MIN      = 1e-6
+    L2_REG        = float(_m.get("l2_reg", 0.0))
+    ES_PATIENCE   = _m.get("early_stopping_patience", 5)
+    LR_PATIENCE   = _m.get("lr_patience", 2)
+    LR_FACTOR     = _m.get("lr_factor", 0.3)
+    LR_MIN        = 1e-6
+    _reg          = keras_l2(L2_REG) if L2_REG > 0 else None
 
     label_encoder = LabelEncoder()
     y_encoded = label_encoder.fit_transform(y)
@@ -235,9 +238,9 @@ def build_and_train_model(
 
         # Build model
         inp = Input(shape=(input_dim,))
-        h = Dense(HIDDEN_1, activation="relu")(inp)
+        h = Dense(HIDDEN_1, activation="relu", kernel_regularizer=_reg)(inp)
         h = Dropout(DROPOUT_1)(h)
-        h = Dense(HIDDEN_2, activation="relu")(h)
+        h = Dense(HIDDEN_2, activation="relu", kernel_regularizer=_reg)(h)
         h = Dropout(DROPOUT_2)(h)
         out = Dense(n_classes, activation="softmax")(h)
 
@@ -274,6 +277,7 @@ def build_and_train_model(
                 "learning_rate": LEARNING_RATE,
                 "hidden_1": HIDDEN_1, "hidden_2": HIDDEN_2,
                 "dropout_1": DROPOUT_1, "dropout_2": DROPOUT_2,
+                "l2_reg": L2_REG,
                 "class_weights": "balanced",
                 "early_stopping_patience": ES_PATIENCE,
                 "lr_reduce_patience": LR_PATIENCE,

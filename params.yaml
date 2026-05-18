@@ -6,9 +6,9 @@
 # comparable experiment point in DagsHub → Experiments.
 #
 # SAFE TO CHANGE:  model.*, minilm.normalize_embeddings, preprocess.pca_components,
-#                  preprocess.cv_max_features, train.epochs
+#                  preprocess.cv_max_features, preprocess.n_text_pca_components, train.epochs
 # DO NOT CHANGE:   preprocess.image_batch_size, preprocess.minilm_batch_size,
-#                  train.batch_size  — RAM/OOM risk on this machine (10 GB disk,
+#                  train.batch_size  — RAM/OOM risk on this machine (20 GB disk,
 #                  training already peaks at ~3 GB RAM)
 # =============================================================================
 
@@ -21,11 +21,14 @@ preprocess:
   pca_batch_size: 512         # IncrementalPCA fitting batch
 
   # --- Safe to experiment ---
-  pca_components: 384         # was 300 — more expressive features; aligns with hidden_1=768
-                              # disk impact: X_reduced.npy grows ~57 MB (204→261 MB)
-                              # CV input: 384+384=768-d  MiniLM input: 384+384=768-d
-  cv_max_features: 10000      # was 5000 — richer vocabulary for CountVectorizer
-                              # no disk impact (PCA output size unchanged)
+  pca_components: 384         # image PCA output dim (was 300)
+                              # disk: X_reduced.npy ~+60 MB per +100 components
+  n_text_pca_components: 2048 # CV text PCA output dim (was 1024, capped by initial_batch_size)
+                              # disk: X_reduced.npy grows ~+350 MB vs current 478 MB
+                              # CV input becomes 2048+384=2432-d
+                              # MiniLM unaffected (uses raw 384-d embeddings, no text PCA)
+  cv_max_features: 10000      # CountVectorizer vocabulary size (CV encoder only, was 5000)
+                              # disk: text_features.npy 1.7 GB → 3.4 GB (+1.7 GB)
 
 train:
   # --- DO NOT INCREASE batch_size (OOM risk) ---
@@ -37,22 +40,19 @@ train:
 
 model:
   # Neural network architecture — all safe to experiment
-  # Rationale: observed 11% train/val gap (83% vs 72%) → overfitting.
-  # Fix: lower LR to slow convergence, raise dropout to regularise,
-  #      widen layers to match larger 768-d input, give early stopping more room.
   learning_rate: 0.0005       # was 0.001 — slower, more stable convergence
-  hidden_1: 768               # was 512 — matches 768-d input dim (pca_components×2)
-  hidden_2: 384               # was 256 — proportional to hidden_1
-  dropout_1: 0.4              # was 0.3 — stronger regularisation (overfitting observed)
-  dropout_2: 0.3              # was 0.2 — stronger regularisation
-  early_stopping_patience: 8  # was 5 — more exploration before stopping;
-                              # lower LR means slower progress, needs more patience
-  lr_patience: 4              # was 2 — epochs without val_loss improvement before LR drop
-  lr_factor: 0.5              # was 0.3 — gentler LR reduction (0.001 → 0.0005 vs → 0.0003)
+  hidden_1: 1024              # was 768 — wider to match new 2432-d CV input (ratio 2.4:1)
+  hidden_2: 384               # proportional to hidden_1
+  dropout_1: 0.4              # stronger regularisation (overfitting observed)
+  dropout_2: 0.3              # stronger regularisation
+  l2_reg: 0.001               # L2 weight regularisation on dense layers; targets 12pp overfit gap
+                              # try: 0.0001, 0.0005, 0.005
+  early_stopping_patience: 8  # epochs without val_loss improvement before stopping
+  lr_patience: 4              # epochs without val_loss improvement before LR drop (was 2)
+  lr_factor: 0.5              # LR reduction multiplier (was 0.3 — gentler decay)
 
 minilm:
   # MiniLM encoder settings — safe to experiment
-  normalize_embeddings: true   # was false — projects embeddings onto unit sphere;
-                               # unit-norm features consistently improve downstream NN
+  normalize_embeddings: true   # project embeddings onto unit sphere before training
                                # NOTE: requires rebuilding minilm-encoder container
                                # after changing (docker-compose up -d --build minilm-encoder)

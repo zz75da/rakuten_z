@@ -33,6 +33,7 @@ def track_time(func):
 def reduce_features(
     text_features_path: str, image_features_path: str,
     n_components_img=300,
+    n_components_text=None,   # explicit text PCA components; if None, derived from target_dim
     target_dim=5300,
     save_dir="data",
     initial_batch_size=1024,
@@ -95,14 +96,25 @@ def reduce_features(
         logging.info(f"MiniLM text features shape: {text_features_reduced.shape}")
     else:
         logging.info("Starting Incremental PCA for text")
-        n_text_components = min(
-            target_dim - image_features_reduced.shape[1],
-            initial_batch_size,
-            text_features.shape[0],
-            text_features.shape[1],
-        )
+        if n_components_text is not None:
+            # Explicit value from params.yaml
+            n_text_components = min(
+                n_components_text,
+                text_features.shape[0],
+                text_features.shape[1],
+            )
+        else:
+            # Legacy derivation from target_dim
+            n_text_components = min(
+                target_dim - image_features_reduced.shape[1],
+                initial_batch_size,
+                text_features.shape[0],
+                text_features.shape[1],
+            )
+        # IncrementalPCA requires batch_size >= n_components — enlarge if needed
+        batch_size = max(initial_batch_size, n_text_components)
+        logging.info(f"Text PCA: n_components={n_text_components}, batch_size={batch_size}")
         pca_text = IncrementalPCA(n_components=n_text_components)
-        batch_size = initial_batch_size
         total_samples = text_features.shape[0]
 
         start_idx = 0

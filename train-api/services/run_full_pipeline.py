@@ -56,20 +56,28 @@ try:
     X_CSV = os.getenv("TRAIN_CSV_X_PATH", "/app/data/X_train_update.csv")
     Y_CSV = os.getenv("TRAIN_CSV_Y_PATH", "/app/data/Y_train_CVw08PX.csv")
 
-    # Read pca_components from params.yaml (falls back to 300 if file absent)
-    def _read_pca_components() -> int:
+    # Read pipeline params from params.yaml (falls back to defaults if file absent)
+    def _read_pipeline_params() -> dict:
         for path in ["/app/params.yaml", "params.yaml"]:
             if os.path.exists(path):
                 try:
                     import yaml
                     with open(path) as _f:
                         p = yaml.safe_load(_f) or {}
-                    return int(p.get("preprocess", {}).get("pca_components", 300))
+                    pre = p.get("preprocess", {})
+                    return {
+                        "pca_components":       int(pre.get("pca_components", 300)),
+                        "n_text_pca_components": int(pre.get("n_text_pca_components", 1024)),
+                        "cv_max_features":       int(pre.get("cv_max_features", 5000)),
+                    }
                 except Exception:
                     pass
-        return 300
+        return {"pca_components": 300, "n_text_pca_components": 1024, "cv_max_features": 5000}
 
-    pca_components = _read_pca_components()
+    _pipeline_params     = _read_pipeline_params()
+    pca_components       = _pipeline_params["pca_components"]
+    n_text_pca_components = _pipeline_params["n_text_pca_components"]
+    cv_max_features      = _pipeline_params["cv_max_features"]
 
     # --- Load data ---
     _write_step("loading_data")
@@ -91,11 +99,28 @@ try:
     else:
         TEXT_CACHE = "/app/data/feature_cache/text_features.npy"
         VECTORIZER_CACHE = "/app/data/artifacts/text_vectorizer.pkl"
-        if use_cache and os.path.exists(TEXT_CACHE) and os.path.exists(VECTORIZER_CACHE):
+
+        def _text_cache_valid():
+            if not (os.path.exists(TEXT_CACHE) and os.path.exists(VECTORIZER_CACHE)):
+                return False
+            try:
+                with open(VECTORIZER_CACHE, "rb") as _f:
+                    _vec = pickle.load(_f)
+                cached_vocab = len(_vec.vocabulary_)
+                if cached_vocab != cv_max_features:
+                    print(f"Text cache stale: vocab={cached_vocab} != requested {cv_max_features}")
+                    return False
+                return True
+            except Exception:
+                return False
+
+        if use_cache and _text_cache_valid():
             with open(VECTORIZER_CACHE, "rb") as f:
                 text_vectorizer = pickle.load(f)
         else:
-            text_features, text_vectorizer = extract_text_features(train_data)
+            text_features, text_vectorizer = extract_text_features(
+                train_data, max_features=cv_max_features
+            )
             np.save(TEXT_CACHE, text_features)
 
     # --- Image features ---
@@ -126,16 +151,27 @@ try:
             required.append(_pca_text_cached)
         if not all(os.path.exists(p) for p in required):
             return False
-        # Invalidate if pca_components changed since last run
+        # Invalidate if image pca_components changed
         try:
             with open(_pca_img_cached, "rb") as _f:
-                _cached_pca = pickle.load(_f)
-            if _cached_pca.n_components_ != pca_components:
-                print(f"PCA cache stale: cached n_components={_cached_pca.n_components_} "
-                      f"!= requested {pca_components} — rerunning PCA")
+                _cached_img = pickle.load(_f)
+            if _cached_img.n_components_ != pca_components:
+                print(f"PCA cache stale: image n_components={_cached_img.n_components_} "
+                      f"!= requested {pca_components}")
                 return False
         except Exception:
             return False
+        # Invalidate if text n_components changed (CV only)
+        if text_encoder != "minilm" and _pca_text_cached and os.path.exists(_pca_text_cached):
+            try:
+                with open(_pca_text_cached, "rb") as _f:
+                    _cached_txt = pickle.load(_f)
+                if _cached_txt.n_components_ != n_text_pca_components:
+                    print(f"PCA cache stale: text n_components={_cached_txt.n_components_} "
+                          f"!= requested {n_text_pca_components}")
+                    return False
+            except Exception:
+                return False
         # Cache is stale if either feature file is newer than X_reduced
         x_mtime = os.path.getmtime(_X_reduced_cached)
         return (os.path.getmtime(TEXT_CACHE) <= x_mtime and
@@ -153,7 +189,8 @@ try:
         pca_out = tempfile.mktemp(suffix=".json", dir="/tmp")
         pca_proc = _sub.run(
             [sys.executable, "/app/services/run_pca.py",
-             TEXT_CACHE, IMAGE_CACHE, text_encoder, pca_out, str(pca_components)],
+             TEXT_CACHE, IMAGE_CACHE, text_encoder, pca_out,
+             str(pca_components), str(n_text_pca_components)],
             capture_output=True, text=True, cwd="/app",
         )
         if pca_proc.returncode != 0:
