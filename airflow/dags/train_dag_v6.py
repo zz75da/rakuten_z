@@ -416,14 +416,18 @@ def push_training_metrics(**context):
 
 def push_feature_cache(**context):
     """
-    DVC push tracked .npy feature cache files to both DagsHub remotes (S3 + HTTP).
+    Commit and push all DVC-tracked feature cache files to both DagsHub remotes.
     Runs DVC directly in the Airflow container (project root at /opt/airflow).
     Skipped when the DAG is triggered with conf={'push_dvc_cache': false}.
 
-    Note: files are already tracked by the DVC stage 'preprocess_image' in dvc.yaml.
-    dvc add must NOT be called on them — it conflicts with existing stage tracking.
-    Both remotes are non-fatal: a DagsHub network timeout should not kill Prometheus
-    metrics and model evaluation downstream.
+    Workflow:
+      1. dvc commit -f  — tells DVC about outputs produced by Docker (outside dvc repro).
+                          This updates dvc.lock with current file hashes without needing
+                          dvc add, avoiding conflicts with existing stage declarations.
+      2. dvc push       — uploads all committed outputs to both remotes (non-fatal).
+
+    Both remotes point to DagsHub (S3 + HTTP). Network timeouts are non-fatal so
+    Prometheus metrics and model evaluation still run even if DagsHub is unreachable.
     """
     import subprocess
 
@@ -446,6 +450,17 @@ def push_feature_cache(**context):
                 capture_output=True, cwd=dvc_root,
             )
         print(f"dagshub HTTP remote credentials configured for user={dagshub_user}")
+
+    # dvc commit -f: register Docker-produced outputs with DVC without running dvc repro.
+    # This resolves the "output specified in stage AND .dvc file" conflict by updating
+    # dvc.lock rather than creating separate .dvc pointer files via dvc add.
+    commit = subprocess.run(
+        ["dvc", "commit", "-f"],
+        capture_output=True, text=True, cwd=dvc_root,
+    )
+    print(f"dvc commit -f: rc={commit.returncode} | {commit.stdout.strip()} | {commit.stderr.strip()[:300]}")
+    if commit.returncode != 0:
+        print("Warning: dvc commit failed (non-fatal) — will still attempt push")
 
     results = {}
     any_ok = False
@@ -824,7 +839,7 @@ with DAG(
             "BASE=rakuten_multimodal && "
             "if [ -z \"$DAGSHUB_USER\" ]; then echo 'DAGSHUB_USER not set — skipping'; exit 0; fi && "
             "FAILED=0 && "
-            "for VARIANT in _cv _minilm; do "
+            "for VARIANT in _cv _clip _minilm; do "
             "  MODEL=\"${BASE}${VARIANT}\" && "
             "  URL=\"https://dagshub.com/${DAGSHUB_USER}/rakuten_z.mlflow/api/2.0/mlflow/registered-models/get?name=${MODEL}\" && "
             "  response=$(curl -s -u \"${DAGSHUB_USER}:${DAGSHUB_TOKEN}\" \"$URL\") && "

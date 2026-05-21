@@ -1,9 +1,10 @@
 # DVC pipeline definition
 # Displayed as a DAG in DagsHub: https://dagshub.com/zz75da/rakuten_z
 #
-# Two parallel text-encoding paths feed into two independent training stages.
-# The image branch and PCA are shared between both encoders.
+# Three text-encoding paths feed into three independent training stages.
+# The image branch and PCA are shared between all encoders.
 # All stages run inside Docker via train-api/predict-api (see docker-compose.yml).
+# Files are produced outside dvc repro — use `dvc commit -f && dvc push` to sync.
 
 stages:
 
@@ -28,6 +29,15 @@ stages:
       - minilm-encoder/app.py
     outs:
       - data/feature_cache/text_features_minilm.npy
+
+  preprocess_text_clip:
+    desc: "CLIP ViT-B/32 text encoder (openai/clip-vit-base-patch32) → text_features_clip.npy (512-d)"
+    cmd: python clip-encoder/app.py
+    deps:
+      - data/X_train_update.csv
+      - clip-encoder/app.py
+    outs:
+      - data/feature_cache/text_features_clip.npy
 
   # ── Image encoding ────────────────────────────────────────────────────────
 
@@ -59,7 +69,7 @@ stages:
       - data/artifacts/pca_image.pkl
 
   reduce_features_minilm:
-    desc: "IncrementalPCA: image 2048→300 (reuses pca_image.pkl) for MiniLM 384-d text features"
+    desc: "IncrementalPCA: image 2048→384 (reuses pca_image.pkl) for MiniLM 384-d text features"
     cmd: python train-api/services/run_pca.py
               data/feature_cache/text_features_minilm.npy
               data/feature_cache/image_features.npy
@@ -67,6 +77,20 @@ stages:
               /tmp/pca_out_minilm.json
     deps:
       - data/feature_cache/text_features_minilm.npy
+      - data/feature_cache/image_features.npy
+      - data/artifacts/pca_image.pkl
+      - train-api/services/pca_reducer.py
+      - train-api/services/run_pca.py
+
+  reduce_features_clip:
+    desc: "IncrementalPCA: image 2048→384 (reuses pca_image.pkl) for CLIP 512-d text features"
+    cmd: python train-api/services/run_pca.py
+              data/feature_cache/text_features_clip.npy
+              data/feature_cache/image_features.npy
+              clip
+              /tmp/pca_out_clip.json
+    deps:
+      - data/feature_cache/text_features_clip.npy
       - data/feature_cache/image_features.npy
       - data/artifacts/pca_image.pkl
       - train-api/services/pca_reducer.py
@@ -96,7 +120,7 @@ stages:
           cache: false
 
   train_minilm:
-    desc: "Train Dense(512→256→27) on 684-d features — registers rakuten_multimodal_minilm in MLflow"
+    desc: "Train Dense(512→256→27) on 768-d features — registers rakuten_multimodal_minilm in MLflow"
     cmd: python train-api/services/run_full_pipeline.py
               minilm_dvc minilm 10 32 false true
     deps:
@@ -113,14 +137,33 @@ stages:
       - data/artifacts/metrics_minilm.json:
           cache: false
 
+  train_clip:
+    desc: "Train Dense(512→256→27) on 896-d features — registers rakuten_multimodal_clip in MLflow"
+    cmd: python train-api/services/run_full_pipeline.py
+              clip_dvc clip 10 32 false true
+    deps:
+      - data/artifacts/pca_image.pkl
+      - data/feature_cache/text_features_clip.npy
+      - data/feature_cache/image_features.npy
+      - data/Y_train_CVw08PX.csv
+      - train-api/services/trainer.py
+      - train-api/services/run_full_pipeline.py
+    outs:
+      - data/artifacts/neural_network_model_clip.keras
+      - data/artifacts/train_history_clip.json
+    metrics:
+      - data/artifacts/metrics_clip.json:
+          cache: false
+
   # ── Inference service ─────────────────────────────────────────────────────
 
   predict:
-    desc: "predict-api loads both models at startup — serves /predict-text?model=cv|minilm"
+    desc: "predict-api loads all three models — serves /predict-text?model=cv|minilm|clip"
     cmd: uvicorn app:app --host 0.0.0.0 --port 5003
     deps:
       - data/artifacts/neural_network_model.keras
       - data/artifacts/neural_network_model_minilm.keras
+      - data/artifacts/neural_network_model_clip.keras
       - data/artifacts/label_encoder.pkl
       - data/artifacts/text_vectorizer.pkl
       - data/artifacts/pca_text.pkl
