@@ -32,5 +32,6 @@ prometheus-client==0.20.0
 prometheus-fastapi-instrumentator
 
 # === Text encoders ===
-sentence-transformers>=2.7.0
+sentence-transformers>=2.7.0  # MiniLM
+transformers>=4.30.0          # CLIP ViT-B/32 (CLIPTokenizer + CLIPTextModel)
 

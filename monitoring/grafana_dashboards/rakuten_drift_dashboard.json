@@ -32,13 +32,18 @@
           },
           {
             "selected": false,
+            "text": "CLIP ViT-B/32",
+            "value": "clip"
+          },
+          {
+            "selected": false,
             "text": "MiniLM",
             "value": "minilm"
           }
         ],
         "includeAll": true,
         "multi": false,
-        "query": "countvectorizer,minilm"
+        "query": "countvectorizer,clip,minilm"
       }
     ]
   },
@@ -709,7 +714,7 @@
     {
       "id": 11,
       "type": "timeseries",
-      "title": "Final Val Accuracy \u00e2\u20ac\u201d CV vs MiniLM",
+      "title": "Final Val Accuracy \u2014 CV vs CLIP vs MiniLM",
       "description": "Tracks model_final_val_accuracy per encoder after each completed training run.",
       "gridPos": {
         "x": 18,
@@ -729,6 +734,11 @@
         },
         {
           "refId": "B",
+          "expr": "model_final_val_accuracy{encoder=\"clip\"}",
+          "legendFormat": "CLIP"
+        },
+        {
+          "refId": "C",
           "expr": "model_final_val_accuracy{encoder=\"minilm\"}",
           "legendFormat": "MiniLM"
         }
@@ -1281,7 +1291,7 @@
       "id": 29,
       "type": "timeseries",
       "title": "Final Val Accuracy by Encoder (training history)",
-      "description": "model_final_val_accuracy labeled by encoder \u00e2\u20ac\u201d shows the accuracy achieved after each completed training run for CV and MiniLM independently.",
+      "description": "model_final_val_accuracy labeled by encoder \u2014 shows the accuracy achieved after each completed training run for CV, CLIP, and MiniLM independently.",
       "gridPos": {
         "x": 0,
         "y": 53,
@@ -1300,6 +1310,11 @@
         },
         {
           "refId": "B",
+          "expr": "model_final_val_accuracy{encoder=\"clip\"}",
+          "legendFormat": "CLIP ViT-B/32"
+        },
+        {
+          "refId": "C",
           "expr": "model_final_val_accuracy{encoder=\"minilm\"}",
           "legendFormat": "MiniLM"
         }
@@ -1380,6 +1395,11 @@
         },
         {
           "refId": "B",
+          "expr": "model_final_val_loss{encoder=\"clip\"}",
+          "legendFormat": "CLIP val loss"
+        },
+        {
+          "refId": "C",
           "expr": "model_final_val_loss{encoder=\"minilm\"}",
           "legendFormat": "MiniLM val loss"
         }
@@ -1482,6 +1502,11 @@
           "refId": "D",
           "expr": "up{job=\"minilm-encoder\"} or on() vector(0)",
           "legendFormat": "minilm-encoder"
+        },
+        {
+          "refId": "D2",
+          "expr": "up{job=\"clip-encoder\"} or on() vector(0)",
+          "legendFormat": "clip-encoder"
         },
         {
           "refId": "E",

@@ -58,7 +58,7 @@ try {
 Write-Section "2. CONTENEURS docker-compose"
 $expected = @("postgres","minio","airflow","airflow-init","gate-api",
               "train-api","predict-api","prometheus","grafana","streamlit",
-              "pushgateway","alertmanager")
+              "pushgateway","alertmanager","minilm-encoder","clip-encoder")
 
 if ($dockerOk) {
     $running = docker ps --format "{{.Names}}|{{.Status}}" 2>$null
@@ -95,6 +95,8 @@ Test-Http "streamlit"    "http://localhost:8501/"         | Out-Null
 Test-Http "minio"        "http://localhost:9001/"         | Out-Null
 Test-Http "pushgateway"  "http://localhost:9091/"         | Out-Null
 Test-Http "alertmanager" "http://localhost:9093/"         | Out-Null
+Test-Http "minilm-encoder" "http://localhost:5005/health" | Out-Null
+Test-Http "clip-encoder"   "http://localhost:5006/health" | Out-Null
 
 # ----------------------------------------------------------------------------
 # 4. Pipeline DVC

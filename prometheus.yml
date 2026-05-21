@@ -54,6 +54,16 @@ scrape_configs:
     #   - target_label: 'service'
     #     replacement: 'mlflow'
 
+  - job_name: 'minilm-encoder'
+    metrics_path: /metrics/
+    static_configs:
+      - targets: ['minilm-encoder:5004']
+
+  - job_name: 'clip-encoder'
+    metrics_path: /metrics/
+    static_configs:
+      - targets: ['clip-encoder:5007']
+
   # --- Pushgateway for batch jobs ---
   - job_name: 'pushgateway'
     honor_labels: true
