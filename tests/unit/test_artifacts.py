@@ -52,6 +52,28 @@ class TestSaveArtifacts:
                       "pca_image.pkl", "pca_text.pkl", "label_encoder.pkl"]:
             assert (save_path / fname).exists(), f"Missing: {fname}"
 
+    def test_clip_creates_correct_files(self, temp_dir, artifacts_module):
+        save_path = temp_dir / "arts_clip"
+        save_path.mkdir()
+        orig = artifacts_module.ARTIFACTS_PATH
+        artifacts_module.ARTIFACTS_PATH = str(save_path)
+        try:
+            artifacts_module.save_artifacts(**_make_kwargs(text_encoder="clip"))
+        finally:
+            artifacts_module.ARTIFACTS_PATH = orig
+
+        assert (save_path / "neural_network_model_clip.keras").exists()
+        assert (save_path / "pca_image.pkl").exists()
+        assert (save_path / "label_encoder.pkl").exists()
+        assert not (save_path / "neural_network_model.keras").exists(), \
+            "CV model file must not be written during a CLIP run"
+        assert not (save_path / "neural_network_model_minilm.keras").exists(), \
+            "MiniLM model file must not be written during a CLIP run"
+        assert not (save_path / "text_vectorizer.pkl").exists(), \
+            "text_vectorizer.pkl must not be written for CLIP encoder"
+        assert not (save_path / "pca_text.pkl").exists(), \
+            "pca_text.pkl must not be written for CLIP encoder"
+
     def test_minilm_creates_correct_files(self, temp_dir, artifacts_module):
         save_path = temp_dir / "arts_minilm"
         save_path.mkdir()

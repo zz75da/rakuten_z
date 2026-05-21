@@ -82,6 +82,66 @@ class TestReduceFeatures:
         X = np.load(x_path)
         assert X.dtype == np.float32
 
+    def test_encoder_specific_filename(self, temp_dir, pca_reducer_module):
+        """X_reduced is named X_reduced_{text_encoder}.npy, not X_reduced.npy."""
+        (x_path, _, _), save_dir = self._run(temp_dir, pca_reducer_module)
+        import pathlib
+        assert pathlib.Path(x_path).name == "X_reduced_countvectorizer.npy"
+        assert not (save_dir / "X_reduced.npy").exists(), \
+            "Legacy X_reduced.npy must not be written — encoder-specific naming required"
+
+    def test_minilm_pass_through_skips_text_pca(self, temp_dir, pca_reducer_module):
+        """MiniLM: text features pass through unchanged, pca_text_path is None."""
+        text_path  = temp_dir / "text_minilm.npy"
+        image_path = temp_dir / "image.npy"
+        save_dir   = temp_dir / "out_minilm"
+        save_dir.mkdir(exist_ok=True)
+        n, text_dim, img_dim = 20, 384, 12
+
+        np.save(text_path,  np.random.rand(n, text_dim).astype(np.float32))
+        np.save(image_path, np.random.rand(n, img_dim).astype(np.float32))
+
+        x_path, img_path, txt_path = pca_reducer_module.reduce_features(
+            text_features_path=str(text_path),
+            image_features_path=str(image_path),
+            n_components_img=3,
+            save_dir=str(save_dir),
+            initial_batch_size=10,
+            text_encoder="minilm",
+        )
+
+        assert txt_path is None, "pca_text_path must be None for MiniLM"
+        X = np.load(x_path)
+        # MiniLM text (384) + image PCA (3) = 387
+        assert X.shape == (n, text_dim + 3)
+        assert X.dtype == np.float32
+
+    def test_clip_pass_through_skips_text_pca(self, temp_dir, pca_reducer_module):
+        """CLIP: 512-d text features pass through unchanged, pca_text_path is None."""
+        text_path  = temp_dir / "text_clip.npy"
+        image_path = temp_dir / "image_clip.npy"
+        save_dir   = temp_dir / "out_clip"
+        save_dir.mkdir(exist_ok=True)
+        n, text_dim, img_dim = 20, 512, 12
+
+        np.save(text_path,  np.random.rand(n, text_dim).astype(np.float32))
+        np.save(image_path, np.random.rand(n, img_dim).astype(np.float32))
+
+        x_path, img_path, txt_path = pca_reducer_module.reduce_features(
+            text_features_path=str(text_path),
+            image_features_path=str(image_path),
+            n_components_img=3,
+            save_dir=str(save_dir),
+            initial_batch_size=10,
+            text_encoder="clip",
+        )
+
+        assert txt_path is None, "pca_text_path must be None for CLIP"
+        X = np.load(x_path)
+        # CLIP text (512) + image PCA (3) = 515
+        assert X.shape == (n, text_dim + 3)
+        assert X.dtype == np.float32
+
     def test_small_batch_size_still_works(self, temp_dir, pca_reducer_module):
         """initial_batch_size smaller than n_components forces internal adaptation."""
         text_path  = temp_dir / "t2.npy"

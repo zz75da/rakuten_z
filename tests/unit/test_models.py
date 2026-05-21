@@ -169,13 +169,13 @@ class TestFeatureConcatenationMiniLM:
 
 
 class TestModelArchitectureMiniLM:
-    """MiniLM variant: input_dim=684, same Dense→Dropout→Softmax topology."""
+    """MiniLM variant: input_dim=768 (384 MiniLM + 384 image PCA)."""
 
     @requires_tf
     def test_model_builds_with_minilm_input(self):
         from tensorflow.keras.layers import Input, Dense, Dropout
         from tensorflow.keras import Model
-        inp = Input(shape=(684,))
+        inp = Input(shape=(768,))
         x = Dense(512, activation="relu")(inp)
         x = Dropout(0.3)(x)
         x = Dense(256, activation="relu")(x)
@@ -185,18 +185,52 @@ class TestModelArchitectureMiniLM:
         model.compile(optimizer="adam",
                       loss="sparse_categorical_crossentropy",
                       metrics=["accuracy"])
-        assert model.input_shape == (None, 684)
+        assert model.input_shape == (None, 768)
         assert model.output_shape == (None, 27)
 
     @requires_tf
     def test_minilm_model_output_sums_to_one(self):
         from tensorflow.keras.layers import Input, Dense, Dropout
         from tensorflow.keras import Model
-        inp = Input(shape=(684,))
+        inp = Input(shape=(768,))
         x = Dense(64, activation="relu")(inp)
         x = Dropout(0.0)(x)
         out = Dense(27, activation="softmax")(x)
         model = Model(inputs=inp, outputs=out)
         model.compile(optimizer="adam", loss="sparse_categorical_crossentropy")
-        preds = model.predict(np.random.rand(4, 684), verbose=0)
+        preds = model.predict(np.random.rand(4, 768), verbose=0)
+        np.testing.assert_allclose(preds.sum(axis=1), np.ones(4), atol=1e-5)
+
+
+class TestModelArchitectureClip:
+    """CLIP ViT-B/32 variant: input_dim=896 (512 CLIP text + 384 image PCA)."""
+
+    @requires_tf
+    def test_model_builds_with_clip_input(self):
+        from tensorflow.keras.layers import Input, Dense, Dropout
+        from tensorflow.keras import Model
+        inp = Input(shape=(896,))
+        x = Dense(512, activation="relu")(inp)
+        x = Dropout(0.3)(x)
+        x = Dense(256, activation="relu")(x)
+        x = Dropout(0.2)(x)
+        out = Dense(27, activation="softmax")(x)
+        model = Model(inputs=inp, outputs=out)
+        model.compile(optimizer="adam",
+                      loss="sparse_categorical_crossentropy",
+                      metrics=["accuracy"])
+        assert model.input_shape == (None, 896)
+        assert model.output_shape == (None, 27)
+
+    @requires_tf
+    def test_clip_model_output_sums_to_one(self):
+        from tensorflow.keras.layers import Input, Dense, Dropout
+        from tensorflow.keras import Model
+        inp = Input(shape=(896,))
+        x = Dense(64, activation="relu")(inp)
+        x = Dropout(0.0)(x)
+        out = Dense(27, activation="softmax")(x)
+        model = Model(inputs=inp, outputs=out)
+        model.compile(optimizer="adam", loss="sparse_categorical_crossentropy")
+        preds = model.predict(np.random.rand(4, 896), verbose=0)
         np.testing.assert_allclose(preds.sum(axis=1), np.ones(4), atol=1e-5)
