@@ -57,7 +57,12 @@ def _to_python_native(obj):
 
 
 def save_training_history(history, artifacts_dir=ARTIFACTS_DIR, text_encoder="countvectorizer"):
-    filename = "train_history_minilm.json" if text_encoder == "minilm" else "train_history.json"
+    if text_encoder == "minilm":
+        filename = "train_history_minilm.json"
+    elif text_encoder == "clip":
+        filename = "train_history_clip.json"
+    else:
+        filename = "train_history.json"
     path = os.path.join(artifacts_dir, filename)
     with open(path, "w") as f:
         json.dump({k: [float(v) for v in vals] for k, vals in history.history.items()}, f, indent=2)
@@ -259,6 +264,7 @@ def build_and_train_model(
         # Log all hyperparameters in one call
         _effective_model_name = (
             f"{MLFLOW_MODEL_NAME}_minilm" if text_encoder == "minilm"
+            else f"{MLFLOW_MODEL_NAME}_clip" if text_encoder == "clip"
             else f"{MLFLOW_MODEL_NAME}_cv"
         )
         # Log full params.yaml in DVC dot-notation so DagsHub shows them as columns

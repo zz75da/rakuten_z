@@ -52,3 +52,8 @@ model:
 minilm:
   # MiniLM encoder settings — safe to experiment
   normalize_embeddings: false  # raw embeddings — normalization degraded MiniLM from 0.7395 to 0.7349
+
+clip:
+  # CLIP ViT-B/32 text encoder settings — safe to experiment
+  batch_size: 64               # conservative for CPU RAM; CLIP model is ~350 MB
+  normalize_embeddings: true   # CLIP embeddings work best L2-normalised (cosine similarity space)

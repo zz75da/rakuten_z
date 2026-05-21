@@ -74,6 +74,7 @@ services:
       - "train-api:172.20.0.7"
       - "predict-api:172.20.0.8"
       - "minilm-encoder:172.20.0.14"
+      - "clip-encoder:172.20.0.15"
       - "pushgateway:172.20.0.12"
     depends_on:
       postgres:
@@ -104,6 +105,7 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres:5432/airflow
       AIRFLOW_CONN_TRAIN_API: http://train-api:5002
       AIRFLOW_CONN_MINILM_ENCODER: http://minilm-encoder:5004
+      AIRFLOW_CONN_CLIP_ENCODER: http://clip-encoder:5007
       AIRFLOW_CONN_GATE_API: http://gate-api:5000
       AIRFLOW_CONN_PREDICT_API: http://predict-api:5003
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /tmp/airflow/logs
@@ -170,6 +172,7 @@ services:
       - "train-api:172.20.0.7"
       - "predict-api:172.20.0.8"
       - "minilm-encoder:172.20.0.14"
+      - "clip-encoder:172.20.0.15"
       - "pushgateway:172.20.0.12"
     restart: unless-stopped
     networks:
@@ -472,6 +475,38 @@ services:
       rakuten_mlops_network:
         ipv4_address: 172.20.0.13
     restart: unless-stopped
+
+
+  # === clip-encoder ===
+  # Lightweight FastAPI service (~50 MB idle).
+  # Loads CLIP ViT-B/32 text encoder only when POST /encode is called,
+  # then unloads after saving text_features_clip.npy (512-d embeddings).
+  clip-encoder:
+    build:
+      context: ./clip-encoder
+      dockerfile: Dockerfile
+    container_name: clip-encoder
+    restart: unless-stopped
+    ports:
+      - "5006:5007"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TRAIN_CSV_X_PATH=/app/data/X_train_update.csv
+      - CLIP_CACHE_PATH=/app/data/feature_cache/text_features_clip.npy
+      - CLIP_BATCH_SIZE=64
+    volumes:
+      - ./data/X_train_update.csv:/app/data/X_train_update.csv:ro
+      - ./data/feature_cache:/app/data/feature_cache
+      - ./params.yaml:/app/params.yaml:ro
+    networks:
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.15
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5007/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
 
 
   # === minilm-encoder ===

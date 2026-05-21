@@ -85,15 +85,15 @@ def reduce_features(
     logging.info(f"Image features reduced shape: {image_features_reduced.shape}")
     log_memory_usage("After image PCA transform")
 
-    # --- Text features: PCA for CountVectorizer, pass-through for MiniLM ---
+    # --- Text features: PCA for CountVectorizer, pass-through for MiniLM / CLIP ---
     pca_text = None
     pca_text_path = None
 
-    if text_encoder == "minilm":
-        # MiniLM embeddings are already compact (384-dim) — no PCA needed
-        logging.info("MiniLM encoder: skipping text PCA, using embeddings directly")
+    if text_encoder in ("minilm", "clip"):
+        # MiniLM (384-d) and CLIP (512-d) embeddings are already compact — no PCA needed
+        logging.info(f"{text_encoder} encoder: skipping text PCA, using embeddings directly")
         text_features_reduced = text_features
-        logging.info(f"MiniLM text features shape: {text_features_reduced.shape}")
+        logging.info(f"{text_encoder} text features shape: {text_features_reduced.shape}")
     else:
         logging.info("Starting Incremental PCA for text")
         if n_components_text is not None:
@@ -150,7 +150,8 @@ def reduce_features(
     log_memory_usage("After combining features")
 
     # --- Save outputs ---
-    X_reduced_path = os.path.join(save_dir, "X_reduced.npy")
+    # Encoder-specific X_reduced prevents CV/CLIP/MiniLM caches overwriting each other
+    X_reduced_path = os.path.join(save_dir, f"X_reduced_{text_encoder}.npy")
     pca_img_path = os.path.join(save_dir, "pca_image.pkl")
 
     np.save(X_reduced_path, X_reduced)

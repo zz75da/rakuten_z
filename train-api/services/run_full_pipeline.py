@@ -92,8 +92,14 @@ try:
         TEXT_CACHE = "/app/data/feature_cache/text_features_minilm.npy"
         if not os.path.exists(TEXT_CACHE):
             raise RuntimeError(
-                "MiniLM feature cache not found. "
-                "Run: docker-compose --profile minilm run --rm minilm-encoder"
+                "MiniLM feature cache not found — trigger the DAG to run minilm encoding first."
+            )
+        text_vectorizer = None
+    elif text_encoder == "clip":
+        TEXT_CACHE = "/app/data/feature_cache/text_features_clip.npy"
+        if not os.path.exists(TEXT_CACHE):
+            raise RuntimeError(
+                "CLIP feature cache not found — trigger the DAG to run clip encoding first."
             )
         text_vectorizer = None
     else:
@@ -141,9 +147,10 @@ try:
     # both feature inputs are newer than X_reduced (mtime), skip the subprocess.
     # This saves 20-40 min on every re-run where features haven't changed.
     _ARTIFACTS = "/app/data/artifacts"
-    _X_reduced_cached  = os.path.join(_ARTIFACTS, "X_reduced.npy")
+    # Encoder-specific X_reduced path — prevents CV/CLIP/MiniLM caches colliding
+    _X_reduced_cached  = os.path.join(_ARTIFACTS, f"X_reduced_{text_encoder}.npy")
     _pca_img_cached    = os.path.join(_ARTIFACTS, "pca_image.pkl")
-    _pca_text_cached   = os.path.join(_ARTIFACTS, "pca_text.pkl")   if text_encoder != "minilm" else None
+    _pca_text_cached   = os.path.join(_ARTIFACTS, "pca_text.pkl") if text_encoder not in ("minilm", "clip") else None
 
     def _pca_cache_valid():
         required = [_X_reduced_cached, _pca_img_cached]

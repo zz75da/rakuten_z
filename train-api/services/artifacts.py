@@ -29,9 +29,16 @@ def save_artifacts(model, vectorizer, pca_models, label_encoder, skip_existing=T
     os.makedirs(ARTIFACTS_PATH, exist_ok=True)
 
     if text_encoder == "minilm":
-        # No vectorizer/pca_text for MiniLM — predict-api loads SentenceTransformer directly
+        # No vectorizer/pca_text — predict-api loads SentenceTransformer directly
         artifacts_to_save = {
             "neural_network_model_minilm.keras": model,
+            "pca_image.pkl": pca_models["image"],
+            "label_encoder.pkl": label_encoder,
+        }
+    elif text_encoder == "clip":
+        # No vectorizer/pca_text — predict-api loads CLIP model directly
+        artifacts_to_save = {
+            "neural_network_model_clip.keras": model,
             "pca_image.pkl": pca_models["image"],
             "label_encoder.pkl": label_encoder,
         }

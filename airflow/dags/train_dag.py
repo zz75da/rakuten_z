@@ -23,12 +23,14 @@ default_args = {
 TRAIN_API        = "http://train-api:5002"
 GATE_API         = "http://gate-api:5000"
 MINILM_ENCODER   = "http://minilm-encoder:5004"
+CLIP_ENCODER     = "http://clip-encoder:5007"
 
 TRAINING_MAX_WAIT      = int(os.environ.get("TRAINING_MAX_WAIT_SECONDS",  30 * 3600))
 ENCODING_MAX_WAIT      = int(os.environ.get("ENCODING_MAX_WAIT_SECONDS",   4 * 3600))
 
 # Airflow Variable keys — one per training job so they don't collide
 _CV_JOB_ID_VAR     = "rakuten_cv_training_job_id"
+_CLIP_JOB_ID_VAR   = "rakuten_clip_training_job_id"
 _MINILM_JOB_ID_VAR = "rakuten_minilm_training_job_id"
 
 # Quality gate — fail before wasting 10 h of training on a corrupted CSV
@@ -36,6 +38,7 @@ _MIN_DATASET_ROWS = 80_000
 
 # Regression gate — stored best-ever val_acc per encoder
 _CV_BEST_VAL_ACC_VAR     = "rakuten_cv_best_val_acc"
+_CLIP_BEST_VAL_ACC_VAR   = "rakuten_clip_best_val_acc"
 _MINILM_BEST_VAL_ACC_VAR = "rakuten_minilm_best_val_acc"
 _REGRESSION_WARN_PCT     = 2.0   # print warning if either model drops > 2 %
 _REGRESSION_FAIL_PCT     = 5.0   # block DVC push only if BOTH models drop > 5 % simultaneously
@@ -149,6 +152,19 @@ def _trigger_training_job(job_var_key, text_encoder, context):
 
 def trigger_cv_training(**context):
     return _trigger_training_job(_CV_JOB_ID_VAR, "countvectorizer", context)
+
+
+def trigger_clip_encoding(**context):
+    """Call POST /encode on the clip-encoder service."""
+    resp = requests.post(f"{CLIP_ENCODER}/encode", timeout=30)
+    data = resp.json()
+    print(f"CLIP encoder: {data}")
+    if data.get("status") == "error":
+        raise AirflowException(f"CLIP encoding error: {data.get('message')}")
+
+
+def trigger_clip_training(**context):
+    return _trigger_training_job(_CLIP_JOB_ID_VAR, "clip", context)
 
 
 def trigger_minilm_encoding(**context):
@@ -267,6 +283,27 @@ class TrainingCompleteSensor(BaseSensorOperator):
         return False
 
 
+class ClipEncodingSensor(BaseSensorOperator):
+    """Polls GET /status on the clip-encoder service until encoding is done."""
+
+    def poke(self, context):
+        try:
+            resp   = requests.get(f"{CLIP_ENCODER}/status", timeout=30)
+            data   = resp.json()
+            status = data.get("status")
+            print(f"CLIP encoder status={status}: {data.get('message', '')}")
+            if status == "done":
+                return True
+            if status == "error":
+                raise AirflowException(f"CLIP encoding failed: {data.get('message')}")
+            return False
+        except AirflowException:
+            raise
+        except Exception as exc:
+            print(f"CLIP status check failed (retrying): {exc}")
+            return False
+
+
 class MiniLMEncodingSensor(BaseSensorOperator):
     """
     Polls GET /status on the minilm-encoder service until encoding is done.
@@ -331,6 +368,7 @@ def push_training_metrics(**context):
 
     runs = [
         ("wait_for_cv_training",    "countvectorizer"),
+        ("wait_for_clip_training",  "clip"),
         ("wait_for_minilm_training", "minilm"),
     ]
     for task_id, encoder in runs:
@@ -433,6 +471,7 @@ def evaluate_from_result(**context):
     """Log evaluation results for both CV and MiniLM training runs."""
     for task_id, label in [
         ("wait_for_cv_training",    "CountVectorizer"),
+        ("wait_for_clip_training",  "CLIP ViT-B/32"),
         ("wait_for_minilm_training", "MiniLM"),
     ]:
         result = context["ti"].xcom_pull(task_ids=task_id, key="training_result") or {}
@@ -463,6 +502,7 @@ def write_run_summary(**context):
     ti      = context["ti"]
 
     cv_result     = ti.xcom_pull(task_ids="wait_for_cv_training",    key="training_result") or {}
+    clip_result   = ti.xcom_pull(task_ids="wait_for_clip_training",  key="training_result") or {}
     ml_result     = ti.xcom_pull(task_ids="wait_for_minilm_training", key="training_result") or {}
     model_version = ti.xcom_pull(task_ids="get_model_version",       key="model_version") or "N/A"
 
@@ -483,7 +523,9 @@ def write_run_summary(**context):
         f"End  : {dag_run.end_date}",
         f"MReg : {model_version}",
         "",
-    ] + _model_lines("CV  (countvectorizer)", cv_result) + [""] + _model_lines("MiniLM", ml_result)
+    ] + _model_lines("CV  (countvectorizer)", cv_result) \
+      + [""] + _model_lines("CLIP ViT-B/32", clip_result) \
+      + [""] + _model_lines("MiniLM", ml_result)
 
     block = "\n".join(block_lines)
 
@@ -510,6 +552,7 @@ def check_regression_gate(**context):
 
     encoder_cfg = [
         ("countvectorizer", "wait_for_cv_training",    _CV_BEST_VAL_ACC_VAR),
+        ("clip",            "wait_for_clip_training",   _CLIP_BEST_VAL_ACC_VAR),
         ("minilm",          "wait_for_minilm_training", _MINILM_BEST_VAL_ACC_VAR),
     ]
 
@@ -550,16 +593,15 @@ def check_regression_gate(**context):
         Variable.set(var_key, str(new_best))
         print(f"{encoder}: best-ever updated → {new_best:.4f}")
 
-    both_regressed = (
-        len(regressions) == 2
+    all_regressed = (
+        len(regressions) >= 2
         and all(v > _REGRESSION_FAIL_PCT for v in regressions.values())
     )
-    if both_regressed:
+    if all_regressed:
+        details = ", ".join(f"{enc}: -{pct:.1f}%" for enc, pct in regressions.items())
         raise AirflowException(
-            f"Both models regressed > {_REGRESSION_FAIL_PCT}% — blocking DVC cache push. "
-            f"CV: -{regressions['countvectorizer']:.1f}%, "
-            f"MiniLM: -{regressions['minilm']:.1f}%. "
-            "Review hyperparameters and re-run the DAG."
+            f"All regressed encoders dropped > {_REGRESSION_FAIL_PCT}% — blocking DVC cache push. "
+            f"{details}. Review hyperparameters and re-run the DAG."
         )
 
 
@@ -642,6 +684,15 @@ with DAG(
         timeout=300, poke_interval=15, mode="reschedule",
     )
 
+    wait_for_clip_encoder = HttpSensor(
+        task_id="wait_for_clip_encoder",
+        http_conn_id="clip_encoder",
+        endpoint="/health",
+        method="GET",
+        response_check=lambda response: response.status_code == 200,
+        timeout=300, poke_interval=15, mode="reschedule",
+    )
+
     dataset_stats = PythonOperator(
         task_id="dataset_stats",
         python_callable=check_dataset_stats,
@@ -670,7 +721,37 @@ with DAG(
         soft_fail=False,
     )
 
-    # ── 2. MiniLM encoding (model unloads when done, frees RAM for training) ──
+    # ── 2. CLIP encoding + training ───────────────────────────────────────────
+    start_clip_encoding = PythonOperator(
+        task_id="trigger_clip_encoding",
+        python_callable=trigger_clip_encoding,
+        provide_context=True,
+    )
+
+    wait_for_clip_encoding = ClipEncodingSensor(
+        task_id="wait_for_clip_encoding",
+        mode="reschedule",
+        poke_interval=60,
+        timeout=ENCODING_MAX_WAIT,
+        soft_fail=False,
+    )
+
+    trigger_clip = PythonOperator(
+        task_id="trigger_clip_training",
+        python_callable=trigger_clip_training,
+        provide_context=True,
+    )
+
+    wait_for_clip = TrainingCompleteSensor(
+        task_id="wait_for_clip_training",
+        job_var_key=_CLIP_JOB_ID_VAR,
+        mode="reschedule",
+        poke_interval=300,
+        timeout=TRAINING_MAX_WAIT,
+        soft_fail=False,
+    )
+
+    # ── 3. MiniLM encoding (model unloads when done, frees RAM for training) ──
     start_encoding = PythonOperator(
         task_id="trigger_minilm_encoding",
         python_callable=trigger_minilm_encoding,
@@ -685,7 +766,7 @@ with DAG(
         soft_fail=False,
     )
 
-    # ── 3. MiniLM training ────────────────────────────────────────────────────
+    # ── 4. MiniLM training ────────────────────────────────────────────────────
     trigger_minilm = PythonOperator(
         task_id="trigger_minilm_training",
         python_callable=trigger_minilm_training,
@@ -701,21 +782,21 @@ with DAG(
         soft_fail=False,
     )
 
-    # ── 4. Regression gate — warn/block before persisting a degraded cache ──────
+    # ── 5. Regression gate — warn/block before persisting a degraded cache ──────
     regression_gate = PythonOperator(
         task_id="check_regression",
         python_callable=check_regression_gate,
         provide_context=True,
     )
 
-    # ── 5. DVC cache push (optional — set push_dvc_cache=false in DAG run conf to skip) ──
+    # ── 6. DVC cache push (optional — set push_dvc_cache=false in DAG run conf to skip) ──
     push_cache = PythonOperator(
         task_id="push_feature_cache",
         python_callable=push_feature_cache,
         provide_context=True,
     )
 
-    # ── 6. Post-processing ────────────────────────────────────────────────────
+    # ── 7. Post-processing ────────────────────────────────────────────────────
     get_version = PythonOperator(
         task_id="get_model_version",
         python_callable=get_model_version,
@@ -781,11 +862,16 @@ with DAG(
     # --- Task Dependencies ---
     (
         check_data
-        >> [wait_for_gate_api, wait_for_train_api, wait_for_predict_api, wait_for_minilm_encoder]
+        >> [wait_for_gate_api, wait_for_train_api, wait_for_predict_api,
+            wait_for_minilm_encoder, wait_for_clip_encoder]
         >> dataset_stats
         >> get_token
         >> trigger_cv
         >> wait_for_cv
+        >> start_clip_encoding
+        >> wait_for_clip_encoding
+        >> trigger_clip
+        >> wait_for_clip
         >> start_encoding
         >> wait_for_encoding
         >> trigger_minilm
