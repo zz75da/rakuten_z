@@ -197,10 +197,12 @@ def show_presentation_page():
     """, unsafe_allow_html=True)
 
     # Key metrics
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    _cv_acc_str = _ml_acc_str = _cv_epoch_str = _ml_epoch_str = "—"
+    c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
+    _cv_acc_str = _clip_acc_str = _ml_acc_str = "—"
+    _cv_epoch_str = _clip_epoch_str = _ml_epoch_str = "—"
     for _hp, _enc in [
         (Path("/app/data/artifacts/train_history.json"),        "cv"),
+        (Path("/app/data/artifacts/train_history_clip.json"),   "clip"),
         (Path("/app/data/artifacts/train_history_minilm.json"), "minilm"),
     ]:
         if _hp.exists():
@@ -211,18 +213,22 @@ def show_presentation_page():
                     _best = f"{max(_vas):.1%}"
                     _ep   = str(len(_vas))
                     if _enc == "cv":
-                        _cv_acc_str, _cv_epoch_str = _best, _ep
+                        _cv_acc_str,   _cv_epoch_str   = _best, _ep
+                    elif _enc == "clip":
+                        _clip_acc_str, _clip_epoch_str = _best, _ep
                     else:
-                        _ml_acc_str, _ml_epoch_str = _best, _ep
+                        _ml_acc_str,   _ml_epoch_str   = _best, _ep
             except Exception:
                 pass
 
-    c1.metric("Product classes",    "27",           help="Rakuten categories to predict")
-    c2.metric("Image features",     "300",           help="ResNet50(2048) → PCA(300)")
-    c3.metric("CV best val acc",    _cv_acc_str,     help="CountVectorizer + PCA — 84 916 samples")
-    c4.metric("CV epochs",          _cv_epoch_str,   help="Epochs trained (early stopping)")
-    c5.metric("MiniLM best val acc",_ml_acc_str,     help="MiniLM 384-dim — 84 916 samples")
-    c6.metric("MiniLM epochs",      _ml_epoch_str,   help="Epochs trained (early stopping)")
+    c1.metric("Product classes",     "27",             help="Rakuten categories to predict")
+    c2.metric("Image features",      "384",            help="ResNet50(2048) → PCA(384)")
+    c3.metric("CV best val acc",     _cv_acc_str,      help="CountVectorizer + PCA — 84 916 samples")
+    c4.metric("CV epochs",           _cv_epoch_str,    help="Epochs trained (early stopping)")
+    c5.metric("CLIP best val acc",   _clip_acc_str,    help="CLIP ViT-B/32 512-dim — 84 916 samples")
+    c6.metric("CLIP epochs",         _clip_epoch_str,  help="Epochs trained (early stopping)")
+    c7.metric("MiniLM best val acc", _ml_acc_str,      help="MiniLM 384-dim — 84 916 samples")
+    c8.metric("MiniLM epochs",       _ml_epoch_str,    help="Epochs trained (early stopping)")
     st.divider()
 
     tab_ml, tab_ops, tab_stack, tab_services = st.tabs([
@@ -238,7 +244,7 @@ def show_presentation_page():
             st.markdown("""
             <div style="background:#1e1e2e;border-left:4px solid #e94560;
                         border-radius:8px;padding:18px 20px">
-                <b style="color:#e94560">Text branch — 2 encoders</b><br><br>
+                <b style="color:#e94560">Text branch — 3 encoders</b><br><br>
                 <code style="color:#a8b2d8">description</code> <span style="color:#6d7a9f">(raw string)</span><br><br>
                 <span style="color:#e94560;font-size:12px;font-weight:600">Encoder A — CountVectorizer</span><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;SpaCy lemmatisation + stopword removal (single-pass)</span><br>
@@ -329,9 +335,10 @@ def show_presentation_page():
         _artifacts_base = Path("/app/data/artifacts")
         _hist_configs = [
             ("CountVectorizer + PCA",           _artifacts_base / "train_history.json",        "#e94560"),
+            ("CLIP ViT-B/32",                   _artifacts_base / "train_history_clip.json",   "#7c3aed"),
             ("MiniLM (paraphrase-multilingual)", _artifacts_base / "train_history_minilm.json", "#a8b2d8"),
         ]
-        _chart_cols = st.columns(2)
+        _chart_cols = st.columns(3)
         _any_chart  = False
         for _col, (_enc_label, _hist_file, _color) in zip(_chart_cols, _hist_configs):
             with _col:
@@ -430,7 +437,7 @@ def show_presentation_page():
                         padding:14px 16px;text-align:center">
                 <div style="color:#28a745;font-weight:700;font-size:14px">Disk artifacts</div>
                 <div style="color:#9aabb8;font-size:12px;margin-top:6px">
-                    neural_network_model.keras<br>neural_network_model_minilm.keras<br>pca_image/text · vectorizer
+                    neural_network_model.keras<br>neural_network_model_clip.keras<br>neural_network_model_minilm.keras<br>pca_image/text · vectorizer
                 </div>
             </div>""", unsafe_allow_html=True)
         with o3:
@@ -472,7 +479,7 @@ def show_presentation_page():
                         padding:14px 16px">
                 <div style="color:#a8b2d8;font-weight:700;font-size:14px">Predict-API :5003</div>
                 <div style="color:#9aabb8;font-size:12px;margin-top:8px;display:flex;gap:12px;flex-wrap:wrap">
-                    <span><code style="font-size:11px">POST /predict-text?model=cv|minilm</code></span>
+                    <span><code style="font-size:11px">POST /predict-text?model=cv|clip|minilm</code></span>
                     <span><code style="font-size:11px">POST /predict-image</code></span>
                     <span><code style="font-size:11px">POST /predict-multimodal</code></span>
                     <span><code style="font-size:11px">POST /reload-artifacts</code></span>
@@ -620,11 +627,17 @@ def show_prediction_page():
     st.sidebar.subheader("MLflow Models")
 
     cv_versions     = list_model_versions("rakuten_multimodal_cv")
+    clip_versions   = list_model_versions("rakuten_multimodal_clip")
     minilm_versions = list_model_versions("rakuten_multimodal_minilm")
 
     cv_sel = st.sidebar.selectbox(
         "rakuten_multimodal_cv",
         cv_versions if cv_versions else ["—"],
+        index=0,
+    )
+    clip_sel = st.sidebar.selectbox(
+        "rakuten_multimodal_clip",
+        clip_versions if clip_versions else ["—"],
         index=0,
     )
     minilm_sel = st.sidebar.selectbox(
@@ -635,17 +648,26 @@ def show_prediction_page():
 
     st.sidebar.subheader("Text encoder")
     encoder_options = {
-        "CountVectorizer + PCA (1 024-d)": "cv",
-        "MiniLM multilingual (384-d)":     "minilm",
+        "CountVectorizer + PCA (512-d)": "cv",
+        "CLIP ViT-B/32 (512-d)":         "clip",
+        "MiniLM multilingual (384-d)":   "minilm",
     }
     encoder_label    = st.sidebar.radio("Text model", list(encoder_options.keys()), index=0)
     selected_encoder = encoder_options[encoder_label]
     if selected_encoder == "minilm":
         st.sidebar.info("paraphrase-multilingual-MiniLM-L12-v2 — 384 dims, multilingual.")
+    elif selected_encoder == "clip":
+        st.sidebar.info("openai/clip-vit-base-patch32 — 512 dims, L2-normalised, English-focused.")
 
     # Build active model URI from the version selected for the active encoder
-    _ver = cv_sel if selected_encoder == "cv" else minilm_sel
-    _name = "rakuten_multimodal_cv" if selected_encoder == "cv" else "rakuten_multimodal_minilm"
+    _version_map = {"cv": cv_sel, "clip": clip_sel, "minilm": minilm_sel}
+    _name_map    = {
+        "cv":     "rakuten_multimodal_cv",
+        "clip":   "rakuten_multimodal_clip",
+        "minilm": "rakuten_multimodal_minilm",
+    }
+    _ver      = _version_map[selected_encoder]
+    _name     = _name_map[selected_encoder]
     model_uri = f"models:/{_name}/{_ver}" if _ver != "—" else None
 
     st.subheader("Single Prediction")
@@ -687,9 +709,10 @@ def show_docker_workflow():
         ("minio",          "MinIO",                           "S3 artifact storage + DVC remote",        "#f7981c"),
         ("gate-api",       "FastAPI + JWT",                   "RBAC authentication",                     "#e94560"),
         ("train-api",      "FastAPI + TF 2.17 + jemalloc",   "Async training pipeline (subprocess)",    "#e94560"),
-        ("minilm-encoder", "FastAPI + sentence-transformers", "Bulk MiniLM text encoding to .npy cache", "#a8b2d8"),
-        ("predict-api",    "FastAPI + TF 2.17 + jemalloc",   "Dual-model inference (CV + MiniLM)",      "#e94560"),
-        ("airflow",        "Airflow 2.x",                    "DAG v5_2 orchestration",                  "#017cee"),
+        ("minilm-encoder", "FastAPI + sentence-transformers", "Bulk MiniLM text encoding to .npy cache",   "#a8b2d8"),
+        ("clip-encoder",   "FastAPI + transformers",          "Bulk CLIP ViT-B/32 text encoding to .npy",  "#7c3aed"),
+        ("predict-api",    "FastAPI + TF 2.17 + jemalloc",   "Tri-model inference (CV + CLIP + MiniLM)", "#e94560"),
+        ("airflow",        "Airflow 2.x",                    "DAG v6 orchestration",                     "#017cee"),
         ("prometheus",     "Prometheus 3.x",                  "Metrics scraping (15 s), 9 targets",      "#e6522c"),
         ("grafana",        "Grafana",                         "Dashboards + per-encoder drift detection","#f46800"),
         ("alertmanager",   "Alertmanager",                    "Email routing via Brevo SMTP",            "#e6522c"),
@@ -726,8 +749,8 @@ def show_docker_workflow():
         st.markdown("""
         **train-api** exposes (labeled by encoder):
         - `train_loss` / `val_loss` / `train_accuracy` / `val_accuracy`
-        - `model_final_val_accuracy{encoder="cv|minilm"}` — final val accuracy
-        - `model_final_val_loss{encoder="cv|minilm"}` — final val loss
+        - `model_final_val_accuracy{encoder="cv|clip|minilm"}` — final val accuracy
+        - `model_final_val_loss{encoder="cv|clip|minilm"}` — final val loss
         - `training_dataset_size` — dataset size
         - `model_num_classes` / `epochs_completed_total`
         """)
@@ -735,6 +758,7 @@ def show_docker_workflow():
     st.markdown("### Configured alerts")
     alerts = [
         ("CVModelValAccuracyLow",     "warning",  "CV model val_accuracy < 0.70"),
+        ("CLIPModelValAccuracyLow",   "warning",  "CLIP model val_accuracy < 0.70"),
         ("MiniLMModelValAccuracyLow", "warning",  "MiniLM model val_accuracy < 0.70"),
         ("PredictionConfidenceDrift", "warning",  "P50 confidence < 0.40 for 15 min"),
         ("PredictionEntropyHigh",     "warning",  "P90 entropy > 2.5 nats for 15 min"),
@@ -744,6 +768,7 @@ def show_docker_workflow():
         ("PredictAPIDown",            "critical", "predict-api unreachable > 3 min"),
         ("TrainAPIDown",              "critical", "train-api unreachable > 3 min"),
         ("MiniLMEncoderDown",         "warning",  "minilm-encoder unreachable > 3 min"),
+        ("CLIPEncoderDown",           "warning",  "clip-encoder unreachable > 3 min"),
         ("GateAPIDown",               "critical", "gate-api (auth) unreachable > 2 min"),
         ("MinIODown",                 "critical", "MinIO unreachable > 3 min"),
         ("DiskSpaceLow",              "critical", "Root filesystem < 10% free"),

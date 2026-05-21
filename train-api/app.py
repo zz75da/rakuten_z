@@ -44,7 +44,7 @@ class TrainRequest(BaseModel):
     epochs: int = 30
     batch_size: int = 128
     use_cache: bool = True
-    text_encoder: str = "countvectorizer"  # "countvectorizer" | "minilm"
+    text_encoder: str = "countvectorizer"  # "countvectorizer" | "minilm" | "clip"
 
 # --- In-memory job registry ---
 _training_jobs: Dict[str, Dict[str, Any]] = {}
@@ -86,7 +86,8 @@ def _restore_metrics_from_jobs():
                 job = json.load(f)
             if job.get("status") != "success":
                 continue
-            enc = "minilm" if "_minilm" in job.get("model_path", "") else "countvectorizer"
+            _mp = job.get("model_path", "")
+            enc = "minilm" if "_minilm" in _mp else "clip" if "_clip" in _mp else "countvectorizer"
             if enc not in best or job.get("completed_at", "") > best[enc].get("completed_at", ""):
                 best[enc] = job
         except Exception:
@@ -310,6 +311,7 @@ async def push_cache_endpoint():
         "image_features.npy",
         "text_features.npy",
         "text_features_minilm.npy",
+        "text_features_clip.npy",
     ]
 
     results = {}
