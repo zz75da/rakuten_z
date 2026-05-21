@@ -227,8 +227,8 @@ groups:
     annotations:
       summary: "Memory usage at {{ $value | printf \"%.1f\" }}%"
       description: >
-        System memory usage exceeds 90%. Training runs (~8 GB peak with both
-        CV and MiniLM) may OOM-kill if another process is competing.
+        System memory usage exceeds 90%. Training runs (~3 GB peak per encoder;
+        CV, CLIP, and MiniLM run sequentially) may OOM-kill if another process is competing.
 
   - alert: HighCPUUsage
     expr: 100 - (avg by(instance)(irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80

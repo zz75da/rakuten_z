@@ -856,8 +856,9 @@ with DAG(
     success_message = BashOperator(
         task_id="success_message",
         bash_command=(
-            "echo '=== MLOps Pipeline Completed — Both Models Trained ===' && "
+            "echo '=== MLOps Pipeline Completed — All 3 Models Trained ===' && "
             "echo 'CV model    : artifacts/neural_network_model.keras' && "
+            "echo 'CLIP model  : artifacts/neural_network_model_clip.keras' && "
             "echo 'MiniLM model: artifacts/neural_network_model_minilm.keras' && "
             "echo 'Grafana  : http://localhost:3000' && "
             "echo 'Streamlit: http://localhost:8501' && "

@@ -68,7 +68,7 @@ def authenticate_user(username, password):
         return None
 
 
-def predict_single(description, uploaded_image, token, model_uri, encoder="cv"):
+def predict_single(description, uploaded_image, token, encoder="cv"):
     payload = {}
     if description:
         payload["description"] = description
@@ -140,7 +140,7 @@ def predict_single(description, uploaded_image, token, model_uri, encoder="cv"):
         st.error(f"Unexpected error: {e}")
 
 
-def predict_batch_stream(batch_items, token, output_file_path, model_uri, chunk_size=50):
+def predict_batch_stream(batch_items, token, output_file_path, chunk_size=50):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     output_file_path = Path(output_file_path)
     output_file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,13 +248,17 @@ def show_presentation_page():
                 <code style="color:#a8b2d8">description</code> <span style="color:#6d7a9f">(raw string)</span><br><br>
                 <span style="color:#e94560;font-size:12px;font-weight:600">Encoder A — CountVectorizer</span><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;SpaCy lemmatisation + stopword removal (single-pass)</span><br>
-                <span style="color:#6d7a9f">&nbsp;&nbsp;CountVectorizer</span> <code>max_features=5000</code><br>
-                <span style="color:#6d7a9f">&nbsp;&nbsp;IncrementalPCA</span> <code>n_components=1024</code><br>
-                <b style="color:#28a745">&nbsp;&nbsp;output: 1 x 1 024</b><br><br>
-                <span style="color:#a8b2d8;font-size:12px;font-weight:600">Encoder B — MiniLM</span><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;CountVectorizer</span> <code>max_features=10000</code><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;IncrementalPCA</span> <code>n_components=512</code><br>
+                <b style="color:#28a745">&nbsp;&nbsp;output: 1 × 512</b><br><br>
+                <span style="color:#7c3aed;font-size:12px;font-weight:600">Encoder B — CLIP ViT-B/32</span><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;openai/clip-vit-base-patch32 (text encoder only)</span><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;L2-normalised embeddings (clip-encoder service)</span><br>
+                <b style="color:#28a745">&nbsp;&nbsp;output: 1 × 512</b><br><br>
+                <span style="color:#a8b2d8;font-size:12px;font-weight:600">Encoder C — MiniLM</span><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;paraphrase-multilingual-MiniLM-L12-v2</span><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;multilingual sentence embeddings (minilm-encoder service)</span><br>
-                <b style="color:#28a745">&nbsp;&nbsp;output: 1 x 384</b>
+                <b style="color:#28a745">&nbsp;&nbsp;output: 1 × 384</b>
             </div>
             """, unsafe_allow_html=True)
 
@@ -266,14 +270,14 @@ def show_presentation_page():
                 <code style="color:#a8b2d8">image_jpg</code> <span style="color:#6d7a9f">(224 x 224 px)</span><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;ResNet50 pre-trained (ImageNet, no top)</span><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;Global Average Pooling →</span> <code>2048 dims</code><br>
-                <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;IncrementalPCA</span> <code>n_components=300</code><br>
-                <b style="color:#28a745">output: 1 x 300</b><br><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;IncrementalPCA</span> <code>n_components=384</code><br>
+                <b style="color:#28a745">output: 1 × 384</b><br><br>
                 <span style="color:#6d7a9f;font-size:11px">Single-pass predict() over full dataset<br>
                 (batch_size=64, one generator — eliminates ~2 600 redundant predict calls)</span>
             </div>
             """, unsafe_allow_html=True)
 
-        st.markdown("#### Classification model — shared architecture, 2 variants")
+        st.markdown("#### Classification model — shared architecture, 3 variants")
 
         def _card(label, sub, border, label_color):
             return (
@@ -291,16 +295,16 @@ def show_presentation_page():
             f"<div style='background:#16213e;border:1px solid #e94560;border-radius:6px;"
             f"padding:6px 12px;font-size:0.78rem;text-align:center'>"
             f"<span style='color:#e94560;font-weight:600'>text</span>"
-            f"<span style='color:#6d7a9f'> 1&times;1024<br>or 1&times;384</span></div>",
+            f"<span style='color:#6d7a9f'> 1×512 (CV/CLIP)<br>or 1×384 (MiniLM)</span></div>",
             f"<div style='background:#16213e;border:1px solid #4a6fa5;border-radius:6px;"
             f"padding:6px 12px;font-size:0.78rem;text-align:center'>"
             f"<span style='color:#a8b2d8;font-weight:600'>image</span>"
-            f"<span style='color:#6d7a9f'> 1&times;300</span></div>",
+            f"<span style='color:#6d7a9f'> 1×384</span></div>",
             "</div>",
             "<div style='color:#6d7a9f;font-size:1.6rem;padding:0 2px;align-self:center;line-height:0.9'>}</div>",
             f"<div style='background:#0f3460;border-radius:6px;padding:6px 10px;"
             f"font-size:0.78rem;color:#a8b2d8;text-align:center;min-width:60px;align-self:center'>"
-            f"hstack<br><span style='color:#6d7a9f'>1&times;1324<br>or 1&times;684</span></div>",
+            f"hstack<br><span style='color:#6d7a9f'>1×896 (CV/CLIP)<br>or 1×768 (MiniLM)</span></div>",
             arrow,
             _card("Dense",   "512 &middot; ReLU",   "#28a745", "#28a745"),
             arrow,
@@ -388,7 +392,7 @@ def show_presentation_page():
             st.markdown("""
             <div style="background:#1e1e2e;border:1px solid #017cee;border-radius:8px;
                         padding:14px 16px;text-align:center">
-                <div style="color:#017cee;font-weight:700;font-size:14px">Airflow DAG v5_2</div>
+                <div style="color:#017cee;font-weight:700;font-size:14px">Airflow DAG v6</div>
                 <div style="color:#9aabb8;font-size:12px;margin-top:6px">
                     Triggers training<br>Polls status every 60 s<br>Last-3-runs log
                 </div>
@@ -521,7 +525,7 @@ def show_presentation_page():
     with tab_stack:
         rows = [
             ("Category",          "Tool",                          "Role"),
-            ("Orchestration",     "Apache Airflow 2.x (v5_2)",     "Training DAG, async polling, per-encoder metrics push, last-3-runs log"),
+            ("Orchestration",     "Apache Airflow 2.x (v6)",       "Training DAG, async polling, per-encoder metrics push, last-3-runs log"),
             ("Text encoding A",   "SpaCy + CountVectorizer",       "Lemmatised NLP, single-pass pipe, IncrementalPCA (1 024-d)"),
             ("Text encoding B",   "MiniLM-L12-v2 (sentence-transformers)", "Multilingual sentence embeddings (384-d), dedicated microservice"),
             ("Image encoding",    "ResNet50 (Keras)",              "ImageNet pretrained, global avg pool, single predict() pass, batch_size=64"),
@@ -625,26 +629,10 @@ def show_prediction_page():
         st.rerun()
 
     st.sidebar.subheader("MLflow Models")
-
-    cv_versions     = list_model_versions("rakuten_multimodal_cv")
-    clip_versions   = list_model_versions("rakuten_multimodal_clip")
-    minilm_versions = list_model_versions("rakuten_multimodal_minilm")
-
-    cv_sel = st.sidebar.selectbox(
-        "rakuten_multimodal_cv",
-        cv_versions if cv_versions else ["—"],
-        index=0,
-    )
-    clip_sel = st.sidebar.selectbox(
-        "rakuten_multimodal_clip",
-        clip_versions if clip_versions else ["—"],
-        index=0,
-    )
-    minilm_sel = st.sidebar.selectbox(
-        "rakuten_multimodal_minilm",
-        minilm_versions if minilm_versions else ["—"],
-        index=0,
-    )
+    for _mname in ["rakuten_multimodal_cv", "rakuten_multimodal_clip", "rakuten_multimodal_minilm"]:
+        _vers = list_model_versions(_mname)
+        _latest = _vers[0] if _vers else "—"
+        st.sidebar.caption(f"{_mname}: v{_latest}")
 
     st.sidebar.subheader("Text encoder")
     encoder_options = {
@@ -659,23 +647,12 @@ def show_prediction_page():
     elif selected_encoder == "clip":
         st.sidebar.info("openai/clip-vit-base-patch32 — 512 dims, L2-normalised, English-focused.")
 
-    # Build active model URI from the version selected for the active encoder
-    _version_map = {"cv": cv_sel, "clip": clip_sel, "minilm": minilm_sel}
-    _name_map    = {
-        "cv":     "rakuten_multimodal_cv",
-        "clip":   "rakuten_multimodal_clip",
-        "minilm": "rakuten_multimodal_minilm",
-    }
-    _ver      = _version_map[selected_encoder]
-    _name     = _name_map[selected_encoder]
-    model_uri = f"models:/{_name}/{_ver}" if _ver != "—" else None
-
     st.subheader("Single Prediction")
     description    = st.text_input("Product description")
     uploaded_image = st.file_uploader("Upload image", type=["png", "jpg", "jpeg"])
     if st.button("Predict"):
         predict_single(description, uploaded_image, st.session_state["user_token"],
-                       model_uri, encoder=selected_encoder)
+                       encoder=selected_encoder)
 
     st.subheader("Batch Prediction (Streaming)")
     uploaded_files    = st.file_uploader("Upload multiple images", accept_multiple_files=True,
@@ -695,7 +672,7 @@ def show_prediction_page():
                     "image_base64": base64.b64encode(file.getvalue()).decode("utf-8"),
                 })
             predict_batch_stream(batch_items, st.session_state["user_token"],
-                                 "./batch_predictions_streamed.jsonl", model_uri)
+                                 "./batch_predictions_streamed.jsonl")
         else:
             st.warning("Please upload at least one image.")
 

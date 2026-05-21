@@ -72,7 +72,7 @@ try:
                     }
                 except Exception:
                     pass
-        return {"pca_components": 300, "n_text_pca_components": 1024, "cv_max_features": 5000}
+        return {"pca_components": 384, "n_text_pca_components": 512, "cv_max_features": 10000}
 
     _pipeline_params     = _read_pipeline_params()
     pca_components       = _pipeline_params["pca_components"]

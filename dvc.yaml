@@ -53,7 +53,7 @@ stages:
   # ── Dimensionality reduction ──────────────────────────────────────────────
 
   reduce_features_cv:
-    desc: "IncrementalPCA: text 5000→1024, image 2048→300 — produces shared pca_image.pkl"
+    desc: "IncrementalPCA: text 10000→512, image 2048→384 — produces shared pca_image.pkl"
     cmd: python train-api/services/run_pca.py
               data/feature_cache/text_features.npy
               data/feature_cache/image_features.npy
@@ -99,7 +99,7 @@ stages:
   # ── Model training ────────────────────────────────────────────────────────
 
   train_cv:
-    desc: "Train Dense(512→256→27) on 1324-d features — registers rakuten_multimodal_cv in MLflow"
+    desc: "Train Dense(512→256→27) on 896-d features (512 CV text PCA + 384 image PCA) — registers rakuten_multimodal_cv in MLflow"
     cmd: python train-api/services/run_full_pipeline.py
               cv_dvc countvectorizer 10 32 false true
     deps:
