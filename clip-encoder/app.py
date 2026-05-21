@@ -63,13 +63,17 @@ _lock  = threading.Lock()
 _state = {"status": "idle", "message": "Ready"}
 
 
-def _encode_texts(texts, tokenizer, model, batch_size, normalize):
+def _encode_texts(texts, tokenizer, model, batch_size, normalize, state_ref, lock_ref):
+    """Encode texts in batches, logging progress every 10% as clean log lines."""
     import torch
-    from tqdm import tqdm
+
+    n        = len(texts)
+    n_batches = (n + batch_size - 1) // batch_size
+    log_every = max(1, n_batches // 10)   # log ~10 times total
 
     all_embeddings = []
-    for i in tqdm(range(0, len(texts), batch_size), desc="CLIP encoding"):
-        batch = texts[i : i + batch_size]
+    for batch_idx, i in enumerate(range(0, n, batch_size)):
+        batch  = texts[i : i + batch_size]
         inputs = tokenizer(
             batch,
             padding=True,
@@ -79,10 +83,18 @@ def _encode_texts(texts, tokenizer, model, batch_size, normalize):
         )
         with torch.no_grad():
             outputs = model(**inputs)
-            emb = outputs.pooler_output  # shape: (batch, 512)
+            emb = outputs.pooler_output  # (batch, 512)
         if normalize:
             emb = emb / emb.norm(p=2, dim=-1, keepdim=True)
         all_embeddings.append(emb.cpu().numpy())
+
+        if (batch_idx + 1) % log_every == 0 or (batch_idx + 1) == n_batches:
+            done = min(i + batch_size, n)
+            pct  = done / n * 100
+            msg  = f"Encoding {done}/{n} texts ({pct:.0f}%) — batch {batch_idx+1}/{n_batches}"
+            logging.info(msg)
+            with lock_ref:
+                state_ref["message"] = msg
 
     return np.vstack(all_embeddings).astype(np.float32)
 
@@ -109,7 +121,7 @@ def _encode_worker():
         with _lock:
             _state["message"] = f"Encoding {n} texts (batch={BATCH_SIZE}, normalize={NORMALIZE_EMBEDDINGS})..."
 
-        embeddings = _encode_texts(texts, tokenizer, model, BATCH_SIZE, NORMALIZE_EMBEDDINGS)
+        embeddings = _encode_texts(texts, tokenizer, model, BATCH_SIZE, NORMALIZE_EMBEDDINGS, _state, _lock)
 
         os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
         np.save(OUTPUT_PATH, embeddings)
