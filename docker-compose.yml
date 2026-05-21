@@ -498,6 +498,7 @@ services:
       - ./data/X_train_update.csv:/app/data/X_train_update.csv:ro
       - ./data/feature_cache:/app/data/feature_cache
       - ./params.yaml:/app/params.yaml:ro
+      - ./data/hf_cache:/root/.cache/huggingface   # persist model download across rebuilds
     networks:
       rakuten_mlops_network:
         ipv4_address: 172.20.0.15
