@@ -40,10 +40,10 @@ train:
 model:
   # Neural network architecture — all safe to experiment
   learning_rate: 0.0005       # was 0.001 — slower, more stable convergence
-  hidden_1: 1024              # was 768 — wider to match new 2432-d CV input (ratio 2.4:1)
-  hidden_2: 384               # proportional to hidden_1
-  dropout_1: 0.45             # slightly reduced from 0.5 — CV accuracy regressed, finding balance
-  dropout_2: 0.35             # slightly reduced from 0.4
+  hidden_1: 512               # reverted from 1024 — wider net overfit worse (gap 14.5-15.6%)
+  hidden_2: 256               # proportional to hidden_1
+  dropout_1: 0.45
+  dropout_2: 0.35
   l2_reg: 0.0001              # reverted — 0.0003 degraded both models; 0.0001 is the sweet spot
   early_stopping_patience: 8  # epochs without val_loss improvement before stopping
   lr_patience: 4              # reverted — lrp=4 produced both CV and MiniLM best results
