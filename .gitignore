@@ -64,6 +64,15 @@ Thumbs.db
 *.swp
 *.swo
 
+# === Claude Code session files ===
+.claude/
+
+# === Office documents (presentations, reports) ===
+*.docx
+*.pptx
+*.xlsx
+*.pdf
+
 # === Docker ===
 docker-compose.override.yml
 docker-compose.override.yaml
