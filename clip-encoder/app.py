@@ -1,11 +1,14 @@
 """
-CLIP ViT-B/32 encoder service — lightweight FastAPI wrapper.
+CLIP ViT-B/32 text encoder service — lightweight FastAPI wrapper.
 
-Encodes product descriptions using the CLIP text encoder (512-d embeddings).
-Image features are NOT encoded here — the existing ResNet50 cache is reused.
+Uses transformers CLIPTokenizer + CLIPTextModel directly (text-only, ~170 MB)
+instead of the full sentence-transformers CLIP wrapper which pulls the image
+processor and breaks on newer transformers versions.
+
+Produces 512-d text embeddings compatible with CLIP's embedding space.
 
 Idle memory: ~50 MB (no model loaded).
-During encoding: ~2 GB peak, then model is explicitly unloaded via gc.collect().
+During encoding: ~1.5 GB peak, then model is explicitly unloaded via gc.collect().
 
 Endpoints:
   GET  /health   — liveness probe
@@ -29,10 +32,10 @@ logging.basicConfig(
 
 app = FastAPI(title="CLIP Encoder", version="1.0")
 
-MODEL_NAME  = "clip-ViT-B-32"
-CSV_PATH    = os.getenv("TRAIN_CSV_X_PATH",  "/app/data/X_train_update.csv")
-OUTPUT_PATH = os.getenv("CLIP_CACHE_PATH",   "/app/data/feature_cache/text_features_clip.npy")
-BATCH_SIZE  = int(os.getenv("CLIP_BATCH_SIZE", "64"))
+HF_MODEL     = "openai/clip-vit-base-patch32"
+CSV_PATH     = os.getenv("TRAIN_CSV_X_PATH",  "/app/data/X_train_update.csv")
+OUTPUT_PATH  = os.getenv("CLIP_CACHE_PATH",   "/app/data/feature_cache/text_features_clip.npy")
+BATCH_SIZE   = int(os.getenv("CLIP_BATCH_SIZE", "64"))
 
 
 def _load_params() -> dict:
@@ -54,10 +57,34 @@ _batch_override = _clip_cfg.get("batch_size")
 if _batch_override:
     BATCH_SIZE = int(_batch_override)
 
-logging.info(f"CLIP encoder: model={MODEL_NAME} batch_size={BATCH_SIZE} normalize={NORMALIZE_EMBEDDINGS}")
+logging.info(f"CLIP encoder: model={HF_MODEL} batch_size={BATCH_SIZE} normalize={NORMALIZE_EMBEDDINGS}")
 
 _lock  = threading.Lock()
 _state = {"status": "idle", "message": "Ready"}
+
+
+def _encode_texts(texts, tokenizer, model, batch_size, normalize):
+    import torch
+    from tqdm import tqdm
+
+    all_embeddings = []
+    for i in tqdm(range(0, len(texts), batch_size), desc="CLIP encoding"):
+        batch = texts[i : i + batch_size]
+        inputs = tokenizer(
+            batch,
+            padding=True,
+            truncation=True,
+            max_length=77,
+            return_tensors="pt",
+        )
+        with torch.no_grad():
+            outputs = model(**inputs)
+            emb = outputs.pooler_output  # shape: (batch, 512)
+        if normalize:
+            emb = emb / emb.norm(p=2, dim=-1, keepdim=True)
+        all_embeddings.append(emb.cpu().numpy())
+
+    return np.vstack(all_embeddings).astype(np.float32)
 
 
 def _encode_worker():
@@ -71,30 +98,25 @@ def _encode_worker():
         logging.info(f"Dataset loaded: {n} samples")
 
         with _lock:
-            _state["message"] = f"Loading CLIP ViT-B/32 ({n} samples queued)..."
+            _state["message"] = f"Loading CLIP text encoder from {HF_MODEL}..."
 
-        from sentence_transformers import SentenceTransformer
-        encoder = SentenceTransformer(MODEL_NAME, device="cpu")
-        logging.info("CLIP model loaded — encoding text features...")
+        from transformers import CLIPTokenizer, CLIPTextModel
+        tokenizer = CLIPTokenizer.from_pretrained(HF_MODEL)
+        model     = CLIPTextModel.from_pretrained(HF_MODEL)
+        model.eval()
+        logging.info("CLIP text encoder loaded — encoding...")
 
         with _lock:
-            _state["message"] = f"Encoding {n} texts (batch={BATCH_SIZE})..."
+            _state["message"] = f"Encoding {n} texts (batch={BATCH_SIZE}, normalize={NORMALIZE_EMBEDDINGS})..."
 
-        embeddings = encoder.encode(
-            texts,
-            batch_size=BATCH_SIZE,
-            show_progress_bar=True,
-            convert_to_numpy=True,
-            normalize_embeddings=NORMALIZE_EMBEDDINGS,
-        )
+        embeddings = _encode_texts(texts, tokenizer, model, BATCH_SIZE, NORMALIZE_EMBEDDINGS)
 
         os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-        np.save(OUTPUT_PATH, embeddings.astype(np.float32))
+        np.save(OUTPUT_PATH, embeddings)
         size_mb = os.path.getsize(OUTPUT_PATH) / 1024 ** 2
         logging.info(f"Saved {size_mb:.0f} MB → {OUTPUT_PATH}  shape={embeddings.shape}")
 
-        # Unload immediately so train-api has full RAM for CLIP training
-        del encoder, embeddings, df, texts
+        del tokenizer, model, embeddings, df, texts
         gc.collect()
         logging.info("CLIP model unloaded — RAM freed for training")
 
