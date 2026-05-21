@@ -164,61 +164,68 @@ class TestAsyncTrainingWorkflow:
 @pytest.mark.integration
 class TestRunTrainingPipelineFunction:
     def test_success_path_updates_job_registry(self):
+        """_run_training_pipeline reads the job JSON written by the subprocess.
+        Patch subprocess.run to return rc=0 and pre-write the expected job file."""
+        import json, tempfile
+
         fake_id = str(uuid.uuid4())
         _training_jobs[fake_id] = {"status": "running"}
 
-        mock_history = MagicMock()
-        mock_history.history = {
-            "loss": [0.9, 0.5],
-            "val_loss": [1.0, 0.6],
-            "accuracy": [0.4, 0.7],
-            "val_accuracy": [0.35, 0.65],
+        fake_result = {
+            "status": "success",
+            "job_id": fake_id,
+            "history": {
+                "loss": [0.9, 0.5],
+                "val_loss": [1.0, 0.6],
+                "accuracy": [0.4, 0.7],
+                "val_accuracy": [0.35, 0.65],
+            },
+            "final_metrics": {"accuracy": 0.7},
+            "num_classes": 5,
+            "dataset_size": 10,
+            "mlflow_run_id": "run-xyz",
         }
 
-        with patch.object(train_app_mod, "load_and_merge_data") as m_load, \
-             patch.object(train_app_mod, "extract_text_features") as m_text, \
-             patch.object(train_app_mod, "extract_image_features",
-                          return_value="data/image_features.npy"), \
-             patch.object(train_app_mod, "reduce_features", return_value=(
-                 "data/X_reduced.npy", "data/pca_image.pkl", "data/pca_text.pkl")), \
-             patch("numpy.load", return_value=np.zeros((10, 1324))), \
-             patch("builtins.open", side_effect=lambda *a, **k: MagicMock(
-                 __enter__=lambda s: MagicMock(), __exit__=lambda s, *a: None)), \
-             patch("pickle.load", return_value=MagicMock(
-                 n_components_=300, copy=True,
-                 transform=lambda x: np.zeros((x.shape[0], 300)))), \
-             patch.object(train_app_mod, "build_and_train_model", return_value=(
-                 MagicMock(), MagicMock(classes_=range(5)),
-                 mock_history, "path/model.keras", "run-xyz", 1,
-                 {"accuracy": 0.70})), \
-             patch.object(train_app_mod, "save_artifacts"), \
-             patch("requests.post"):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
 
-            m_load.return_value = MagicMock(
-                __len__=lambda s: 10, __getitem__=lambda s, k: [0]*10)
-            m_text.return_value = (np.zeros((10, 5000)), MagicMock())
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_file = os.path.join(tmpdir, f"{fake_id}.json")
+            with open(job_file, "w") as f:
+                json.dump(fake_result, f)
 
-            train_app_mod._run_training_pipeline(
-                job_id=fake_id,
-                use_dev_images=True,
-                epochs=2,
-                batch_size=32,
-            )
+            with patch.object(train_app_mod, "JOB_DIR", tmpdir), \
+                 patch("subprocess.run", return_value=mock_proc):
+                train_app_mod._run_training_pipeline(
+                    job_id=fake_id,
+                    use_dev_images=True,
+                    epochs=2,
+                    batch_size=32,
+                )
 
-        assert _training_jobs[fake_id]["status"] in ("success", "failed")
+        assert _training_jobs[fake_id]["status"] == "success"
+        assert _training_jobs[fake_id]["mlflow_run_id"] == "run-xyz"
 
     def test_failure_marks_job_as_failed(self):
+        """When the subprocess returns a non-zero exit code and writes no job file,
+        _run_training_pipeline must mark the job as failed with an error message."""
+        import tempfile
+
         fake_id = str(uuid.uuid4())
         _training_jobs[fake_id] = {"status": "running"}
 
-        with patch.object(train_app_mod, "load_and_merge_data",
-                          side_effect=RuntimeError("CSV not found")):
-            train_app_mod._run_training_pipeline(
-                job_id=fake_id,
-                use_dev_images=True,
-                epochs=1,
-                batch_size=32,
-            )
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.object(train_app_mod, "JOB_DIR", tmpdir), \
+                 patch("subprocess.run", return_value=mock_proc):
+                train_app_mod._run_training_pipeline(
+                    job_id=fake_id,
+                    use_dev_images=True,
+                    epochs=1,
+                    batch_size=32,
+                )
 
         assert _training_jobs[fake_id]["status"] == "failed"
-        assert "CSV not found" in _training_jobs[fake_id]["error"]
+        assert _training_jobs[fake_id].get("error") is not None
