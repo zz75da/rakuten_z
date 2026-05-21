@@ -36,6 +36,18 @@ groups:
         The minilm-encoder container has been unreachable for 3 minutes.
         MiniLM text encoding will fail if the Airflow DAG is triggered.
 
+  - alert: CLIPEncoderDown
+    expr: up{job="clip-encoder"} == 0
+    for: 3m
+    labels:
+      severity: warning
+      service: clip-encoder
+    annotations:
+      summary: CLIP encoder service is not responding
+      description: >
+        The clip-encoder container has been unreachable for 3 minutes.
+        CLIP text encoding will fail if the Airflow DAG is triggered.
+
   - alert: GateAPIDown
     expr: up{job="gate-api"} == 0
     for: 2m
@@ -120,6 +132,18 @@ groups:
       summary: "MiniLM model val accuracy is {{ $value | printf \"%.2f\" }}"
       description: >
         The MiniLM model's validation accuracy has dropped below 0.70
+        after the latest training run. Consider retraining or checking data quality.
+
+  - alert: CLIPModelValAccuracyLow
+    expr: model_final_val_accuracy{encoder="clip"} < 0.70
+    for: 30m
+    labels:
+      severity: warning
+      service: train-api
+    annotations:
+      summary: "CLIP model val accuracy is {{ $value | printf \"%.2f\" }}"
+      description: >
+        The CLIP ViT-B/32 model's validation accuracy has dropped below 0.70
         after the latest training run. Consider retraining or checking data quality.
 
   # ── Prediction latency ────────────────────────────────────────────────────

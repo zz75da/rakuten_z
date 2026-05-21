@@ -83,6 +83,10 @@ pca_text: IncrementalPCA = None
 # MiniLM model
 model_minilm = None
 minilm_encoder = None
+# CLIP ViT-B/32 model
+model_clip     = None
+clip_tokenizer = None
+clip_text_model = None
 # Shared
 label_encoder: LabelEncoder = None
 pca_image: IncrementalPCA = None
@@ -122,7 +126,7 @@ CATEGORY_NAMES: dict[str, str] = {
 # --- Input Schemas ---
 class TextRequest(BaseModel):
     description: str
-    model: str = "cv"  # "cv" | "minilm"
+    model: str = "cv"  # "cv" | "minilm" | "clip"
 
 
 class ImageRequest(BaseModel):
@@ -132,7 +136,7 @@ class ImageRequest(BaseModel):
 class MultimodalRequest(BaseModel):
     description: str = None
     image_base64: str = None
-    model: str = "cv"  # "cv" | "minilm"
+    model: str = "cv"  # "cv" | "minilm" | "clip"
 
 
 class BatchStreamRequest(BaseModel):
@@ -165,7 +169,8 @@ def verify_jwt_token(authorization: str = Header(...)):
 
 # --- Load artifacts ---
 def load_artifacts():
-    global model_cv, model_minilm, label_encoder, text_vectorizer, pca_text, pca_image, resnet_model, minilm_encoder
+    global model_cv, model_minilm, model_clip, label_encoder, text_vectorizer, \
+           pca_text, pca_image, resnet_model, minilm_encoder, clip_tokenizer, clip_text_model
     try:
         # --- Shared artifacts ---
         label_encoder = pickle.load(open(os.path.join(ARTIFACTS_PATH, "label_encoder.pkl"), "rb"))
@@ -204,6 +209,27 @@ def load_artifacts():
             model_minilm = None
             minilm_encoder = None
 
+        # --- CLIP model (optional — only available after a clip training run) ---
+        clip_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_clip.keras")
+        if os.path.exists(clip_keras):
+            try:
+                model_clip = tf.keras.models.load_model(clip_keras)
+                from transformers import CLIPTokenizer, CLIPTextModel
+                clip_tokenizer  = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
+                clip_text_model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32")
+                clip_text_model.eval()
+                print("✓ CLIP model loaded")
+            except Exception as e:
+                print(f"⚠ CLIP model could not be loaded: {e}")
+                model_clip = None
+                clip_tokenizer = None
+                clip_text_model = None
+        else:
+            print("ℹ CLIP model not found — run clip-encoder then train with text_encoder=clip")
+            model_clip = None
+            clip_tokenizer = None
+            clip_text_model = None
+
         # --- ResNet50 for image features (shared) ---
         if resnet_model is None:
             print("Loading ResNet50 for image feature extraction...")
@@ -239,6 +265,18 @@ def extract_text_features_minilm(description: str):
     return embeddings.astype(np.float32)  # shape (1, 384)
 
 
+def extract_text_features_clip(description: str):
+    import torch
+    inputs = clip_tokenizer(
+        [description], padding=True, truncation=True, max_length=77, return_tensors="pt"
+    )
+    with torch.no_grad():
+        outputs = clip_text_model(**inputs)
+        emb = outputs.pooler_output                              # (1, 512)
+        emb = emb / emb.norm(p=2, dim=-1, keepdim=True)        # L2-normalise
+    return emb.cpu().numpy().astype(np.float32)
+
+
 def _resolve_model(model_key: str):
     """Return (model, text_dim) for the requested encoder, or raise 503."""
     if model_key == "minilm":
@@ -248,6 +286,13 @@ def _resolve_model(model_key: str):
                 detail="MiniLM model not available — trigger the DAG to train it first",
             )
         return model_minilm, 384
+    if model_key == "clip":
+        if model_clip is None:
+            raise HTTPException(
+                status_code=503,
+                detail="CLIP model not available — trigger the DAG to train it first",
+            )
+        return model_clip, 512
     if model_cv is None:
         raise HTTPException(status_code=503, detail="CV model not available")
     if pca_text is None:
@@ -313,7 +358,12 @@ def startup_event():
 # --- Endpoints ---
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "cv_model_loaded":     model_cv    is not None,
+        "minilm_model_loaded": model_minilm is not None,
+        "clip_model_loaded":   model_clip   is not None,
+    }
 
 
 @app.post("/reload-artifacts")
@@ -322,15 +372,16 @@ def reload_artifacts_endpoint():
     try:
         load_artifacts()
         # Guard: at minimum the CV model + its PCA must be loaded
-        if model_cv is None and model_minilm is None:
-            raise RuntimeError("Neither CV nor MiniLM model could be loaded from disk")
+        if model_cv is None and model_minilm is None and model_clip is None:
+            raise RuntimeError("No model could be loaded from disk")
         if model_cv is not None and pca_text is None:
             raise RuntimeError("CV model loaded but pca_text.pkl is missing")
         return {
             "status": "reloaded",
-            "cv_model_loaded": model_cv is not None,
+            "cv_model_loaded":   model_cv   is not None,
             "minilm_model_loaded": model_minilm is not None,
-            "pca_text_components": int(pca_text.n_components_) if pca_text else None,
+            "clip_model_loaded": model_clip  is not None,
+            "pca_text_components":  int(pca_text.n_components_) if pca_text else None,
             "pca_image_components": int(pca_image.n_components_),
         }
     except Exception as e:
@@ -340,11 +391,12 @@ def reload_artifacts_endpoint():
 @app.post("/predict-text")
 def predict_text(req: TextRequest, user: dict = Depends(verify_jwt_token)):
     active_model, text_dim = _resolve_model(req.model)
-    text_features = (
-        extract_text_features_minilm(req.description)
-        if req.model == "minilm"
-        else extract_text_features(req.description)
-    )
+    if req.model == "minilm":
+        text_features = extract_text_features_minilm(req.description)
+    elif req.model == "clip":
+        text_features = extract_text_features_clip(req.description)
+    else:
+        text_features = extract_text_features(req.description)
     dummy_img = np.zeros((1, pca_image.n_components_))
     combined = np.hstack([text_features, dummy_img])
 
@@ -389,11 +441,15 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
         raise HTTPException(status_code=400, detail="Must provide description or image_base64")
 
     active_model, text_dim = _resolve_model(req.model)
-    text_features = (
-        (extract_text_features_minilm(req.description) if req.model == "minilm" else extract_text_features(req.description))
-        if req.description
-        else np.zeros((1, text_dim))
-    )
+    if req.description:
+        if req.model == "minilm":
+            text_features = extract_text_features_minilm(req.description)
+        elif req.model == "clip":
+            text_features = extract_text_features_clip(req.description)
+        else:
+            text_features = extract_text_features(req.description)
+    else:
+        text_features = np.zeros((1, text_dim))
     image_features = (
         extract_image_features(req.image_base64)
         if req.image_base64
@@ -422,11 +478,15 @@ def predict_multimodal_batch_stream(req: BatchStreamRequest, user: dict = Depend
         for item in req.items:
             try:
                 active_model, text_dim = _resolve_model(item.model)
-                text_features = (
-                    extract_text_features_minilm(item.description)
-                    if item.model == "minilm"
-                    else extract_text_features(item.description)
-                ) if item.description else np.zeros((1, text_dim))
+                if item.description:
+                    if item.model == "minilm":
+                        text_features = extract_text_features_minilm(item.description)
+                    elif item.model == "clip":
+                        text_features = extract_text_features_clip(item.description)
+                    else:
+                        text_features = extract_text_features(item.description)
+                else:
+                    text_features = np.zeros((1, text_dim))
                 image_features = (
                     extract_image_features(item.image_base64)
                     if item.image_base64

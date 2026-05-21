@@ -346,12 +346,13 @@ def build_and_train_model(
         except Exception as e:
             print(f"Warning: failed to log epoch metrics: {e}")
 
-        # Save model — filename matches save_artifacts convention so MiniLM never
-        # overwrites the CV model file and both can coexist on disk.
-        model_filename = (
-            "neural_network_model_minilm.keras" if text_encoder == "minilm"
-            else "neural_network_model.keras"
-        )
+        # Save model — encoder-specific filename so no model overwrites another.
+        if text_encoder == "minilm":
+            model_filename = "neural_network_model_minilm.keras"
+        elif text_encoder == "clip":
+            model_filename = "neural_network_model_clip.keras"
+        else:
+            model_filename = "neural_network_model.keras"
         model_path = os.path.join(ARTIFACTS_DIR, model_filename)
         encoder_path = os.path.join(ARTIFACTS_DIR, "label_encoder.pkl")
         model.save(model_path)
@@ -392,21 +393,27 @@ def build_and_train_model(
         "minilm": (
             "Rakuten multimodal product classifier — MiniLM text encoder. "
             "Text: paraphrase-multilingual-MiniLM-L12-v2 (384-dim). "
-            "Image: ResNet50 → IncrementalPCA(300). Dense 512→256→Dropout→27 classes."
+            "Image: ResNet50 → IncrementalPCA(384). Dense 512→256→Dropout→27 classes."
+        ),
+        "clip": (
+            "Rakuten multimodal product classifier — CLIP ViT-B/32 text encoder. "
+            "Text: openai/clip-vit-base-patch32 CLIPTextModel (512-dim, L2-normalised). "
+            "Image: ResNet50 → IncrementalPCA(384). Dense 512→256→Dropout→27 classes."
         ),
         "countvectorizer": (
             "Rakuten multimodal product classifier — CountVectorizer text encoder. "
-            "Text: CountVectorizer(max_features=5000) → IncrementalPCA(1024). "
-            "Image: ResNet50 → IncrementalPCA(300). Dense 512→256→Dropout→27 classes."
+            "Text: CountVectorizer(max_features=10000) → IncrementalPCA(512). "
+            "Image: ResNet50 → IncrementalPCA(384). Dense 512→256→Dropout→27 classes."
         ),
     }
     _desc = _DESCRIPTIONS.get(text_encoder, "Rakuten multimodal product classifier")
-    # Use encoder-specific registered model name so CV and MiniLM appear as separate
-    # entries in the Model Registry rather than competing versions of the same model.
-    effective_model_name = (
-        f"{MLFLOW_MODEL_NAME}_minilm" if text_encoder == "minilm"
-        else f"{MLFLOW_MODEL_NAME}_cv"
-    )
+    # Encoder-specific registry name so CV, CLIP, MiniLM appear as separate entries.
+    if text_encoder == "minilm":
+        effective_model_name = f"{MLFLOW_MODEL_NAME}_minilm"
+    elif text_encoder == "clip":
+        effective_model_name = f"{MLFLOW_MODEL_NAME}_clip"
+    else:
+        effective_model_name = f"{MLFLOW_MODEL_NAME}_cv"
     client = mlflow.tracking.MlflowClient(tracking_uri=tracking_uri)
     registered_version_number = None
     try:
