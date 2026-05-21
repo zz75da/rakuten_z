@@ -8,7 +8,6 @@ from airflow.sensors.base import BaseSensorOperator
 from airflow.exceptions import AirflowException
 from airflow.utils.trigger_rule import TriggerRule
 import requests
-import pandas as pd
 import os
 from pathlib import Path
 
@@ -31,6 +30,15 @@ ENCODING_MAX_WAIT      = int(os.environ.get("ENCODING_MAX_WAIT_SECONDS",   4 * 3
 # Airflow Variable keys — one per training job so they don't collide
 _CV_JOB_ID_VAR     = "rakuten_cv_training_job_id"
 _MINILM_JOB_ID_VAR = "rakuten_minilm_training_job_id"
+
+# Quality gate — fail before wasting 10 h of training on a corrupted CSV
+_MIN_DATASET_ROWS = 80_000
+
+# Regression gate — stored best-ever val_acc per encoder
+_CV_BEST_VAL_ACC_VAR     = "rakuten_cv_best_val_acc"
+_MINILM_BEST_VAL_ACC_VAR = "rakuten_minilm_best_val_acc"
+_REGRESSION_WARN_PCT     = 2.0   # print warning if either model drops > 2 %
+_REGRESSION_FAIL_PCT     = 5.0   # block DVC push only if BOTH models drop > 5 % simultaneously
 
 
 # --- Helpers ---
@@ -59,12 +67,19 @@ def get_auth_token(**context):
 
 
 def check_dataset_stats(**context):
+    import pandas as pd
     csv_path = "/opt/airflow/data/X_train_update.csv"
     full = pd.read_csv(csv_path)
-    shape = f"{len(full)}x{len(full.columns)}"
+    n_rows, n_cols = len(full), len(full.columns)
+    shape = f"{n_rows}x{n_cols}"
     context["ti"].xcom_push(key="data_shape", value=shape)
     context["ti"].xcom_push(key="data_columns", value=list(full.columns))
     print(f"Dataset: {shape}, columns: {list(full.columns)}")
+    if n_rows < _MIN_DATASET_ROWS:
+        raise AirflowException(
+            f"Dataset too small: {n_rows} rows (threshold={_MIN_DATASET_ROWS}). "
+            "Check /opt/airflow/data/X_train_update.csv for corruption or truncation."
+        )
     return shape
 
 
@@ -99,9 +114,17 @@ def _trigger_training_job(job_var_key, text_encoder, context):
             context["ti"].xcom_push(key=f"{text_encoder}_job_id", value=existing_job_id)
             return existing_job_id
 
+    def _read_epochs():
+        for path in ["/opt/airflow/params.yaml", "/app/params.yaml"]:
+            if os.path.exists(path):
+                import yaml
+                p = yaml.safe_load(open(path)) or {}
+                return int(p.get("train", {}).get("epochs", 30))
+        return int(os.environ.get("TRAIN_EPOCHS", 30))
+
     payload = {
         "use_dev_images": False,
-        "epochs": int(os.environ.get("TRAIN_EPOCHS", 30)),
+        "epochs": _read_epochs(),
         "batch_size": int(os.environ.get("TRAIN_BATCH_SIZE", 128)),
         "text_encoder": text_encoder,
     }
@@ -158,7 +181,11 @@ class TrainingCompleteSensor(BaseSensorOperator):
                 f"No training job_id in Variable '{self.job_var_key}' — re-trigger the DAG"
             )
 
-        token = _fresh_token()
+        try:
+            token = _fresh_token()
+        except Exception as exc:
+            print(f"Login to gate-api failed (will retry in 5 min): {exc}")
+            return False
         try:
             resp = requests.get(
                 f"{TRAIN_API}/train/status/{job_id}",
@@ -172,6 +199,10 @@ class TrainingCompleteSensor(BaseSensorOperator):
                 )
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
             print(f"Status check timed out/unreachable (will retry in 5 min): {exc}")
+            return False
+
+        if resp.status_code in (503, 502, 504):
+            print(f"train-api returned {resp.status_code} (overloaded) — will retry in 5 min")
             return False
 
         if resp.status_code == 404:
@@ -347,9 +378,14 @@ def push_training_metrics(**context):
 
 def push_feature_cache(**context):
     """
-    DVC-add all .npy feature cache files and push to DagsHub remote.
+    DVC push tracked .npy feature cache files to both DagsHub remotes (S3 + HTTP).
     Runs DVC directly in the Airflow container (project root at /opt/airflow).
     Skipped when the DAG is triggered with conf={'push_dvc_cache': false}.
+
+    Note: files are already tracked by the DVC stage 'preprocess_image' in dvc.yaml.
+    dvc add must NOT be called on them — it conflicts with existing stage tracking.
+    Both remotes are non-fatal: a DagsHub network timeout should not kill Prometheus
+    metrics and model evaluation downstream.
     """
     import subprocess
 
@@ -361,8 +397,6 @@ def push_feature_cache(**context):
         return {"skipped": True}
 
     dvc_root = "/opt/airflow"
-    cache_dir = os.path.join(dvc_root, "data", "feature_cache")
-    npy_files = ["image_features.npy", "text_features.npy", "text_features_minilm.npy"]
 
     # Configure dagshub HTTP remote credentials from env (config.local is gitignored)
     dagshub_user  = os.getenv("DAGSHUB_USER", "")
@@ -375,33 +409,24 @@ def push_feature_cache(**context):
             )
         print(f"dagshub HTTP remote credentials configured for user={dagshub_user}")
 
-    for fname in npy_files:
-        fpath = os.path.join(cache_dir, fname)
-        if os.path.exists(fpath):
-            r = subprocess.run(
-                ["dvc", "add", "-f", fpath],
-                capture_output=True, text=True, cwd=dvc_root,
-            )
-            print(f"dvc add {fname}: rc={r.returncode} | {r.stdout.strip()} | {r.stderr.strip()}")
-        else:
-            print(f"Skipping {fname} — file not found")
-
     results = {}
+    any_ok = False
     for remote in ["origin", "dagshub"]:
         push = subprocess.run(
             ["dvc", "push", "--remote", remote],
             capture_output=True, text=True, cwd=dvc_root,
         )
-        print(f"dvc push --remote {remote}: rc={push.returncode} | {push.stdout.strip()} | {push.stderr.strip()}")
-        if push.returncode != 0:
-            # dagshub HTTP remote failure is non-fatal — S3 is the authoritative store
-            if remote == "dagshub":
-                print(f"Warning: push to dagshub HTTP remote failed (non-fatal): {push.stderr.strip()[:300]}")
-            else:
-                raise Exception(f"dvc push to {remote} failed: {push.stderr.strip()[:500]}")
-        results[remote] = push.stdout.strip()
+        print(f"dvc push --remote {remote}: rc={push.returncode} | {push.stdout.strip()} | {push.stderr.strip()[:300]}")
+        if push.returncode == 0:
+            any_ok = True
+        else:
+            print(f"Warning: dvc push to {remote} failed (non-fatal) — pipeline continues")
+        results[remote] = {"rc": push.returncode, "output": push.stdout.strip()}
 
-    return {"status": "ok", "push_output": results}
+    if not any_ok:
+        print("Warning: both DVC remotes failed — feature cache not pushed this run")
+
+    return {"status": "ok", "push_results": results}
 
 
 def evaluate_from_result(**context):
@@ -437,8 +462,9 @@ def write_run_summary(**context):
     dag_run = context["dag_run"]
     ti      = context["ti"]
 
-    cv_result = ti.xcom_pull(task_ids="wait_for_cv_training",    key="training_result") or {}
-    ml_result = ti.xcom_pull(task_ids="wait_for_minilm_training", key="training_result") or {}
+    cv_result     = ti.xcom_pull(task_ids="wait_for_cv_training",    key="training_result") or {}
+    ml_result     = ti.xcom_pull(task_ids="wait_for_minilm_training", key="training_result") or {}
+    model_version = ti.xcom_pull(task_ids="get_model_version",       key="model_version") or "N/A"
 
     def _model_lines(label, result):
         h = result.get("history", {})
@@ -448,7 +474,6 @@ def write_run_summary(**context):
             f"    best_val_acc : {max(val_accs):.4f}" if val_accs else "    best_val_acc : N/A",
             f"    epochs       : {len(h.get('loss', []))}",
             f"    mlflow_run   : {result.get('mlflow_run_id', 'N/A')}",
-            f"    model_version: {result.get('mlflow_model_version', 'N/A')}",
         ]
 
     block_lines = [
@@ -456,6 +481,7 @@ def write_run_summary(**context):
         f"State: {dag_run.state}",
         f"Start: {dag_run.start_date}",
         f"End  : {dag_run.end_date}",
+        f"MReg : {model_version}",
         "",
     ] + _model_lines("CV  (countvectorizer)", cv_result) + [""] + _model_lines("MiniLM", ml_result)
 
@@ -468,6 +494,73 @@ def write_run_summary(**context):
     blocks = blocks[-_MAX_RUNS:]
     _RUN_LOG.write_text(f"\n{_RUN_SEP}\n".join(blocks))
     print(f"Run summary written → {_RUN_LOG}  (last {len(blocks)} runs kept)")
+
+
+def check_regression_gate(**context):
+    """
+    Runs after both training sensors complete, before DVC cache push.
+
+    - Warns if either model's best val_acc drops > _REGRESSION_WARN_PCT vs stored best-ever.
+    - Blocks DVC push (raises AirflowException) only if BOTH models simultaneously drop
+      > _REGRESSION_FAIL_PCT — a catastrophic run, not a single-encoder wobble.
+    - On first run (no baseline stored) just saves current values and passes.
+    - Always updates best-ever to max(current, stored) so the bar never lowers.
+    """
+    ti = context["ti"]
+
+    encoder_cfg = [
+        ("countvectorizer", "wait_for_cv_training",    _CV_BEST_VAL_ACC_VAR),
+        ("minilm",          "wait_for_minilm_training", _MINILM_BEST_VAL_ACC_VAR),
+    ]
+
+    regressions = {}
+
+    for encoder, task_id, var_key in encoder_cfg:
+        result   = ti.xcom_pull(task_ids=task_id, key="training_result") or {}
+        history  = result.get("history", {})
+        val_accs = history.get("val_accuracy", [])
+        if not val_accs:
+            print(f"{encoder}: no val_accuracy in training_result — skipping regression check")
+            continue
+
+        current_best = max(val_accs)
+        stored_str   = Variable.get(var_key, default_var=None)
+
+        if stored_str is None:
+            Variable.set(var_key, str(current_best))
+            print(f"{encoder}: first run — baseline stored → {current_best:.4f}")
+            continue
+
+        stored_best = float(stored_str)
+        drop_pct = (stored_best - current_best) / stored_best * 100 if stored_best > 0 else 0.0
+
+        if drop_pct > _REGRESSION_WARN_PCT:
+            print(
+                f"WARNING {encoder}: val_acc dropped {drop_pct:.1f}% "
+                f"(best-ever={stored_best:.4f}, this run={current_best:.4f})"
+            )
+            regressions[encoder] = drop_pct
+        else:
+            print(
+                f"{encoder}: val_acc OK — best-ever={stored_best:.4f}, "
+                f"this run={current_best:.4f} (Δ{-drop_pct:+.1f}%)"
+            )
+
+        new_best = max(current_best, stored_best)
+        Variable.set(var_key, str(new_best))
+        print(f"{encoder}: best-ever updated → {new_best:.4f}")
+
+    both_regressed = (
+        len(regressions) == 2
+        and all(v > _REGRESSION_FAIL_PCT for v in regressions.values())
+    )
+    if both_regressed:
+        raise AirflowException(
+            f"Both models regressed > {_REGRESSION_FAIL_PCT}% — blocking DVC cache push. "
+            f"CV: -{regressions['countvectorizer']:.1f}%, "
+            f"MiniLM: -{regressions['minilm']:.1f}%. "
+            "Review hyperparameters and re-run the DAG."
+        )
 
 
 def _dag_failure_callback(context):
@@ -608,14 +701,21 @@ with DAG(
         soft_fail=False,
     )
 
-    # ── 4. DVC cache push (optional — set push_dvc_cache=false in DAG run conf to skip) ──
+    # ── 4. Regression gate — warn/block before persisting a degraded cache ──────
+    regression_gate = PythonOperator(
+        task_id="check_regression",
+        python_callable=check_regression_gate,
+        provide_context=True,
+    )
+
+    # ── 5. DVC cache push (optional — set push_dvc_cache=false in DAG run conf to skip) ──
     push_cache = PythonOperator(
         task_id="push_feature_cache",
         python_callable=push_feature_cache,
         provide_context=True,
     )
 
-    # ── 5. Post-processing ────────────────────────────────────────────────────
+    # ── 6. Post-processing ────────────────────────────────────────────────────
     get_version = PythonOperator(
         task_id="get_model_version",
         python_callable=get_model_version,
@@ -690,6 +790,7 @@ with DAG(
         >> wait_for_encoding
         >> trigger_minilm
         >> wait_for_minilm
+        >> regression_gate
         >> push_cache
         >> [get_version, push_metrics]
         >> eval_results

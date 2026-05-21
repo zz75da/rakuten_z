@@ -74,7 +74,7 @@ def _encode_worker():
         embeddings = encoder.encode(
             texts,
             batch_size=BATCH_SIZE,
-            show_progress_bar=False,
+            show_progress_bar=True,
             convert_to_numpy=True,
             normalize_embeddings=NORMALIZE_EMBEDDINGS,
         )
@@ -110,6 +110,7 @@ def health():
 def encode():
     if os.path.exists(OUTPUT_PATH):
         size_mb = os.path.getsize(OUTPUT_PATH) / 1024 ** 2
+        logging.info(f"Cache hit — {size_mb:.0f} MB at {OUTPUT_PATH}, skipping encoding")
         with _lock:
             _state.update({"status": "done", "message": f"Cache exists ({size_mb:.0f} MB)"})
         return {"status": "done", "message": "Cache already exists — skipping"}

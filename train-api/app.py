@@ -169,6 +169,8 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
     try:
         _training_jobs[job_id]["status"] = "running"
 
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
         proc = subprocess.run(
             [
                 sys.executable, "/app/services/run_full_pipeline.py",
@@ -176,7 +178,7 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
                 str(epochs), str(batch_size),
                 str(use_dev_images), str(use_cache),
             ],
-            capture_output=True, text=True, cwd="/app",
+            stdout=None, stderr=None, cwd="/app", env=env,
         )
 
         # Read result written by subprocess
@@ -190,10 +192,10 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
             if _training_jobs[job_id].get("status") != "failed":
                 _training_jobs[job_id].update({
                     "status": "failed",
-                    "error": f"subprocess rc={proc.returncode}: {proc.stderr[-2000:]}",
+                    "error": f"subprocess rc={proc.returncode} — see docker logs train-api for details",
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                 })
-            logger.error(f"[job={job_id}] Training subprocess failed (rc={proc.returncode}): {proc.stderr[-500:]}")
+            logger.error(f"[job={job_id}] Training subprocess failed (rc={proc.returncode}) — see docker logs for details")
             return
 
         logger.info(f"[job={job_id}] Training completed successfully")

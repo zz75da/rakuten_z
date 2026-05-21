@@ -23,6 +23,7 @@ result = reduce_features(
     text_encoder=text_encoder,
     n_components_img=pca_components,
     n_components_text=n_text_pca_components,
+    save_dir="/app/data/artifacts",
 )
 
 with open(out_path, "w") as fh:

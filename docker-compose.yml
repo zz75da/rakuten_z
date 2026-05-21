@@ -19,7 +19,8 @@ services:
       retries: 10
     restart: unless-stopped
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.2
 
   # === MinIO (S3 for DVC and MLflow) ===
   minio:
@@ -41,7 +42,8 @@ services:
       retries: 5
     restart: unless-stopped
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.3
 
   # === MLflow Tracking Server ===
   # REMOVED 2026-05-02: tracking centralized on DagsHub.
@@ -66,6 +68,13 @@ services:
       - ./scripts:/opt/airflow/scripts
       - ./artifacts:/opt/airflow/artifacts
       - ./params.yaml:/app/params.yaml
+    extra_hosts:
+      - "postgres:172.20.0.2"
+      - "gate-api:172.20.0.6"
+      - "train-api:172.20.0.7"
+      - "predict-api:172.20.0.8"
+      - "minilm-encoder:172.20.0.14"
+      - "pushgateway:172.20.0.12"
     depends_on:
       postgres:
         condition: service_healthy
@@ -73,7 +82,8 @@ services:
         condition: service_healthy
     restart: "no"
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.4
 
   # === Airflow Web + Scheduler ===
   airflow:
@@ -154,9 +164,17 @@ services:
       interval: 30s
       timeout: 15s
       retries: 20
+    extra_hosts:
+      - "postgres:172.20.0.2"
+      - "gate-api:172.20.0.6"
+      - "train-api:172.20.0.7"
+      - "predict-api:172.20.0.8"
+      - "minilm-encoder:172.20.0.14"
+      - "pushgateway:172.20.0.12"
     restart: unless-stopped
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.5
 
   # === gate-api ===
   gate-api:
@@ -180,7 +198,8 @@ services:
       timeout: 10s
       retries: 5
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.6
 
   # === train-api ===
   train-api:
@@ -237,6 +256,7 @@ services:
       - ./data/images/image_sample:/app/images/image_sample:ro,delegated
       - ./data/X_train_update.csv:/app/data/X_train_update.csv:ro,delegated
       - ./data/Y_train_CVw08PX.csv:/app/data/Y_train_CVw08PX.csv:ro,delegated
+      - ./params.yaml:/app/params.yaml:ro,delegated
       - ./data/artifacts:/app/data/artifacts
       - ./data/feature_cache:/app/data/feature_cache
       - ./data/jobs:/app/data/jobs
@@ -262,7 +282,8 @@ services:
       retries: 20       # wait up to ~10 minutes
       start_period: 60s
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.7
 
   # === predict-api ===
   predict-api:
@@ -314,7 +335,8 @@ services:
       retries: 20       # wait up to ~10 minutes
       start_period: 60s
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.8
 
   # === Prometheus ===
   prometheus:
@@ -343,7 +365,8 @@ services:
       retries: 10
     restart: unless-stopped
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.9
 
   # === Grafana ===
   grafana:
@@ -367,7 +390,8 @@ services:
       retries: 10
     restart: unless-stopped
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.10
 
   # === Streamlit ===
   streamlit:
@@ -406,7 +430,8 @@ services:
       retries: 10
     restart: unless-stopped
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.11
 
 
 
@@ -418,7 +443,8 @@ services:
       - "9091:9091"
     restart: unless-stopped
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.12
 
   alertmanager:
     image: prom/alertmanager:latest
@@ -426,7 +452,8 @@ services:
     ports:
       - "9093:9093"
     environment:
-      - BREVO_SMTP_KEY=${BREVO_SMTP_KEY}
+      - GMAIL_USER=${GMAIL_USER}
+      - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
       - ALERT_EMAIL_TO=${ALERT_EMAIL_TO}
     volumes:
       - ./monitoring/alertmanager.yml.tmpl:/etc/alertmanager/alertmanager.yml.tmpl
@@ -436,12 +463,14 @@ services:
       - sh
       - -c
       - |
-        sed -e "s|__BREVO_SMTP_KEY__|$$BREVO_SMTP_KEY|g" \
+        sed -e "s|__GMAIL_USER__|$$GMAIL_USER|g" \
+            -e "s|__GMAIL_APP_PASSWORD__|$$GMAIL_APP_PASSWORD|g" \
             -e "s|__ALERT_EMAIL_TO__|$$ALERT_EMAIL_TO|g" \
             /etc/alertmanager/alertmanager.yml.tmpl > /tmp/alertmanager.yml &&
         /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.13
     restart: unless-stopped
 
 
@@ -458,6 +487,7 @@ services:
     ports:
       - "5005:5004"
     environment:
+      - PYTHONUNBUFFERED=1
       - TRAIN_CSV_X_PATH=/app/data/X_train_update.csv
       - MINILM_CACHE_PATH=/app/data/feature_cache/text_features_minilm.npy
       - MINILM_BATCH_SIZE=256
@@ -465,7 +495,8 @@ services:
       - ./data/X_train_update.csv:/app/data/X_train_update.csv:ro
       - ./data/feature_cache:/app/data/feature_cache
     networks:
-      - rakuten_mlops_network
+      rakuten_mlops_network:
+        ipv4_address: 172.20.0.14
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5004/health"]
       interval: 30s
@@ -477,6 +508,9 @@ services:
 networks:
   rakuten_mlops_network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 
 volumes:
   postgres_data:

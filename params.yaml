@@ -23,19 +23,18 @@ preprocess:
   # --- Safe to experiment ---
   pca_components: 384         # image PCA output dim (was 300)
                               # disk: X_reduced.npy ~+60 MB per +100 components
-  n_text_pca_components: 2048 # CV text PCA output dim (was 1024, capped by initial_batch_size)
-                              # disk: X_reduced.npy grows ~+350 MB vs current 478 MB
-                              # CV input becomes 2048+384=2432-d
-                              # MiniLM unaffected (uses raw 384-d embeddings, no text PCA)
-  cv_max_features: 10000      # CountVectorizer vocabulary size (CV encoder only, was 5000)
-                              # disk: text_features.npy 1.7 GB → 3.4 GB (+1.7 GB)
+  n_text_pca_components: 512  # CV text PCA output dim — 1024 doubles PCA time (~25-30h total)
+                              # test l2_reg + epochs fixes first at 512, upgrade dims later if needed
+  cv_max_features: 10000      # CountVectorizer vocabulary size — 10000 works fine with pca_txt=512
+                              # OOM was caused by pca_txt=2048, not cv_max_features
+                              # text_features.npy cached at 10000 features (3.4 GB)
 
 train:
   # --- DO NOT INCREASE batch_size (OOM risk) ---
   batch_size: 128
 
   # --- Safe to experiment ---
-  epochs: 30                  # hard cap; early stopping usually triggers before this
+  epochs: 60                  # increased from 50 — MiniLM best@43, early stop fires at 51
   random_seed: 42
 
 model:
@@ -43,16 +42,13 @@ model:
   learning_rate: 0.0005       # was 0.001 — slower, more stable convergence
   hidden_1: 1024              # was 768 — wider to match new 2432-d CV input (ratio 2.4:1)
   hidden_2: 384               # proportional to hidden_1
-  dropout_1: 0.4              # stronger regularisation (overfitting observed)
-  dropout_2: 0.3              # stronger regularisation
-  l2_reg: 0.001               # L2 weight regularisation on dense layers; targets 12pp overfit gap
-                              # try: 0.0001, 0.0005, 0.005
+  dropout_1: 0.45             # slightly reduced from 0.5 — CV accuracy regressed, finding balance
+  dropout_2: 0.35             # slightly reduced from 0.4
+  l2_reg: 0.0001              # reverted — 0.0003 degraded both models; 0.0001 is the sweet spot
   early_stopping_patience: 8  # epochs without val_loss improvement before stopping
-  lr_patience: 4              # epochs without val_loss improvement before LR drop (was 2)
+  lr_patience: 4              # reverted — lrp=4 produced both CV and MiniLM best results
   lr_factor: 0.5              # LR reduction multiplier (was 0.3 — gentler decay)
 
 minilm:
   # MiniLM encoder settings — safe to experiment
-  normalize_embeddings: true   # project embeddings onto unit sphere before training
-                               # NOTE: requires rebuilding minilm-encoder container
-                               # after changing (docker-compose up -d --build minilm-encoder)
+  normalize_embeddings: false  # raw embeddings — normalization degraded MiniLM from 0.7395 to 0.7349

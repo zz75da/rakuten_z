@@ -222,6 +222,11 @@ def build_and_train_model(
     except Exception:
         pass
 
+    try:
+        mlflow.enable_system_metrics_logging()
+    except Exception:
+        pass
+
     with mlflow.start_run(run_name=run_name) as run:
 
         # Log datasets while X is still in scope
@@ -256,13 +261,16 @@ def build_and_train_model(
             f"{MLFLOW_MODEL_NAME}_minilm" if text_encoder == "minilm"
             else f"{MLFLOW_MODEL_NAME}_cv"
         )
-        # Link run to git commit so DagsHub can resolve params.yaml DVC columns
+        # Log full params.yaml in DVC dot-notation so DagsHub shows them as columns
+        # (git is not available in train-api, so the commit-tag approach never worked)
         try:
-            import subprocess as _sp
-            _commit = _sp.check_output(
-                ["git", "rev-parse", "HEAD"], cwd="/opt/airflow", stderr=_sp.DEVNULL
-            ).decode().strip()
-            mlflow.set_tag("mlflow.source.git.commit", _commit)
+            _dvc_params = {}
+            for _section, _vals in _PARAMS.items():
+                if isinstance(_vals, dict):
+                    for _k, _v in _vals.items():
+                        _dvc_params[f"{_section}.{_k}"] = _v
+            if _dvc_params:
+                mlflow.log_params(_dvc_params)
         except Exception:
             pass
 

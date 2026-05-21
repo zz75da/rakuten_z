@@ -80,15 +80,9 @@ groups:
       summary: PostgreSQL is not running
       description: The PostgreSQL container (used by Airflow and MLflow) has been down for 2 minutes.
 
-  - alert: MinIODown
-    expr: up{job="minio"} == 0
-    for: 3m
-    labels:
-      severity: critical
-      service: minio
-    annotations:
-      summary: MinIO is not running
-      description: The MinIO object storage container is down. MLflow artifact uploads will fail.
+  # MinIODown alert removed — Prometheus cannot scrape MinIO metrics without
+  # bearer token auth. MinIO health is monitored via Docker healthcheck.
+  # MLflow artifacts use DagsHub (S3), not local MinIO.
 
   - alert: DiskSpaceLow
     expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100 < 10
