@@ -219,10 +219,13 @@ def _encode_worker():
         )
 
         # --- Atomic write: write to .tmp then rename so a crash mid-write
-        #     never leaves a partial file that looks like a valid cache. ---
+        #     never leaves a partial file that looks like a valid cache.
+        #     Use open() file object so numpy does NOT append ".npy" to the
+        #     tmp path (np.save appends ".npy" when given a string path). ---
         os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
         tmp_path = OUTPUT_PATH + ".tmp"
-        np.save(tmp_path, embeddings)
+        with open(tmp_path, "wb") as _f:
+            np.save(_f, embeddings)
         os.replace(tmp_path, OUTPUT_PATH)         # atomic on Linux/ext4
 
         _write_cache_meta(n, embeddings.shape)
