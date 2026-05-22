@@ -25,8 +25,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # 4. Copie du reste du code
 COPY . .
 
-# 5. Téléchargement du modèle Spacy
-RUN python -m spacy download en_core_web_sm
+# 5. Téléchargement des modèles Spacy
+# fr_core_news_sm: correct French lemmatization + French stopwords (49% of Rakuten data is French)
+# en_core_web_sm:  kept as fallback for English product titles
+RUN python -m spacy download fr_core_news_sm && \
+    python -m spacy download en_core_web_sm
 
 EXPOSE 5002
 

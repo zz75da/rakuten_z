@@ -1,25 +1,21 @@
+import html as _html
+import logging
 import os
-import spacy
+import re as _re
+
 import numpy as np
 import pandas as pd
-import pickle
-import logging
-from time import time
-from sklearn.feature_extraction.text import CountVectorizer
-from tqdm import tqdm
 import psutil
+import spacy
+from sklearn.feature_extraction.text import CountVectorizer
+from time import time
 
 # === Constants ===
-TEXT_FEATURES_LIMIT = 5000
-TEXT_FEATURES_FILE = "data/feature_cache/text_features.npy"
+TEXT_FEATURES_FILE   = "data/feature_cache/text_features.npy"
 TEXT_VECTORIZER_FILE = "data/text_vectorizer.pkl"
-BATCH_SIZE = 5000  # adjust based on memory
-# n_process=1 is faster than 6 inside Docker/WSL2: forking 6 worker processes
-# per batch (17 batches × fork/join overhead) exceeds the gain from parallelism
-# for this dataset size. Set via env var to allow easy tuning.
-N_CORES = int(os.getenv("SPACY_N_PROCESS", "1"))
+BATCH_SIZE = 5000
+N_CORES    = int(os.getenv("SPACY_N_PROCESS", "1"))
 
-# === Logging setup ===
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -28,57 +24,115 @@ logging.basicConfig(
 
 def log_memory(prefix=""):
     mem = psutil.virtual_memory()
-    logging.info(f"{prefix} Memory usage: {mem.percent:.1f}% used, {mem.available / (1024**3):.2f} GB available")
+    logging.info(f"{prefix} Memory: {mem.percent:.1f}% used, {mem.available / 1024**3:.2f} GB free")
 
-# === Timing decorator ===
 def track_time(func):
     def wrapper(*args, **kwargs):
-        start_time = time()
+        start = time()
         logging.info(f"Starting {func.__name__}")
         result = func(*args, **kwargs)
-        end_time = time()
-        logging.info(f"Finished {func.__name__} in {end_time - start_time:.2f} seconds")
+        logging.info(f"Finished {func.__name__} in {time() - start:.2f}s")
         return result
     return wrapper
 
-# === Load SpaCy model ===
+# === Load French spaCy model (primary: handles 49% French Rakuten data correctly) ===
 try:
-    nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
+    nlp = spacy.load("fr_core_news_sm", disable=["parser", "ner"])
+    logging.info("Loaded fr_core_news_sm (French lemmatization + French stopwords)")
 except OSError:
-    import spacy.cli
-    spacy.cli.download("en_core_web_sm")
-    nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
+    try:
+        nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
+        logging.warning("fr_core_news_sm not found, falling back to en_core_web_sm")
+    except OSError:
+        import spacy.cli
+        spacy.cli.download("en_core_web_sm")
+        nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
 
-def preprocess_text(text: str) -> str:
-    """Tokenize, lemmatize, remove stopwords/non-alpha tokens."""
-    doc = nlp(text or "")
-    tokens = [token.lemma_.lower() for token in doc if not token.is_stop and token.is_alpha]
-    return " ".join(tokens)
+# === Multilingual stopwords (French + English) added to spaCy's built-in list ===
+# French stopwords missing from en_core_web_sm that pollute the vocabulary
+_EXTRA_STOPS = {
+    # French
+    "le","la","les","de","du","des","un","une","en","et","au","aux",
+    "pour","avec","sur","par","ce","se","sa","son","ses","qui","que",
+    "dans","cette","est","sont","plus","mais","ou","ni","car","donc",
+    "or","ne","pas","si","tout","bien","très","même","autre","aussi",
+    "leur","leurs","nous","vous","ils","elles","je","tu","il","elle",
+    "mon","ton","ma","ta","mes","tes","nos","vos","eux",
+    "être","avoir","faire","aller","dire","voir","vouloir","pouvoir",
+    # English (supplement spaCy's list for English product titles)
+    "the","a","an","of","in","is","are","was","were","and","or","but",
+    "for","with","on","at","to","from","by","as","into","about","up",
+    "out","after","before","between","through","during","its","it",
+}
+nlp.Defaults.stop_words.update(_EXTRA_STOPS)
+for w in _EXTRA_STOPS:
+    nlp.vocab[w].is_stop = True
+
+
+def _clean_text(text) -> str:
+    """HTML-unescape, strip tags, normalise whitespace."""
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    text = _html.unescape(text)
+    text = _re.sub(r"<[^>]+>", " ", text)
+    return " ".join(text.split())
+
+
+def _build_combined_text(data: pd.DataFrame) -> list[str]:
+    """
+    Concatenate designation (100% populated product title) with
+    cleaned description (available for 65% of products).
+    Produces richer text than description alone (35% null, HTML entities).
+    """
+    desig = data["designation"].fillna("").apply(_clean_text)
+    descr = data["description"].fillna("").apply(_clean_text)
+    return (desig + " " + descr).str.strip().tolist()
+
 
 @track_time
-def extract_text_features(data: pd.DataFrame, max_features: int = TEXT_FEATURES_LIMIT):
-    """Vectorize preprocessed text from dataframe['description'] using multicore."""
-    all_texts = data["description"].fillna("").tolist()
-    processed_descriptions = []
+def extract_text_features(data: pd.DataFrame, max_features: int = 10000):
+    """
+    Vectorize product text using French spaCy lemmatization + CountVectorizer.
 
-    logging.info(f"Total samples: {len(all_texts)}, n_process={N_CORES}")
+    Improvements over original English-only pipeline:
+    - Input: designation + description (vs description-only with 35% nulls)
+    - spaCy model: fr_core_news_sm (French lemmatization + French stopwords)
+    - Stopwords: French + English (prevents "de", "la", "les" from consuming vocab)
+    - Alphanumeric tokens kept: model numbers, sizes, years (was is_alpha only)
+    - ngram_range=(1,2): captures "jeu video", "livre enfant" as single features
+    """
+    all_texts = _build_combined_text(data)
+    n = len(all_texts)
+    logging.info(f"Total samples: {n}, n_process={N_CORES}")
     log_memory("Before preprocessing")
 
-    # Single nlp.pipe pass over all texts — avoids fork/join overhead of
-    # per-batch loops while keeping memory bounded via spaCy's internal streaming.
-    processed_descriptions = [
-        " ".join(t.lemma_.lower() for t in doc if not t.is_stop and t.is_alpha)
-        for doc in tqdm(
-            nlp.pipe(all_texts, n_process=N_CORES, batch_size=BATCH_SIZE),
-            total=len(all_texts), desc="SpaCy lemmatise",
+    def _lemmatize(doc):
+        return " ".join(
+            t.lemma_.lower()
+            for t in doc
+            if not t.is_stop       # removes French + English stopwords
+            and not t.is_punct
+            and not t.is_space
+            and (t.is_alpha or t.like_num)  # keep words AND numbers (model codes, sizes)
+            and len(t.text) > 1            # skip single-character tokens
         )
-    ]
-    log_memory("After SpaCy")
 
-    data["processed_description"] = processed_descriptions
-    logging.info("Vectorizing text features...")
-    vectorizer = CountVectorizer(max_features=max_features)
-    text_features = vectorizer.fit_transform(processed_descriptions).toarray().astype(np.float32)
+    processed = [
+        _lemmatize(doc)
+        for doc in nlp.pipe(all_texts, n_process=N_CORES, batch_size=BATCH_SIZE)
+    ]
+
+    log_memory("After SpaCy")
+    data = data.copy()
+    data["processed_description"] = processed
+
+    logging.info(f"Vectorizing with CountVectorizer(max_features={max_features}, ngram_range=(1,2))...")
+    vectorizer = CountVectorizer(
+        max_features=max_features,
+        ngram_range=(1, 2),   # unigrams + bigrams: "jeu", "jeu video", "livre enfant"
+        min_df=2,             # ignore tokens appearing in only 1 document
+    )
+    text_features = vectorizer.fit_transform(processed).toarray().astype(np.float32)
     log_memory("After vectorization")
     return text_features, vectorizer
 
@@ -86,15 +140,13 @@ def extract_text_features(data: pd.DataFrame, max_features: int = TEXT_FEATURES_
 if __name__ == "__main__":
     logging.info("Loading training data...")
     df = pd.read_csv("data/X_train_update.csv")
-
     logging.info("Extracting text features...")
     features, vectorizer = extract_text_features(df)
-
     logging.info("Saving outputs...")
     os.makedirs("data/feature_cache", exist_ok=True)
     os.makedirs("artifacts", exist_ok=True)
     np.save(TEXT_FEATURES_FILE, features)
+    import pickle
     with open(TEXT_VECTORIZER_FILE, "wb") as f:
         pickle.dump(vectorizer, f)
-
-    logging.info(f"Preprocessing complete: {TEXT_FEATURES_FILE}, {TEXT_VECTORIZER_FILE}")
+    logging.info(f"Done: {features.shape} → {TEXT_FEATURES_FILE}")
