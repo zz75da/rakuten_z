@@ -44,7 +44,7 @@ logging.basicConfig(
 
 app = FastAPI(title="CLIP Encoder", version="1.0")
 
-HF_MODEL    = "openai/clip-vit-base-patch32"
+HF_MODEL    = os.getenv("CLIP_MODEL", "laion/CLIP-ViT-B-32-laion2B-s34B-b79K")
 CSV_PATH    = os.getenv("TRAIN_CSV_X_PATH",  "/app/data/X_train_update.csv")
 OUTPUT_PATH = os.getenv("CLIP_CACHE_PATH",   "/app/data/feature_cache/text_features_clip.npy")
 META_PATH   = OUTPUT_PATH + ".meta"
