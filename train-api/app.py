@@ -309,17 +309,21 @@ async def push_cache_endpoint():
     Called automatically by the Airflow DAG after both training runs complete.
     """
     cache_dir = "/app/data/feature_cache"
-    npy_files = [
-        "image_features.npy",
-        "text_features.npy",
-        "text_features_minilm.npy",
-        "text_features_clip.npy",
+    artifacts_dir = "/app/data/artifacts"
+    all_files = [
+        os.path.join(cache_dir, "image_features.npy"),
+        os.path.join(cache_dir, "text_features.npy"),
+        os.path.join(cache_dir, "text_features_minilm.npy"),
+        os.path.join(cache_dir, "text_features_clip.npy"),
+        os.path.join(artifacts_dir, "X_reduced_cv.npy"),
+        os.path.join(artifacts_dir, "X_reduced_minilm.npy"),
+        os.path.join(artifacts_dir, "X_reduced_clip.npy"),
     ]
 
     results = {}
 
-    for fname in npy_files:
-        fpath = os.path.join(cache_dir, fname)
+    for fpath in all_files:
+        fname = os.path.basename(fpath)
         if os.path.exists(fpath):
             r = subprocess.run(
                 ["dvc", "add", "-f", fpath],

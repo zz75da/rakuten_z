@@ -80,7 +80,10 @@ def _encode_worker():
         )
 
         os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-        np.save(OUTPUT_PATH, embeddings.astype(np.float32))
+        tmp_path = OUTPUT_PATH + ".tmp"
+        with open(tmp_path, "wb") as _f:
+            np.save(_f, embeddings.astype(np.float32))
+        os.replace(tmp_path, OUTPUT_PATH)
         size_mb = os.path.getsize(OUTPUT_PATH) / 1024 ** 2
         logging.info(f"Saved {size_mb:.0f} MB → {OUTPUT_PATH}")
 

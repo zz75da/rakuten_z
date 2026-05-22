@@ -155,7 +155,7 @@ try:
 
     def _pca_cache_valid():
         required = [_X_reduced_cached, _pca_img_cached]
-        if text_encoder != "minilm":
+        if text_encoder not in ("minilm", "clip"):
             required.append(_pca_text_cached)
         if not all(os.path.exists(p) for p in required):
             return False

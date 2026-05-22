@@ -126,13 +126,14 @@ def _trigger_training_job(job_var_key, text_encoder, context):
         return int(os.environ.get("TRAIN_EPOCHS", 30))
 
     def _git_sha():
+        # git is not installed in the airflow container; read .git directly
         try:
-            import subprocess as _sp
-            result = _sp.run(
-                ["git", "-C", "/opt/airflow", "rev-parse", "HEAD"],
-                capture_output=True, text=True, timeout=5,
-            )
-            return result.stdout.strip() if result.returncode == 0 else ""
+            git_dir = "/opt/airflow/.git"
+            head = open(f"{git_dir}/HEAD").read().strip()
+            if head.startswith("ref: "):
+                ref_path = f"{git_dir}/{head[5:]}"
+                return open(ref_path).read().strip()
+            return head  # detached HEAD — already a SHA
         except Exception:
             return ""
 
