@@ -19,12 +19,13 @@ sys.path.insert(0, "/app")
 JOB_DIR = "/app/data/jobs"
 os.makedirs(JOB_DIR, exist_ok=True)
 
-job_id         = sys.argv[1]
-text_encoder   = sys.argv[2]
-epochs         = int(sys.argv[3])
-batch_size     = int(sys.argv[4])
-use_dev_images = sys.argv[5].lower() == "true"
-use_cache      = sys.argv[6].lower() == "true"
+job_id          = sys.argv[1]
+text_encoder    = sys.argv[2]
+epochs          = int(sys.argv[3])
+batch_size      = int(sys.argv[4])
+use_dev_images  = sys.argv[5].lower() == "true"
+use_cache       = sys.argv[6].lower() == "true"
+git_commit_sha  = sys.argv[7] if len(sys.argv) > 7 else ""
 
 
 def _write(status: dict):
@@ -232,6 +233,7 @@ try:
             y_csv_path=Y_CSV,
             text_encoder=text_encoder,
             use_dev_images=use_dev_images,
+            git_commit_sha=git_commit_sha,
         )
     )
 

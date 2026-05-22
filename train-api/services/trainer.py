@@ -182,6 +182,7 @@ def build_and_train_model(
     pca_models=None,
     train_data=None, x_csv_path=None, y_csv_path=None,
     text_encoder="countvectorizer", use_dev_images=False,
+    git_commit_sha="",
 ):
     # Network I/O happens here, not at import time
     tracking_uri = _init_mlflow()
@@ -233,6 +234,9 @@ def build_and_train_model(
         pass
 
     with mlflow.start_run(run_name=run_name) as run:
+
+        if git_commit_sha:
+            mlflow.set_tag("mlflow.source.git.commit", git_commit_sha)
 
         # Log datasets while X is still in scope
         if train_data is not None:

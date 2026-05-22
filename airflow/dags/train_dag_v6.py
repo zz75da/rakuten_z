@@ -125,11 +125,23 @@ def _trigger_training_job(job_var_key, text_encoder, context):
                 return int(p.get("train", {}).get("epochs", 30))
         return int(os.environ.get("TRAIN_EPOCHS", 30))
 
+    def _git_sha():
+        try:
+            import subprocess as _sp
+            result = _sp.run(
+                ["git", "-C", "/opt/airflow", "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return result.stdout.strip() if result.returncode == 0 else ""
+        except Exception:
+            return ""
+
     payload = {
         "use_dev_images": False,
         "epochs": _read_epochs(),
         "batch_size": int(os.environ.get("TRAIN_BATCH_SIZE", 128)),
         "text_encoder": text_encoder,
+        "git_commit_sha": _git_sha(),
     }
     resp = requests.post(
         f"{TRAIN_API}/train", json=payload,

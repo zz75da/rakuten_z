@@ -45,6 +45,7 @@ class TrainRequest(BaseModel):
     batch_size: int = 128
     use_cache: bool = True
     text_encoder: str = "countvectorizer"  # "countvectorizer" | "minilm" | "clip"
+    git_commit_sha: str = ""  # passed by Airflow DAG; sets mlflow.source.git.commit tag
 
 # --- In-memory job registry ---
 _training_jobs: Dict[str, Dict[str, Any]] = {}
@@ -155,7 +156,7 @@ async def verify_jwt_token(authorization: str = Header(...)):
         raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")
 
 
-def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch_size: int, use_cache: bool = True, text_encoder: str = "countvectorizer"):
+def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch_size: int, use_cache: bool = True, text_encoder: str = "countvectorizer", git_commit_sha: str = ""):
     """Spawn the full training pipeline in an isolated subprocess.
 
     TF never initializes in the main uvicorn process — eliminates the
@@ -178,6 +179,7 @@ def _run_training_pipeline(job_id: str, use_dev_images: bool, epochs: int, batch
                 job_id, text_encoder,
                 str(epochs), str(batch_size),
                 str(use_dev_images), str(use_cache),
+                git_commit_sha,
             ],
             stdout=None, stderr=None, cwd="/app", env=env,
         )
@@ -271,7 +273,7 @@ async def train_model(
 
     thread = threading.Thread(
         target=_run_training_pipeline,
-        args=(job_id, req.use_dev_images, req.epochs, req.batch_size, req.use_cache, req.text_encoder),
+        args=(job_id, req.use_dev_images, req.epochs, req.batch_size, req.use_cache, req.text_encoder, req.git_commit_sha),
         daemon=True,
     )
     thread.start()
