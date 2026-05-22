@@ -55,5 +55,5 @@ minilm:
 
 clip:
   # CLIP ViT-B/32 text encoder settings — safe to experiment
-  batch_size: 64               # conservative for CPU RAM; CLIP model is ~350 MB
+  batch_size: 512              # CPU text encoding — larger batches allow BLAS parallelism (was 64: too slow ~4h+)
   normalize_embeddings: true   # CLIP embeddings work best L2-normalised (cosine similarity space)
