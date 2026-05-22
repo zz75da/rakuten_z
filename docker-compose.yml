@@ -494,6 +494,8 @@ services:
       - TRAIN_CSV_X_PATH=/app/data/X_train_update.csv
       - CLIP_CACHE_PATH=/app/data/feature_cache/text_features_clip.npy
       - CLIP_BATCH_SIZE=512
+      - TRANSFORMERS_OFFLINE=1
+      - HF_HUB_OFFLINE=1
     volumes:
       - ./data/X_train_update.csv:/app/data/X_train_update.csv:ro
       - ./data/feature_cache:/app/data/feature_cache

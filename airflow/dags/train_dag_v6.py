@@ -26,7 +26,7 @@ MINILM_ENCODER   = "http://minilm-encoder:5004"
 CLIP_ENCODER     = "http://clip-encoder:5007"
 
 TRAINING_MAX_WAIT      = int(os.environ.get("TRAINING_MAX_WAIT_SECONDS",  30 * 3600))
-ENCODING_MAX_WAIT      = int(os.environ.get("ENCODING_MAX_WAIT_SECONDS",   8 * 3600))
+ENCODING_MAX_WAIT      = int(os.environ.get("ENCODING_MAX_WAIT_SECONDS",  16 * 3600))
 
 # Airflow Variable keys — one per training job so they don't collide
 _CV_JOB_ID_VAR     = "rakuten_cv_training_job_id"
