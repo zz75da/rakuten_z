@@ -493,7 +493,7 @@ services:
       - PYTHONUNBUFFERED=1
       - TRAIN_CSV_X_PATH=/app/data/X_train_update.csv
       - CLIP_CACHE_PATH=/app/data/feature_cache/text_features_clip.npy
-      - CLIP_BATCH_SIZE=64
+      - CLIP_BATCH_SIZE=512
     volumes:
       - ./data/X_train_update.csv:/app/data/X_train_update.csv:ro
       - ./data/feature_cache:/app/data/feature_cache

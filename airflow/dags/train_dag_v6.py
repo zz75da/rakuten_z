@@ -746,7 +746,7 @@ with DAG(
     wait_for_clip_encoding = ClipEncodingSensor(
         task_id="wait_for_clip_encoding",
         mode="reschedule",
-        poke_interval=60,
+        poke_interval=300,
         timeout=ENCODING_MAX_WAIT,
         soft_fail=False,
     )
@@ -776,7 +776,7 @@ with DAG(
     wait_for_encoding = MiniLMEncodingSensor(
         task_id="wait_for_minilm_encoding",
         mode="reschedule",
-        poke_interval=60,
+        poke_interval=300,
         timeout=ENCODING_MAX_WAIT,
         soft_fail=False,
     )

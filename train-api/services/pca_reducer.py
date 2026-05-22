@@ -32,7 +32,7 @@ def track_time(func):
 @track_time
 def reduce_features(
     text_features_path: str, image_features_path: str,
-    n_components_img=300,
+    n_components_img=384,
     n_components_text=None,   # explicit text PCA components; if None, derived from target_dim
     target_dim=5300,
     save_dir="data",
@@ -183,7 +183,7 @@ if __name__ == "__main__":
     reduce_features(
         text_features_path="data/feature_cache/text_features.npy",
         image_features_path="data/feature_cache/image_features.npy",
-        n_components_img=300,
+        n_components_img=384,
         target_dim=5300,
         save_dir="artifacts",  # Changed from "data" to "artifacts"
         initial_batch_size=1024

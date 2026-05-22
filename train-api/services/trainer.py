@@ -297,8 +297,8 @@ def build_and_train_model(
                 "lr_reduce_patience": LR_PATIENCE,
                 "lr_reduce_factor": LR_FACTOR, "lr_min": LR_MIN,
                 "model_name": _effective_model_name,
-                "pca_components": _p.get("pca_components", 300),
-                "cv_max_features": _p.get("cv_max_features", 5000),
+                "pca_components": _p.get("pca_components", 384),
+                "cv_max_features": _p.get("cv_max_features", 10000),
                 "normalize_embeddings": _PARAMS.get("minilm", {}).get("normalize_embeddings", False),
             }
             if pca_models:

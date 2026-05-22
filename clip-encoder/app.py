@@ -48,7 +48,7 @@ HF_MODEL    = "openai/clip-vit-base-patch32"
 CSV_PATH    = os.getenv("TRAIN_CSV_X_PATH",  "/app/data/X_train_update.csv")
 OUTPUT_PATH = os.getenv("CLIP_CACHE_PATH",   "/app/data/feature_cache/text_features_clip.npy")
 META_PATH   = OUTPUT_PATH + ".meta"
-BATCH_SIZE  = int(os.getenv("CLIP_BATCH_SIZE", "64"))
+BATCH_SIZE  = int(os.getenv("CLIP_BATCH_SIZE", "512"))
 
 # Minimum expected file size: 1000 samples × 512 dims × 4 bytes — anything
 # smaller is a truncated/corrupt write and must not be used as a valid cache.

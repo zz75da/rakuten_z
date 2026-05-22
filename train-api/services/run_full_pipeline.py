@@ -66,9 +66,9 @@ try:
                         p = yaml.safe_load(_f) or {}
                     pre = p.get("preprocess", {})
                     return {
-                        "pca_components":       int(pre.get("pca_components", 300)),
-                        "n_text_pca_components": int(pre.get("n_text_pca_components", 1024)),
-                        "cv_max_features":       int(pre.get("cv_max_features", 5000)),
+                        "pca_components":       int(pre.get("pca_components", 384)),
+                        "n_text_pca_components": int(pre.get("n_text_pca_components", 512)),
+                        "cv_max_features":       int(pre.get("cv_max_features", 10000)),
                     }
                 except Exception:
                     pass
