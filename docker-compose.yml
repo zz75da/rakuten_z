@@ -530,6 +530,7 @@ services:
       - TRAIN_CSV_X_PATH=/app/data/X_train_update.csv
       - MINILM_CACHE_PATH=/app/data/feature_cache/text_features_minilm.npy
       - MINILM_BATCH_SIZE=256
+      - MINILM_MODEL=intfloat/multilingual-e5-small
     volumes:
       - ./data/X_train_update.csv:/app/data/X_train_update.csv:ro
       - ./data/feature_cache:/app/data/feature_cache

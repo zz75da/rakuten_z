@@ -50,8 +50,9 @@ model:
   lr_factor: 0.5              # LR reduction multiplier (was 0.3 — gentler decay)
 
 minilm:
-  # MiniLM encoder settings — safe to experiment
-  normalize_embeddings: false  # raw embeddings — normalization degraded MiniLM from 0.7395 to 0.7349
+  # MiniLM / E5 encoder settings — safe to experiment
+  normalize_embeddings: true   # E5 trained with cosine objective — normalisation is correct for this model
+                               # (previous false setting was for paraphrase-MiniLM; E5 requires normalisation)
 
 clip:
   # CLIP ViT-B/32 text encoder settings — safe to experiment

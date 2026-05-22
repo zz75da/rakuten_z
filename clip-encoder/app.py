@@ -195,7 +195,17 @@ def _encode_worker():
             )
 
         df    = pd.read_csv(CSV_PATH)
-        texts = df["description"].fillna("").tolist()
+        # Concatenate designation (always present) + description (when available, HTML-cleaned)
+        import html as _html, re as _re
+        def _clean(text):
+            if not isinstance(text, str) or not text.strip():
+                return ""
+            text = _html.unescape(text)
+            text = _re.sub(r"<[^>]+>", " ", text)
+            return " ".join(text.split())
+        desig = df["designation"].fillna("").apply(_clean)
+        descr = df["description"].fillna("").apply(_clean)
+        texts = (desig + " " + descr).str.strip().tolist()
         n     = len(texts)
         logging.info(f"Dataset loaded: {n} samples")
 
