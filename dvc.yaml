@@ -21,7 +21,7 @@ stages:
       - data/artifacts/text_vectorizer.pkl
 
   preprocess_text_minilm:
-    desc: "paraphrase-multilingual-MiniLM-L12-v2 sentence embeddings → text_features_minilm.npy"
+    desc: "intfloat/multilingual-e5-small sentence embeddings (max_seq_length=128) → text_features_minilm.npy"
     cmd: python minilm-encoder/encode.py
     deps:
       - data/X_train_update.csv
@@ -115,9 +115,7 @@ stages:
       - data/artifacts/neural_network_model.keras
       - data/artifacts/label_encoder.pkl
       - data/artifacts/train_history.json
-    metrics:
-      - data/artifacts/metrics_cv.json:
-          cache: false
+    # metrics logged to MLflow/DagsHub directly — no local JSON files produced
 
   train_minilm:
     desc: "Train Dense(512→256→27) on 768-d features — registers rakuten_multimodal_minilm in MLflow"
@@ -133,9 +131,7 @@ stages:
     outs:
       - data/artifacts/neural_network_model_minilm.keras
       - data/artifacts/train_history_minilm.json
-    metrics:
-      - data/artifacts/metrics_minilm.json:
-          cache: false
+    # metrics logged to MLflow/DagsHub directly — no local JSON files produced
 
   train_clip:
     desc: "Train Dense(512→256→27) on 896-d features — registers rakuten_multimodal_clip in MLflow"
@@ -151,9 +147,7 @@ stages:
     outs:
       - data/artifacts/neural_network_model_clip.keras
       - data/artifacts/train_history_clip.json
-    metrics:
-      - data/artifacts/metrics_clip.json:
-          cache: false
+    # metrics logged to MLflow/DagsHub directly — no local JSON files produced
 
   # ── Inference service ─────────────────────────────────────────────────────
 

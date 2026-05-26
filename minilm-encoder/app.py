@@ -4,8 +4,10 @@ MiniLM encoder service — lightweight FastAPI wrapper around sentence-transform
 Model: intfloat/multilingual-e5-small (overridable via MINILM_MODEL env var)
   - 384-d output, 100 languages, trained on retrieval+classification benchmarks
   - Uses "query: " prefix per E5 specification for optimal classification performance
-  - Encodes the 'designation' column (product title, 100% populated, clean text)
-    rather than 'description' (35% null, HTML entities)
+  - Encodes designation + cleaned description (designation always present; description
+    HTML-unescaped and tag-stripped, concatenated when available)
+  - max_seq_length=128: covers full designation + start of description; 16× less
+    attention memory than the E5-small default of 512 (quadratic scaling)
 
 Idle memory: ~50 MB (no model loaded).
 During encoding: ~2 GB peak, then model is explicitly unloaded via gc.collect()
@@ -135,18 +137,39 @@ def _encode_worker():
 
         from sentence_transformers import SentenceTransformer
         encoder = SentenceTransformer(MODEL_NAME, device="cpu")
-        logging.info(f"Model loaded — encoding {n} texts...")
-
-        with _lock:
-            _state["message"] = f"Encoding {n} texts (batch={BATCH_SIZE}, normalize={NORMALIZE_EMBEDDINGS})..."
-
-        embeddings = encoder.encode(
-            texts,
-            batch_size=BATCH_SIZE,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-            normalize_embeddings=NORMALIZE_EMBEDDINGS,
+        encoder.max_seq_length = 128  # truncate to 128 tokens: covers full designation + start of
+        # description; reduces attention memory 16× vs default 512 (128²→512² is quadratic)
+        logging.info(
+            f"Model loaded — encoding {n} texts in batches of {BATCH_SIZE} "
+            f"(max_seq_length={encoder.max_seq_length})..."
         )
+
+        # Encode in manual batches so we can log progress every ~10%
+        n_batches = (n + BATCH_SIZE - 1) // BATCH_SIZE
+        log_every = max(1, n_batches // 10)
+        all_embeddings = []
+
+        for batch_idx, start in enumerate(range(0, n, BATCH_SIZE)):
+            batch = texts[start : start + BATCH_SIZE]
+            batch_emb = encoder.encode(
+                batch,
+                batch_size=len(batch),
+                show_progress_bar=False,
+                convert_to_numpy=True,
+                normalize_embeddings=NORMALIZE_EMBEDDINGS,
+            )
+            all_embeddings.append(batch_emb)
+
+            if (batch_idx + 1) % log_every == 0 or (batch_idx + 1) == n_batches:
+                done = min(start + BATCH_SIZE, n)
+                pct  = done / n * 100
+                msg  = f"Encoding {done}/{n} texts ({pct:.0f}%) — batch {batch_idx+1}/{n_batches}"
+                logging.info(msg)
+                with _lock:
+                    _state["message"] = msg
+
+        import numpy as _np
+        embeddings = _np.vstack(all_embeddings).astype(np.float32)
 
         os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
         tmp_path = OUTPUT_PATH + ".tmp"

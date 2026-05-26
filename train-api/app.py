@@ -315,7 +315,7 @@ async def push_cache_endpoint():
         os.path.join(cache_dir, "text_features.npy"),
         os.path.join(cache_dir, "text_features_minilm.npy"),
         os.path.join(cache_dir, "text_features_clip.npy"),
-        os.path.join(artifacts_dir, "X_reduced_cv.npy"),
+        os.path.join(artifacts_dir, "X_reduced_countvectorizer.npy"),
         os.path.join(artifacts_dir, "X_reduced_minilm.npy"),
         os.path.join(artifacts_dir, "X_reduced_clip.npy"),
     ]

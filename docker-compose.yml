@@ -118,6 +118,8 @@ services:
       # Reduce gunicorn workers (default 4) to avoid OOM when train-api consumes 3-4 GB
       AIRFLOW__WEBSERVER__WORKERS: "2"
       AIRFLOW__WEBSERVER__WORKER_TIMEOUT: "120"
+      # E5-small CPU encoding takes ~1h with max_seq_length=128 — 4h gives comfortable buffer
+      ENCODING_MAX_WAIT_SECONDS: "14400"
       SECRET_KEY: default_secret
       _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-http
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
@@ -529,11 +531,12 @@ services:
       - PYTHONUNBUFFERED=1
       - TRAIN_CSV_X_PATH=/app/data/X_train_update.csv
       - MINILM_CACHE_PATH=/app/data/feature_cache/text_features_minilm.npy
-      - MINILM_BATCH_SIZE=256
+      - MINILM_BATCH_SIZE=32
       - MINILM_MODEL=intfloat/multilingual-e5-small
     volumes:
       - ./data/X_train_update.csv:/app/data/X_train_update.csv:ro
       - ./data/feature_cache:/app/data/feature_cache
+      - ./data/hf_cache:/root/.cache/huggingface   # persist model download across rebuilds
     networks:
       rakuten_mlops_network:
         ipv4_address: 172.20.0.14
