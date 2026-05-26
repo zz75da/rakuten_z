@@ -197,8 +197,14 @@ def build_and_train_model(
     from tensorflow.keras.regularizers import l2 as keras_l2
     mlflow.tensorflow.autolog(disable=True)
 
-    # Architecture / training constants — read from params.yaml, fall back to defaults
+    # Architecture / training constants — read from params.yaml, fall back to defaults.
+    # Per-encoder overrides: model_minilm: / model_clip: sections win over model: base.
     _m = _PARAMS.get("model", {})
+    _encoder_key = f"model_{text_encoder}"  # e.g. "model_minilm", "model_clip"
+    _m_override  = _PARAMS.get(_encoder_key, {})
+    if _m_override:
+        _m = {**_m, **_m_override}  # encoder-specific values take priority
+        print(f"Applying per-encoder model overrides from '{_encoder_key}': {_m_override}")
     _t = _PARAMS.get("train", {})
     RANDOM_SEED   = _t.get("random_seed", 42)
     VAL_SPLIT     = 0.2
@@ -283,6 +289,12 @@ def build_and_train_model(
                 mlflow.log_params(_dvc_params)
         except Exception:
             pass
+        # Log which per-encoder override section (if any) was applied
+        if _m_override:
+            try:
+                mlflow.log_params({f"{_encoder_key}.{k}": v for k, v in _m_override.items()})
+            except Exception:
+                pass
 
         try:
             _p = _PARAMS.get("preprocess", {})
@@ -395,9 +407,9 @@ def build_and_train_model(
     # Register model in MLflow Model Registry
     _DESCRIPTIONS = {
         "minilm": (
-            "Rakuten multimodal product classifier — MiniLM text encoder. "
-            "Text: paraphrase-multilingual-MiniLM-L12-v2 (384-dim). "
-            "Image: ResNet50 → IncrementalPCA(384). Dense 512→256→Dropout→27 classes."
+            "Rakuten multimodal product classifier — MiniLM/E5-small text encoder. "
+            "Text: intfloat/multilingual-e5-small, max_seq_length=128, normalize=True (384-dim). "
+            "Image: ResNet50 → IncrementalPCA(384). Dense 1024→384→Dropout→27 classes."
         ),
         "clip": (
             "Rakuten multimodal product classifier — CLIP ViT-B/32 text encoder. "

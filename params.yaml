@@ -5,8 +5,9 @@
 # and MLflow logs every value automatically, so each DAG run is one
 # comparable experiment point in DagsHub → Experiments.
 #
-# SAFE TO CHANGE:  model.*, minilm.normalize_embeddings, preprocess.pca_components,
-#                  preprocess.cv_max_features, preprocess.n_text_pca_components, train.epochs
+# SAFE TO CHANGE:  model.*, model_minilm.*, minilm.normalize_embeddings,
+#                  preprocess.pca_components, preprocess.cv_max_features,
+#                  preprocess.n_text_pca_components, train.epochs
 # DO NOT CHANGE:   preprocess.image_batch_size, preprocess.minilm_batch_size,
 #                  train.batch_size  — RAM/OOM risk on this machine (20 GB disk,
 #                  training already peaks at ~3 GB RAM)
@@ -48,6 +49,19 @@ model:
   early_stopping_patience: 8  # epochs without val_loss improvement before stopping
   lr_patience: 4              # reverted — lrp=4 produced both CV and MiniLM best results
   lr_factor: 0.5              # LR reduction multiplier (was 0.3 — gentler decay)
+
+model_minilm:
+  # Architecture overrides for MiniLM/E5-small encoder only.
+  # Trainer applies these on top of model: when text_encoder="minilm".
+  # CV and CLIP are unaffected.
+  #
+  # Rationale: E5-small produces 384-d normalized embeddings (input_dim=768 total).
+  # MLflow history shows hidden_1=1024 is consistently best for MiniLM:
+  #   best run: 0.7395 val_acc (hidden_1=1024, hidden_2=384)  ← matches values below
+  #   current:  0.6703 val_acc (hidden_1=512, hidden_2=256)   ← wrong for this encoder
+  # CV/CLIP peak at hidden_1=512 (0.7717 and 0.8493) — reverting to 1024 regresses them ~3%.
+  hidden_1: 1024
+  hidden_2: 384
 
 minilm:
   # MiniLM / E5 encoder settings — safe to experiment
