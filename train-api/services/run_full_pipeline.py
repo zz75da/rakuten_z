@@ -144,22 +144,44 @@ try:
     # Output written to a temp file — not stdout — so any logging from pca_reducer
     # cannot corrupt the JSON result.
     #
-    # Cache check: if X_reduced.npy and the PCA pkl files are already on disk AND
-    # both feature inputs are newer than X_reduced (mtime), skip the subprocess.
-    # This saves 20-40 min on every re-run where features haven't changed.
+    # Cache check: compare a lightweight fingerprint (encoder + PCA params + feature
+    # file sizes) stored in a JSON sidecar.  File sizes change only when features are
+    # actually regenerated; mtimes are NOT used because DVC add/push and np.save can
+    # update them even when the content is identical — which caused spurious PCA reruns.
     _ARTIFACTS = "/app/data/artifacts"
     # Encoder-specific X_reduced path — prevents CV/CLIP/MiniLM caches colliding
-    _X_reduced_cached  = os.path.join(_ARTIFACTS, f"X_reduced_{text_encoder}.npy")
-    _pca_img_cached    = os.path.join(_ARTIFACTS, "pca_image.pkl")
-    _pca_text_cached   = os.path.join(_ARTIFACTS, "pca_text.pkl") if text_encoder not in ("minilm", "clip") else None
+    _X_reduced_cached    = os.path.join(_ARTIFACTS, f"X_reduced_{text_encoder}.npy")
+    _pca_img_cached      = os.path.join(_ARTIFACTS, "pca_image.pkl")
+    _pca_text_cached     = os.path.join(_ARTIFACTS, "pca_text.pkl") if text_encoder not in ("minilm", "clip") else None
+    _pca_fingerprint     = os.path.join(_ARTIFACTS, f"pca_fingerprint_{text_encoder}.json")
+
+    def _make_pca_fingerprint() -> dict:
+        """Cheap fingerprint: encoder + PCA params + feature file sizes."""
+        return {
+            "text_encoder":          text_encoder,
+            "pca_components":        pca_components,
+            "n_text_pca_components": n_text_pca_components,
+            "text_size":             os.path.getsize(TEXT_CACHE),
+            "image_size":            os.path.getsize(IMAGE_CACHE),
+        }
 
     def _pca_cache_valid():
-        required = [_X_reduced_cached, _pca_img_cached]
+        required = [_X_reduced_cached, _pca_img_cached, _pca_fingerprint]
         if text_encoder not in ("minilm", "clip"):
             required.append(_pca_text_cached)
         if not all(os.path.exists(p) for p in required):
             return False
-        # Invalidate if image pca_components changed
+        # Compare stored fingerprint with current inputs
+        try:
+            with open(_pca_fingerprint) as _f:
+                stored = json.load(_f)
+            if stored != _make_pca_fingerprint():
+                print(f"PCA fingerprint mismatch: {stored} != {_make_pca_fingerprint()}")
+                return False
+        except Exception as _e:
+            print(f"PCA fingerprint read failed: {_e}")
+            return False
+        # Sanity-check PCA pkl n_components match params
         try:
             with open(_pca_img_cached, "rb") as _f:
                 _cached_img = pickle.load(_f)
@@ -169,21 +191,12 @@ try:
                 return False
         except Exception:
             return False
-        # Invalidate if text n_components changed (CV only)
-        if text_encoder != "minilm" and _pca_text_cached and os.path.exists(_pca_text_cached):
-            try:
-                with open(_pca_text_cached, "rb") as _f:
-                    _cached_txt = pickle.load(_f)
-                if _cached_txt.n_components_ != n_text_pca_components:
-                    print(f"PCA cache stale: text n_components={_cached_txt.n_components_} "
-                          f"!= requested {n_text_pca_components}")
-                    return False
-            except Exception:
-                return False
-        # Cache is stale if either feature file is newer than X_reduced
-        x_mtime = os.path.getmtime(_X_reduced_cached)
-        return (os.path.getmtime(TEXT_CACHE) <= x_mtime and
-                os.path.getmtime(IMAGE_CACHE) <= x_mtime)
+        return True
+
+    def _write_pca_fingerprint():
+        with open(_pca_fingerprint, "w") as _f:
+            json.dump(_make_pca_fingerprint(), _f)
+        print(f"PCA fingerprint written -> {_pca_fingerprint}")
 
     if use_cache and _pca_cache_valid():
         print("PCA cache is valid — skipping PCA subprocess")
@@ -208,6 +221,7 @@ try:
         with open(pca_out) as _f:
             X_reduced_path, pca_img_path, pca_text_path = json.load(_f)
         os.unlink(pca_out)
+        _write_pca_fingerprint()  # stamp fingerprint so next run skips PCA
 
     X_reduced = np.load(X_reduced_path)
     with open(pca_img_path, "rb") as f:
