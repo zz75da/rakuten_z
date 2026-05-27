@@ -499,7 +499,55 @@ def push_feature_cache(**context):
     if not any_ok:
         print("Warning: both DVC remotes failed — feature cache not pushed this run")
 
-    return {"status": "ok", "push_results": results}
+    # Commit updated dvc.lock to git so a fresh clone can reproduce the run.
+    # Non-fatal: if git push fails (no credentials, detached HEAD, etc.) the
+    # binary files are already in DagsHub S3; only reproducibility tracking is
+    # affected.
+    git_ok = False
+    try:
+        # Configure git identity (required in the airflow container)
+        subprocess.run(["git", "config", "user.email", "airflow@rakuten-mlops"], cwd=dvc_root, capture_output=True)
+        subprocess.run(["git", "config", "user.name",  "Airflow DAG"],           cwd=dvc_root, capture_output=True)
+
+        add = subprocess.run(
+            ["git", "add", "dvc.lock"],
+            capture_output=True, text=True, cwd=dvc_root,
+        )
+        print(f"git add dvc.lock: rc={add.returncode} | {add.stderr.strip()[:200]}")
+
+        status = subprocess.run(
+            ["git", "status", "--short", "dvc.lock"],
+            capture_output=True, text=True, cwd=dvc_root,
+        )
+        if not status.stdout.strip():
+            print("dvc.lock unchanged — no git commit needed")
+            git_ok = True
+        else:
+            # Embed today's date so the commit message is always unique
+            from datetime import date as _date
+            msg = f"dvc: update lock after pipeline run {_date.today().isoformat()}"
+            commit_git = subprocess.run(
+                ["git", "commit", "-m", msg],
+                capture_output=True, text=True, cwd=dvc_root,
+            )
+            print(f"git commit: rc={commit_git.returncode} | {commit_git.stdout.strip()} | {commit_git.stderr.strip()[:200]}")
+
+            # Try both remotes; succeed if either works
+            for git_remote in ["origin", "dagshub"]:
+                push_git = subprocess.run(
+                    ["git", "push", git_remote, "HEAD"],
+                    capture_output=True, text=True, cwd=dvc_root,
+                )
+                print(f"git push {git_remote} HEAD: rc={push_git.returncode} | {push_git.stderr.strip()[:200]}")
+                if push_git.returncode == 0:
+                    git_ok = True
+                    break
+            if not git_ok:
+                print("Warning: git push failed on both remotes — dvc.lock not updated in git (binary files still in S3)")
+    except Exception as exc:
+        print(f"Warning: git commit/push of dvc.lock failed (non-fatal): {exc}")
+
+    return {"status": "ok", "push_results": results, "dvc_lock_git_pushed": git_ok}
 
 
 def evaluate_from_result(**context):
