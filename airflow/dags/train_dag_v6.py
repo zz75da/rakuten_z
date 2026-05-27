@@ -805,7 +805,7 @@ with DAG(
         soft_fail=False,
     )
 
-    # ── 4a. MiniLM training (parallel with mpnet) ─────────────────────────────
+    # ── 4a. MiniLM training (sequential before mpnet — train-api accepts one job at a time) ──
     trigger_minilm = PythonOperator(
         task_id="trigger_minilm_training",
         python_callable=trigger_minilm_training,
@@ -821,7 +821,7 @@ with DAG(
         soft_fail=False,
     )
 
-    # ── 4b. mpnet training (parallel with MiniLM) ────────────────────────────
+    # ── 4b. mpnet training (sequential after MiniLM — avoids 409 + memory pressure) ──
     trigger_mpnet = PythonOperator(
         task_id="trigger_mpnet_training",
         python_callable=trigger_mpnet_training,
@@ -934,14 +934,12 @@ with DAG(
         >> wait_for_encoding
     )
 
-    # Fan out: MiniLM and mpnet train in parallel (both share the same encoding run)
-    wait_for_encoding >> [trigger_minilm, trigger_mpnet]
-    trigger_minilm >> wait_for_minilm
-    trigger_mpnet  >> wait_for_mpnet
+    # Sequential: MiniLM first, then mpnet (train-api only runs one subprocess at a time;
+    # parallel would cause the second POST /train to get 409, and doubles memory pressure)
+    wait_for_encoding >> trigger_minilm >> wait_for_minilm >> trigger_mpnet >> wait_for_mpnet
 
-    # Fan in: both must complete before regression gate
     (
-        [wait_for_minilm, wait_for_mpnet]
+        wait_for_mpnet
         >> regression_gate
         >> push_cache
         >> [get_version, push_metrics]
