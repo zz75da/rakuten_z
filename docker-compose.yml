@@ -323,6 +323,9 @@ services:
       #MLFLOW_TRACKING_PASSWORD: ${DAGSHUB_TOKEN}
       ARTIFACTS_PATH: /app/data/artifacts
       LD_PRELOAD: "/usr/local/lib/libjemalloc.so.2"
+      # Encoder model names — must match what minilm-encoder used during encoding
+      MINILM_MODEL: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      MPNET_MODEL:  sentence-transformers/paraphrase-multilingual-mpnet-base-v2
       # Optimization for large dataset
       SKIP_DVC_PULL: "0"
     volumes:
@@ -516,9 +519,9 @@ services:
 
 
   # === minilm-encoder ===
-  # Lightweight FastAPI service (~50 MB idle).
-  # Loads SentenceTransformer only when POST /encode is called,
-  # then unloads the model after saving text_features_minilm.npy.
+  # Dual-encoder service: encodes with MiniLM-L12 then mpnet sequentially.
+  # Produces text_features_minilm.npy (384-d) and text_features_mpnet.npy (768-d).
+  # Models are loaded one at a time — peak RAM ~2 GB per model, then unloaded.
   minilm-encoder:
     build:
       context: ./minilm-encoder
@@ -531,12 +534,15 @@ services:
       - PYTHONUNBUFFERED=1
       - TRAIN_CSV_X_PATH=/app/data/X_train_update.csv
       - MINILM_CACHE_PATH=/app/data/feature_cache/text_features_minilm.npy
+      - MPNET_CACHE_PATH=/app/data/feature_cache/text_features_mpnet.npy
       - MINILM_BATCH_SIZE=32
-      - MINILM_MODEL=intfloat/multilingual-e5-small
+      - MINILM_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      - MPNET_MODEL=sentence-transformers/paraphrase-multilingual-mpnet-base-v2
     volumes:
       - ./data/X_train_update.csv:/app/data/X_train_update.csv:ro
       - ./data/feature_cache:/app/data/feature_cache
       - ./data/hf_cache:/root/.cache/huggingface   # persist model download across rebuilds
+      - ./params.yaml:/app/params.yaml:ro
     networks:
       rakuten_mlops_network:
         ipv4_address: 172.20.0.14

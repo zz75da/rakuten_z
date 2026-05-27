@@ -21,7 +21,7 @@ stages:
       - data/artifacts/text_vectorizer.pkl
 
   preprocess_text_minilm:
-    desc: "intfloat/multilingual-e5-small sentence embeddings (max_seq_length=128) → text_features_minilm.npy"
+    desc: "paraphrase-multilingual-MiniLM-L12-v2 sentence embeddings (384-d) → text_features_minilm.npy"
     cmd: python minilm-encoder/encode.py
     deps:
       - data/X_train_update.csv
@@ -29,6 +29,16 @@ stages:
       - minilm-encoder/app.py
     outs:
       - data/feature_cache/text_features_minilm.npy
+
+  preprocess_text_mpnet:
+    desc: "paraphrase-multilingual-mpnet-base-v2 sentence embeddings (768-d) → text_features_mpnet.npy"
+    cmd: python minilm-encoder/encode.py
+    deps:
+      - data/X_train_update.csv
+      - minilm-encoder/encode.py
+      - minilm-encoder/app.py
+    outs:
+      - data/feature_cache/text_features_mpnet.npy
 
   preprocess_text_clip:
     desc: "CLIP ViT-B/32 text encoder (openai/clip-vit-base-patch32) → text_features_clip.npy (512-d)"
@@ -82,6 +92,20 @@ stages:
       - train-api/services/pca_reducer.py
       - train-api/services/run_pca.py
 
+  reduce_features_mpnet:
+    desc: "IncrementalPCA: image 2048→384 (reuses pca_image.pkl) for mpnet 768-d text features (no text PCA)"
+    cmd: python train-api/services/run_pca.py
+              data/feature_cache/text_features_mpnet.npy
+              data/feature_cache/image_features.npy
+              mpnet
+              /tmp/pca_out_mpnet.json
+    deps:
+      - data/feature_cache/text_features_mpnet.npy
+      - data/feature_cache/image_features.npy
+      - data/artifacts/pca_image.pkl
+      - train-api/services/pca_reducer.py
+      - train-api/services/run_pca.py
+
   reduce_features_clip:
     desc: "IncrementalPCA: image 2048→384 (reuses pca_image.pkl) for CLIP 512-d text features"
     cmd: python train-api/services/run_pca.py
@@ -118,7 +142,7 @@ stages:
     # metrics logged to MLflow/DagsHub directly — no local JSON files produced
 
   train_minilm:
-    desc: "Train Dense(512→256→27) on 768-d features — registers rakuten_multimodal_minilm in MLflow"
+    desc: "Train Dense(1024→384→27) on 768-d features (384 MiniLM-L12 + 384 image PCA) — registers rakuten_multimodal_minilm in MLflow"
     cmd: python train-api/services/run_full_pipeline.py
               minilm_dvc minilm 10 32 false true
     deps:
@@ -131,6 +155,22 @@ stages:
     outs:
       - data/artifacts/neural_network_model_minilm.keras
       - data/artifacts/train_history_minilm.json
+    # metrics logged to MLflow/DagsHub directly — no local JSON files produced
+
+  train_mpnet:
+    desc: "Train Dense(1024→384→27) on 1152-d features (768 mpnet + 384 image PCA) — registers rakuten_multimodal_mpnet in MLflow"
+    cmd: python train-api/services/run_full_pipeline.py
+              mpnet_dvc mpnet 10 32 false true
+    deps:
+      - data/artifacts/pca_image.pkl
+      - data/feature_cache/text_features_mpnet.npy
+      - data/feature_cache/image_features.npy
+      - data/Y_train_CVw08PX.csv
+      - train-api/services/trainer.py
+      - train-api/services/run_full_pipeline.py
+    outs:
+      - data/artifacts/neural_network_model_mpnet.keras
+      - data/artifacts/train_history_mpnet.json
     # metrics logged to MLflow/DagsHub directly — no local JSON files produced
 
   train_clip:
@@ -152,11 +192,12 @@ stages:
   # ── Inference service ─────────────────────────────────────────────────────
 
   predict:
-    desc: "predict-api loads all three models — serves /predict-text?model=cv|minilm|clip"
+    desc: "predict-api loads all four models — serves /predict-text?model=cv|minilm|mpnet|clip"
     cmd: uvicorn app:app --host 0.0.0.0 --port 5003
     deps:
       - data/artifacts/neural_network_model.keras
       - data/artifacts/neural_network_model_minilm.keras
+      - data/artifacts/neural_network_model_mpnet.keras
       - data/artifacts/neural_network_model_clip.keras
       - data/artifacts/label_encoder.pkl
       - data/artifacts/text_vectorizer.pkl

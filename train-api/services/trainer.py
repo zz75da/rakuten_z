@@ -59,6 +59,8 @@ def _to_python_native(obj):
 def save_training_history(history, artifacts_dir=ARTIFACTS_DIR, text_encoder="countvectorizer"):
     if text_encoder == "minilm":
         filename = "train_history_minilm.json"
+    elif text_encoder == "mpnet":
+        filename = "train_history_mpnet.json"
     elif text_encoder == "clip":
         filename = "train_history_clip.json"
     else:
@@ -274,6 +276,7 @@ def build_and_train_model(
         # Log all hyperparameters in one call
         _effective_model_name = (
             f"{MLFLOW_MODEL_NAME}_minilm" if text_encoder == "minilm"
+            else f"{MLFLOW_MODEL_NAME}_mpnet" if text_encoder == "mpnet"
             else f"{MLFLOW_MODEL_NAME}_clip" if text_encoder == "clip"
             else f"{MLFLOW_MODEL_NAME}_cv"
         )
@@ -365,6 +368,8 @@ def build_and_train_model(
         # Save model — encoder-specific filename so no model overwrites another.
         if text_encoder == "minilm":
             model_filename = "neural_network_model_minilm.keras"
+        elif text_encoder == "mpnet":
+            model_filename = "neural_network_model_mpnet.keras"
         elif text_encoder == "clip":
             model_filename = "neural_network_model_clip.keras"
         else:
@@ -407,9 +412,15 @@ def build_and_train_model(
     # Register model in MLflow Model Registry
     _DESCRIPTIONS = {
         "minilm": (
-            "Rakuten multimodal product classifier — MiniLM/E5-small text encoder. "
-            "Text: intfloat/multilingual-e5-small, max_seq_length=128, normalize=True (384-dim). "
+            "Rakuten multimodal product classifier — paraphrase-multilingual-MiniLM-L12-v2. "
+            "Text: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 (384-dim, normalize=False). "
             "Image: ResNet50 → IncrementalPCA(384). Dense 1024→384→Dropout→27 classes."
+        ),
+        "mpnet": (
+            "Rakuten multimodal product classifier — paraphrase-multilingual-mpnet-base-v2. "
+            "Text: sentence-transformers/paraphrase-multilingual-mpnet-base-v2 (768-dim, normalize=False). "
+            "Image: ResNet50 → IncrementalPCA(384). Dense 1024→384→Dropout→27 classes. "
+            "Input dim: 1152 (768 text + 384 image)."
         ),
         "clip": (
             "Rakuten multimodal product classifier — CLIP ViT-B/32 text encoder. "
@@ -423,9 +434,11 @@ def build_and_train_model(
         ),
     }
     _desc = _DESCRIPTIONS.get(text_encoder, "Rakuten multimodal product classifier")
-    # Encoder-specific registry name so CV, CLIP, MiniLM appear as separate entries.
+    # Encoder-specific registry name so CV, CLIP, MiniLM, mpnet appear as separate entries.
     if text_encoder == "minilm":
         effective_model_name = f"{MLFLOW_MODEL_NAME}_minilm"
+    elif text_encoder == "mpnet":
+        effective_model_name = f"{MLFLOW_MODEL_NAME}_mpnet"
     elif text_encoder == "clip":
         effective_model_name = f"{MLFLOW_MODEL_NAME}_clip"
     else:

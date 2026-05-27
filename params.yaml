@@ -51,22 +51,34 @@ model:
   lr_factor: 0.5              # LR reduction multiplier (was 0.3 — gentler decay)
 
 model_minilm:
-  # Architecture overrides for MiniLM/E5-small encoder only.
+  # Architecture overrides for paraphrase-multilingual-MiniLM-L12-v2 encoder only.
   # Trainer applies these on top of model: when text_encoder="minilm".
   # CV and CLIP are unaffected.
   #
-  # Rationale: E5-small produces 384-d normalized embeddings (input_dim=768 total).
-  # MLflow history shows hidden_1=1024 is consistently best for MiniLM:
-  #   best run: 0.7395 val_acc (hidden_1=1024, hidden_2=384)  ← matches values below
-  #   current:  0.6703 val_acc (hidden_1=512, hidden_2=256)   ← wrong for this encoder
-  # CV/CLIP peak at hidden_1=512 (0.7717 and 0.8493) — reverting to 1024 regresses them ~3%.
+  # Rationale: MiniLM-L12 produces 384-d embeddings (input_dim=768 total with image PCA).
+  # Best run: 0.7213 val_acc (hidden_1=1024, hidden_2=384, normalize=False).
+  # CV/CLIP peak at hidden_1=512 (0.7717 and 0.8493) — 1024 is correct for MiniLM input size.
+  hidden_1: 1024
+  hidden_2: 384
+
+model_mpnet:
+  # Architecture overrides for paraphrase-multilingual-mpnet-base-v2 encoder only.
+  # Trainer applies these on top of model: when text_encoder="mpnet".
+  #
+  # Rationale: mpnet produces 768-d embeddings (input_dim=1152 total with 384-d image PCA).
+  # Larger input → keep hidden_1=1024 (wider net for richer representations).
   hidden_1: 1024
   hidden_2: 384
 
 minilm:
-  # MiniLM / E5 encoder settings — safe to experiment
-  normalize_embeddings: true   # E5 trained with cosine objective — normalisation is correct for this model
-                               # (previous false setting was for paraphrase-MiniLM; E5 requires normalisation)
+  # paraphrase-multilingual-MiniLM-L12-v2 encoder settings
+  normalize_embeddings: false  # raw embeddings for NN classification — scale info helps dense head
+                               # (E5-small needed true; paraphrase models work better with false)
+                               # best result 0.7213 was with normalize=false
+
+mpnet:
+  # paraphrase-multilingual-mpnet-base-v2 encoder settings
+  normalize_embeddings: false  # raw 768-d embeddings — same rationale as MiniLM above
 
 clip:
   # CLIP ViT-B/32 text encoder settings — safe to experiment

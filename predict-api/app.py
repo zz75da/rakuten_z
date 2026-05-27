@@ -80,9 +80,12 @@ GATE_API_URL = os.getenv("GATE_API_URL", "http://gate-api:5000")
 model_cv = None
 text_vectorizer: CountVectorizer = None
 pca_text: IncrementalPCA = None
-# MiniLM model
+# MiniLM-L12 model (paraphrase-multilingual-MiniLM-L12-v2, 384-d)
 model_minilm = None
 minilm_encoder = None
+# mpnet model (paraphrase-multilingual-mpnet-base-v2, 768-d)
+model_mpnet  = None
+mpnet_encoder = None
 # CLIP ViT-B/32 model
 model_clip     = None
 clip_tokenizer = None
@@ -91,6 +94,10 @@ clip_text_model = None
 label_encoder: LabelEncoder = None
 pca_image: IncrementalPCA = None
 resnet_model = None
+
+# Encoder model names — must match what was used during training / encoding
+_MINILM_MODEL_NAME = os.getenv("MINILM_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+_MPNET_MODEL_NAME  = os.getenv("MPNET_MODEL",  "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
 
 # --- Human-readable category names for each Rakuten prdtypecode ---
 CATEGORY_NAMES: dict[str, str] = {
@@ -169,8 +176,9 @@ def verify_jwt_token(authorization: str = Header(...)):
 
 # --- Load artifacts ---
 def load_artifacts():
-    global model_cv, model_minilm, model_clip, label_encoder, text_vectorizer, \
-           pca_text, pca_image, resnet_model, minilm_encoder, clip_tokenizer, clip_text_model
+    global model_cv, model_minilm, model_mpnet, model_clip, label_encoder, text_vectorizer, \
+           pca_text, pca_image, resnet_model, minilm_encoder, mpnet_encoder, \
+           clip_tokenizer, clip_text_model
     try:
         # --- Shared artifacts ---
         label_encoder = pickle.load(open(os.path.join(ARTIFACTS_PATH, "label_encoder.pkl"), "rb"))
@@ -196,9 +204,7 @@ def load_artifacts():
                 model_minilm = tf.keras.models.load_model(minilm_keras)
                 # Load encoder directly — no pkl, model cached by sentence-transformers
                 from sentence_transformers import SentenceTransformer
-                minilm_encoder = SentenceTransformer(
-                    "paraphrase-multilingual-MiniLM-L12-v2", device="cpu"
-                )
+                minilm_encoder = SentenceTransformer(_MINILM_MODEL_NAME, device="cpu")
                 print("✓ MiniLM model loaded")
             except Exception as e:
                 print(f"⚠ MiniLM model could not be loaded: {e}")
@@ -208,6 +214,23 @@ def load_artifacts():
             print("ℹ MiniLM model not found — run minilm-encoder then train with text_encoder=minilm")
             model_minilm = None
             minilm_encoder = None
+
+        # --- mpnet model (optional — only available after an mpnet training run) ---
+        mpnet_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_mpnet.keras")
+        if os.path.exists(mpnet_keras):
+            try:
+                model_mpnet = tf.keras.models.load_model(mpnet_keras)
+                from sentence_transformers import SentenceTransformer
+                mpnet_encoder = SentenceTransformer(_MPNET_MODEL_NAME, device="cpu")
+                print(f"✓ mpnet model loaded ({_MPNET_MODEL_NAME})")
+            except Exception as e:
+                print(f"⚠ mpnet model could not be loaded: {e}")
+                model_mpnet  = None
+                mpnet_encoder = None
+        else:
+            print("ℹ mpnet model not found — run minilm-encoder then train with text_encoder=mpnet")
+            model_mpnet  = None
+            mpnet_encoder = None
 
         # --- CLIP model (optional — only available after a clip training run) ---
         clip_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_clip.keras")
@@ -265,6 +288,11 @@ def extract_text_features_minilm(description: str):
     return embeddings.astype(np.float32)  # shape (1, 384)
 
 
+def extract_text_features_mpnet(description: str):
+    embeddings = mpnet_encoder.encode([description], convert_to_numpy=True)
+    return embeddings.astype(np.float32)  # shape (1, 768)
+
+
 def extract_text_features_clip(description: str):
     import torch
     inputs = clip_tokenizer(
@@ -286,6 +314,13 @@ def _resolve_model(model_key: str):
                 detail="MiniLM model not available — trigger the DAG to train it first",
             )
         return model_minilm, 384
+    if model_key == "mpnet":
+        if model_mpnet is None:
+            raise HTTPException(
+                status_code=503,
+                detail="mpnet model not available — trigger the DAG to train it first",
+            )
+        return model_mpnet, 768
     if model_key == "clip":
         if model_clip is None:
             raise HTTPException(
@@ -360,8 +395,9 @@ def startup_event():
 def health():
     return {
         "status": "ok",
-        "cv_model_loaded":     model_cv    is not None,
+        "cv_model_loaded":     model_cv     is not None,
         "minilm_model_loaded": model_minilm is not None,
+        "mpnet_model_loaded":  model_mpnet  is not None,
         "clip_model_loaded":   model_clip   is not None,
     }
 
@@ -371,16 +407,17 @@ def reload_artifacts_endpoint():
     """Reload all artifacts from disk — call after a new training run completes."""
     try:
         load_artifacts()
-        # Guard: at minimum the CV model + its PCA must be loaded
-        if model_cv is None and model_minilm is None and model_clip is None:
+        # Guard: at minimum one model must be loaded
+        if model_cv is None and model_minilm is None and model_mpnet is None and model_clip is None:
             raise RuntimeError("No model could be loaded from disk")
         if model_cv is not None and pca_text is None:
             raise RuntimeError("CV model loaded but pca_text.pkl is missing")
         return {
             "status": "reloaded",
-            "cv_model_loaded":   model_cv   is not None,
+            "cv_model_loaded":     model_cv     is not None,
             "minilm_model_loaded": model_minilm is not None,
-            "clip_model_loaded": model_clip  is not None,
+            "mpnet_model_loaded":  model_mpnet  is not None,
+            "clip_model_loaded":   model_clip   is not None,
             "pca_text_components":  int(pca_text.n_components_) if pca_text else None,
             "pca_image_components": int(pca_image.n_components_),
         }
@@ -393,6 +430,8 @@ def predict_text(req: TextRequest, user: dict = Depends(verify_jwt_token)):
     active_model, text_dim = _resolve_model(req.model)
     if req.model == "minilm":
         text_features = extract_text_features_minilm(req.description)
+    elif req.model == "mpnet":
+        text_features = extract_text_features_mpnet(req.description)
     elif req.model == "clip":
         text_features = extract_text_features_clip(req.description)
     else:
@@ -444,6 +483,8 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
     if req.description:
         if req.model == "minilm":
             text_features = extract_text_features_minilm(req.description)
+        elif req.model == "mpnet":
+            text_features = extract_text_features_mpnet(req.description)
         elif req.model == "clip":
             text_features = extract_text_features_clip(req.description)
         else:

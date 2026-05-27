@@ -32,6 +32,7 @@ ENCODING_MAX_WAIT      = int(os.environ.get("ENCODING_MAX_WAIT_SECONDS",  16 * 3
 _CV_JOB_ID_VAR     = "rakuten_cv_training_job_id"
 _CLIP_JOB_ID_VAR   = "rakuten_clip_training_job_id"
 _MINILM_JOB_ID_VAR = "rakuten_minilm_training_job_id"
+_MPNET_JOB_ID_VAR  = "rakuten_mpnet_training_job_id"
 
 # Quality gate — fail before wasting 10 h of training on a corrupted CSV
 _MIN_DATASET_ROWS = 80_000
@@ -40,6 +41,7 @@ _MIN_DATASET_ROWS = 80_000
 _CV_BEST_VAL_ACC_VAR     = "rakuten_cv_best_val_acc"
 _CLIP_BEST_VAL_ACC_VAR   = "rakuten_clip_best_val_acc"
 _MINILM_BEST_VAL_ACC_VAR = "rakuten_minilm_best_val_acc"
+_MPNET_BEST_VAL_ACC_VAR  = "rakuten_mpnet_best_val_acc"
 _REGRESSION_WARN_PCT     = 2.0   # print warning if either model drops > 2 %
 _REGRESSION_FAIL_PCT     = 5.0   # block DVC push only if BOTH models drop > 5 % simultaneously
 
@@ -191,6 +193,10 @@ def trigger_minilm_encoding(**context):
 
 def trigger_minilm_training(**context):
     return _trigger_training_job(_MINILM_JOB_ID_VAR, "minilm", context)
+
+
+def trigger_mpnet_training(**context):
+    return _trigger_training_job(_MPNET_JOB_ID_VAR, "mpnet", context)
 
 
 class TrainingCompleteSensor(BaseSensorOperator):
@@ -376,13 +382,14 @@ def get_model_version(**context):
 
 
 def push_training_metrics(**context):
-    """Push training metrics for both CV and MiniLM to Prometheus Pushgateway."""
+    """Push training metrics for CV, CLIP, MiniLM, and mpnet to Prometheus Pushgateway."""
     from dateutil import parser as dtparser
 
     runs = [
         ("wait_for_cv_training",    "countvectorizer"),
         ("wait_for_clip_training",  "clip"),
         ("wait_for_minilm_training", "minilm"),
+        ("wait_for_mpnet_training",  "mpnet"),
     ]
     for task_id, encoder in runs:
         result  = context["ti"].xcom_pull(task_ids=task_id, key="training_result") or {}
@@ -496,11 +503,12 @@ def push_feature_cache(**context):
 
 
 def evaluate_from_result(**context):
-    """Log evaluation results for both CV and MiniLM training runs."""
+    """Log evaluation results for CV, CLIP, MiniLM, and mpnet training runs."""
     for task_id, label in [
         ("wait_for_cv_training",    "CountVectorizer"),
         ("wait_for_clip_training",  "CLIP ViT-B/32"),
-        ("wait_for_minilm_training", "MiniLM"),
+        ("wait_for_minilm_training", "MiniLM-L12"),
+        ("wait_for_mpnet_training",  "mpnet-base-v2"),
     ]:
         result = context["ti"].xcom_pull(task_ids=task_id, key="training_result") or {}
         final   = result.get("final_metrics", {})
@@ -532,6 +540,7 @@ def write_run_summary(**context):
     cv_result     = ti.xcom_pull(task_ids="wait_for_cv_training",    key="training_result") or {}
     clip_result   = ti.xcom_pull(task_ids="wait_for_clip_training",  key="training_result") or {}
     ml_result     = ti.xcom_pull(task_ids="wait_for_minilm_training", key="training_result") or {}
+    mpnet_result  = ti.xcom_pull(task_ids="wait_for_mpnet_training",  key="training_result") or {}
     model_version = ti.xcom_pull(task_ids="get_model_version",       key="model_version") or "N/A"
 
     def _model_lines(label, result):
@@ -553,7 +562,8 @@ def write_run_summary(**context):
         "",
     ] + _model_lines("CV  (countvectorizer)", cv_result) \
       + [""] + _model_lines("CLIP ViT-B/32", clip_result) \
-      + [""] + _model_lines("MiniLM", ml_result)
+      + [""] + _model_lines("MiniLM-L12", ml_result) \
+      + [""] + _model_lines("mpnet-base-v2", mpnet_result)
 
     block = "\n".join(block_lines)
 
@@ -582,6 +592,7 @@ def check_regression_gate(**context):
         ("countvectorizer", "wait_for_cv_training",    _CV_BEST_VAL_ACC_VAR),
         ("clip",            "wait_for_clip_training",   _CLIP_BEST_VAL_ACC_VAR),
         ("minilm",          "wait_for_minilm_training", _MINILM_BEST_VAL_ACC_VAR),
+        ("mpnet",           "wait_for_mpnet_training",  _MPNET_BEST_VAL_ACC_VAR),
     ]
 
     regressions = {}
@@ -794,7 +805,7 @@ with DAG(
         soft_fail=False,
     )
 
-    # ── 4. MiniLM training ────────────────────────────────────────────────────
+    # ── 4a. MiniLM training (parallel with mpnet) ─────────────────────────────
     trigger_minilm = PythonOperator(
         task_id="trigger_minilm_training",
         python_callable=trigger_minilm_training,
@@ -804,6 +815,22 @@ with DAG(
     wait_for_minilm = TrainingCompleteSensor(
         task_id="wait_for_minilm_training",
         job_var_key=_MINILM_JOB_ID_VAR,
+        mode="reschedule",
+        poke_interval=300,
+        timeout=TRAINING_MAX_WAIT,
+        soft_fail=False,
+    )
+
+    # ── 4b. mpnet training (parallel with MiniLM) ────────────────────────────
+    trigger_mpnet = PythonOperator(
+        task_id="trigger_mpnet_training",
+        python_callable=trigger_mpnet_training,
+        provide_context=True,
+    )
+
+    wait_for_mpnet = TrainingCompleteSensor(
+        task_id="wait_for_mpnet_training",
+        job_var_key=_MPNET_JOB_ID_VAR,
         mode="reschedule",
         poke_interval=300,
         timeout=TRAINING_MAX_WAIT,
@@ -852,7 +879,7 @@ with DAG(
             "BASE=rakuten_multimodal && "
             "if [ -z \"$DAGSHUB_USER\" ]; then echo 'DAGSHUB_USER not set — skipping'; exit 0; fi && "
             "FAILED=0 && "
-            "for VARIANT in _cv _clip _minilm; do "
+            "for VARIANT in _cv _clip _minilm _mpnet; do "
             "  MODEL=\"${BASE}${VARIANT}\" && "
             "  URL=\"https://dagshub.com/${DAGSHUB_USER}/rakuten_z.mlflow/api/2.0/mlflow/registered-models/get?name=${MODEL}\" && "
             "  response=$(curl -s -u \"${DAGSHUB_USER}:${DAGSHUB_TOKEN}\" \"$URL\") && "
@@ -869,10 +896,11 @@ with DAG(
     success_message = BashOperator(
         task_id="success_message",
         bash_command=(
-            "echo '=== MLOps Pipeline Completed — All 3 Models Trained ===' && "
+            "echo '=== MLOps Pipeline Completed — All 4 Models Trained ===' && "
             "echo 'CV model    : artifacts/neural_network_model.keras' && "
             "echo 'CLIP model  : artifacts/neural_network_model_clip.keras' && "
             "echo 'MiniLM model: artifacts/neural_network_model_minilm.keras' && "
+            "echo 'mpnet model : artifacts/neural_network_model_mpnet.keras' && "
             "echo 'Grafana  : http://localhost:3000' && "
             "echo 'Streamlit: http://localhost:8501' && "
             "echo 'Run log  : /opt/airflow/data/dag_runs.log  (last 3 runs)' && "
@@ -889,6 +917,7 @@ with DAG(
     )
 
     # --- Task Dependencies ---
+    # Linear chain up to encoding (CV → CLIP encode+train → MiniLM/mpnet encode)
     (
         check_data
         >> [wait_for_gate_api, wait_for_train_api, wait_for_predict_api,
@@ -903,8 +932,16 @@ with DAG(
         >> wait_for_clip
         >> start_encoding
         >> wait_for_encoding
-        >> trigger_minilm
-        >> wait_for_minilm
+    )
+
+    # Fan out: MiniLM and mpnet train in parallel (both share the same encoding run)
+    wait_for_encoding >> [trigger_minilm, trigger_mpnet]
+    trigger_minilm >> wait_for_minilm
+    trigger_mpnet  >> wait_for_mpnet
+
+    # Fan in: both must complete before regression gate
+    (
+        [wait_for_minilm, wait_for_mpnet]
         >> regression_gate
         >> push_cache
         >> [get_version, push_metrics]

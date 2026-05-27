@@ -96,6 +96,13 @@ try:
                 "MiniLM feature cache not found — trigger the DAG to run minilm encoding first."
             )
         text_vectorizer = None
+    elif text_encoder == "mpnet":
+        TEXT_CACHE = "/app/data/feature_cache/text_features_mpnet.npy"
+        if not os.path.exists(TEXT_CACHE):
+            raise RuntimeError(
+                "mpnet feature cache not found — trigger the DAG to run minilm/mpnet encoding first."
+            )
+        text_vectorizer = None
     elif text_encoder == "clip":
         TEXT_CACHE = "/app/data/feature_cache/text_features_clip.npy"
         if not os.path.exists(TEXT_CACHE):
@@ -152,7 +159,7 @@ try:
     # Encoder-specific X_reduced path — prevents CV/CLIP/MiniLM caches colliding
     _X_reduced_cached    = os.path.join(_ARTIFACTS, f"X_reduced_{text_encoder}.npy")
     _pca_img_cached      = os.path.join(_ARTIFACTS, "pca_image.pkl")
-    _pca_text_cached     = os.path.join(_ARTIFACTS, "pca_text.pkl") if text_encoder not in ("minilm", "clip") else None
+    _pca_text_cached     = os.path.join(_ARTIFACTS, "pca_text.pkl") if text_encoder not in ("minilm", "clip", "mpnet") else None
     _pca_fingerprint     = os.path.join(_ARTIFACTS, f"pca_fingerprint_{text_encoder}.json")
 
     def _make_pca_fingerprint() -> dict:
@@ -167,7 +174,7 @@ try:
 
     def _pca_cache_valid():
         required = [_X_reduced_cached, _pca_img_cached, _pca_fingerprint]
-        if text_encoder not in ("minilm", "clip"):
+        if text_encoder not in ("minilm", "clip", "mpnet"):
             required.append(_pca_text_cached)
         if not all(os.path.exists(p) for p in required):
             return False
