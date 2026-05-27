@@ -89,8 +89,8 @@ def reduce_features(
     pca_text = None
     pca_text_path = None
 
-    if text_encoder in ("minilm", "clip"):
-        # MiniLM (384-d) and CLIP (512-d) embeddings are already compact — no PCA needed
+    if text_encoder in ("minilm", "clip", "mpnet"):
+        # MiniLM (384-d), CLIP (512-d), and mpnet (768-d) embeddings are already compact — no PCA needed
         logging.info(f"{text_encoder} encoder: skipping text PCA, using embeddings directly")
         text_features_reduced = text_features
         logging.info(f"{text_encoder} text features shape: {text_features_reduced.shape}")
