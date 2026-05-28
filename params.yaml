@@ -64,11 +64,20 @@ model_minilm:
 model_mpnet:
   # Architecture overrides for paraphrase-multilingual-mpnet-base-v2 encoder only.
   # Trainer applies these on top of model: when text_encoder="mpnet".
+  # Any key here overrides the matching key in model: above.
   #
-  # Rationale: mpnet produces 768-d embeddings (input_dim=1152 total with 384-d image PCA).
-  # Larger input → keep hidden_1=1024 (wider net for richer representations).
-  hidden_1: 1024
-  hidden_2: 384
+  # input_dim = 768 (mpnet text) + 384 (image PCA) = 1152
+  #
+  # Run 1 result: hidden_1=1024 < input_dim=1152 → immediate lossy bottleneck;
+  #              overfit_gap=0.1481 (largest of all models); best_val_acc=0.7719
+  #
+  # Run 2 (current): hidden_1=1152 — no bottleneck in first layer, matches input dim.
+  #   dropout_1: 0.5 / dropout_2: 0.4 — slightly stronger regularisation to
+  #   address the larger overfit gap vs CV/CLIP.
+  hidden_1: 1152              # = input_dim; no information lost before first activation
+  hidden_2: 384               # gradual reduction: 1152 → 384 → 27
+  dropout_1: 0.5              # up from 0.45 — combat 14.8% overfit gap
+  dropout_2: 0.4              # up from 0.35
 
 minilm:
   # paraphrase-multilingual-MiniLM-L12-v2 encoder settings
