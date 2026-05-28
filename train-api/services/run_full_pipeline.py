@@ -113,6 +113,9 @@ try:
     else:
         TEXT_CACHE = "/app/data/feature_cache/text_features.npy"
         VECTORIZER_CACHE = "/app/data/artifacts/text_vectorizer.pkl"
+        from sklearn.feature_extraction.text import TfidfVectorizer as _TfidfVectorizer
+        _OCR_CACHE      = "/app/data/feature_cache/ocr_text.csv"
+        _TEXT_META      = "/app/data/feature_cache/text_features_meta.json"
 
         def _text_cache_valid():
             if not (os.path.exists(TEXT_CACHE) and os.path.exists(VECTORIZER_CACHE)):
@@ -120,13 +123,34 @@ try:
             try:
                 with open(VECTORIZER_CACHE, "rb") as _f:
                     _vec = pickle.load(_f)
+                # Reject stale cache if vectorizer class changed (e.g. CountVectorizer → TfidfVectorizer)
+                if not isinstance(_vec, _TfidfVectorizer):
+                    print(f"Text cache stale: cached {type(_vec).__name__} but code uses TfidfVectorizer")
+                    return False
                 cached_vocab = len(_vec.vocabulary_)
                 if cached_vocab != cv_max_features:
                     print(f"Text cache stale: vocab={cached_vocab} != requested {cv_max_features}")
                     return False
+                # Reject stale cache if OCR availability changed since cache was built
+                ocr_now = os.path.exists(_OCR_CACHE)
+                if os.path.exists(_TEXT_META):
+                    with open(_TEXT_META) as _mf:
+                        meta = json.load(_mf)
+                    if meta.get("ocr_used") != ocr_now:
+                        print(f"Text cache stale: ocr_used changed "
+                              f"({meta.get('ocr_used')} → {ocr_now})")
+                        return False
+                elif ocr_now:
+                    # OCR cache exists but text was built without it
+                    print("Text cache stale: OCR cache found but text was cached without OCR")
+                    return False
                 return True
             except Exception:
                 return False
+
+        def _write_text_meta():
+            with open(_TEXT_META, "w") as _mf:
+                json.dump({"ocr_used": os.path.exists(_OCR_CACHE)}, _mf)
 
         if use_cache and _text_cache_valid():
             with open(VECTORIZER_CACHE, "rb") as f:
@@ -136,6 +160,7 @@ try:
                 train_data, max_features=cv_max_features
             )
             np.save(TEXT_CACHE, text_features)
+            _write_text_meta()   # record whether OCR was used so cache stays consistent
 
     # --- Image features ---
     _write_step("image_features")

@@ -10,6 +10,9 @@ RUN apt-get update && apt-get install -y \
     g++ \
     curl \
     libjemalloc2 \
+    tesseract-ocr \
+    tesseract-ocr-fra \
+    tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Copie EXPLICITE du requirements

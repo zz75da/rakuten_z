@@ -7,12 +7,13 @@ import numpy as np
 import pandas as pd
 import psutil
 import spacy
-from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from time import time
 
 # === Constants ===
 TEXT_FEATURES_FILE   = "data/feature_cache/text_features.npy"
 TEXT_VECTORIZER_FILE = "data/text_vectorizer.pkl"
+OCR_CACHE            = "/app/data/feature_cache/ocr_text.csv"
 BATCH_SIZE = 5000
 N_CORES    = int(os.getenv("SPACY_N_PROCESS", "1"))
 
@@ -80,19 +81,46 @@ def _clean_text(text) -> str:
 
 def _build_combined_text(data: pd.DataFrame) -> list[str]:
     """
-    Concatenate designation (100% populated product title) with
-    cleaned description (available for 65% of products).
-    Produces richer text than description alone (35% null, HTML entities).
+    Concatenate designation + description + OCR text (if cache exists).
+
+    Sources:
+      - designation : 100% populated product title
+      - description : available for ~65% of products (35% null, HTML entities)
+      - ocr_text    : text extracted from product images by run_ocr_extraction.py
+                      (optional — pipeline works without it; run once to populate)
     """
     desig = data["designation"].fillna("").apply(_clean_text)
     descr = data["description"].fillna("").apply(_clean_text)
-    return (desig + " " + descr).str.strip().tolist()
+    combined = desig + " " + descr
+
+    if os.path.exists(OCR_CACHE):
+        try:
+            ocr_df = pd.read_csv(
+                OCR_CACHE,
+                dtype={"imageid": int, "productid": int, "ocr_text": str},
+            ).fillna("")
+            merged = data[["imageid", "productid"]].reset_index(drop=True).merge(
+                ocr_df[["imageid", "productid", "ocr_text"]],
+                on=["imageid", "productid"],
+                how="left",
+            )
+            ocr_col = merged["ocr_text"].fillna("").apply(_clean_text)
+            combined = combined + " " + ocr_col
+            n_nonempty = (ocr_col.str.strip() != "").sum()
+            logging.info(
+                f"OCR text merged from {OCR_CACHE} "
+                f"({n_nonempty:,}/{len(data):,} images had extractable text)"
+            )
+        except Exception as e:
+            logging.warning(f"OCR cache read failed, skipping OCR text: {e}")
+
+    return combined.str.strip().tolist()
 
 
 @track_time
 def extract_text_features(data: pd.DataFrame, max_features: int = 10000):
     """
-    Vectorize product text using French spaCy lemmatization + CountVectorizer.
+    Vectorize product text using French spaCy lemmatization + TF-IDF (TfidfVectorizer).
 
     Improvements over original English-only pipeline:
     - Input: designation + description (vs description-only with 35% nulls)
@@ -126,11 +154,12 @@ def extract_text_features(data: pd.DataFrame, max_features: int = 10000):
     data = data.copy()
     data["processed_description"] = processed
 
-    logging.info(f"Vectorizing with CountVectorizer(max_features={max_features}, ngram_range=(1,2))...")
-    vectorizer = CountVectorizer(
+    logging.info(f"Vectorizing with TfidfVectorizer(max_features={max_features}, ngram_range=(1,2), sublinear_tf=True)...")
+    vectorizer = TfidfVectorizer(
         max_features=max_features,
         ngram_range=(1, 2),   # unigrams + bigrams: "jeu", "jeu video", "livre enfant"
         min_df=2,             # ignore tokens appearing in only 1 document
+        sublinear_tf=True,    # apply log(1+tf) instead of raw tf — compresses high-freq tokens
     )
     text_features = vectorizer.fit_transform(processed).toarray().astype(np.float32)
     log_memory("After vectorization")

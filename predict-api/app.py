@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from prometheus_client import make_asgi_app, Counter, Histogram, Gauge
 from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import IncrementalPCA
-from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
 import base64
 import cv2
 from pydantic import BaseModel
@@ -76,9 +76,9 @@ ARTIFACTS_PATH = os.getenv("ARTIFACTS_PATH") or "/app/data/artifacts"
 GATE_API_URL = os.getenv("GATE_API_URL", "http://gate-api:5000")
 
 # --- Globals ---
-# CountVectorizer model
+# TF-IDF vectorizer model (upgraded from CountVectorizer — same .transform() API)
 model_cv = None
-text_vectorizer: CountVectorizer = None
+text_vectorizer: TfidfVectorizer = None
 pca_text: IncrementalPCA = None
 # MiniLM-L12 model (paraphrase-multilingual-MiniLM-L12-v2, 384-d)
 model_minilm = None
