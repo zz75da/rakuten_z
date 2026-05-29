@@ -635,23 +635,55 @@ def show_prediction_page():
         st.rerun()
 
     st.sidebar.subheader("MLflow Models")
-    for _mname in ["rakuten_multimodal_cv", "rakuten_multimodal_clip", "rakuten_multimodal_minilm"]:
+    for _mname in ["rakuten_multimodal_cv", "rakuten_multimodal_clip",
+                   "rakuten_multimodal_minilm", "rakuten_multimodal_mpnet"]:
         _vers = list_model_versions(_mname)
         _latest = _vers[0] if _vers else "—"
         st.sidebar.caption(f"{_mname}: v{_latest}")
 
-    st.sidebar.subheader("Text encoder")
-    encoder_options = {
-        "CountVectorizer + PCA (512-d)": "cv",
-        "CLIP ViT-B/32 (512-d)":         "clip",
-        "MiniLM multilingual (384-d)":   "minilm",
+    # Read best val_accuracy for each encoder from training history
+    _enc_history_paths = {
+        "cv":     Path("/app/data/artifacts/train_history.json"),
+        "clip":   Path("/app/data/artifacts/train_history_clip.json"),
+        "minilm": Path("/app/data/artifacts/train_history_minilm.json"),
+        "mpnet":  Path("/app/data/artifacts/train_history_mpnet.json"),
     }
-    encoder_label    = st.sidebar.radio("Text model", list(encoder_options.keys()), index=0)
-    selected_encoder = encoder_options[encoder_label]
-    if selected_encoder == "minilm":
-        st.sidebar.info("paraphrase-multilingual-MiniLM-L12-v2 — 384 dims, multilingual.")
-    elif selected_encoder == "clip":
-        st.sidebar.info("openai/clip-vit-base-patch32 — 512 dims, L2-normalised, English-focused.")
+    _enc_best_acc = {}
+    for _enc, _hp in _enc_history_paths.items():
+        try:
+            _vas = json.loads(_hp.read_text()).get("val_accuracy", [])
+            if _vas:
+                _enc_best_acc[_enc] = max(_vas)
+        except Exception:
+            pass
+
+    def _acc_tag(enc):
+        return f" · {_enc_best_acc[enc]:.1%}" if enc in _enc_best_acc else ""
+
+    _encoder_options = {
+        f"TF-IDF + OCR + PCA (512-d){_acc_tag('cv')}":     "cv",
+        f"CLIP ViT-B/32 (512-d){_acc_tag('clip')}":         "clip",
+        f"MiniLM multilingual (384-d){_acc_tag('minilm')}": "minilm",
+        f"mpnet multilingual (768-d){_acc_tag('mpnet')}":   "mpnet",
+    }
+
+    # Default to the encoder with highest recorded val_accuracy
+    _best_enc = max(_enc_best_acc, key=_enc_best_acc.get) if _enc_best_acc else "cv"
+    _default_idx = list(_encoder_options.values()).index(_best_enc)
+
+    st.sidebar.subheader("Text encoder")
+    encoder_label    = st.sidebar.radio(
+        "Text model", list(_encoder_options.keys()), index=_default_idx
+    )
+    selected_encoder = _encoder_options[encoder_label]
+
+    _enc_info = {
+        "cv":     "TF-IDF + OCR + spaCy lemmatisation → IncrementalPCA (512-d).",
+        "clip":   "openai/clip-vit-base-patch32 — 512 dims, L2-normalised, English-focused.",
+        "minilm": "paraphrase-multilingual-MiniLM-L12-v2 — 384 dims, multilingual.",
+        "mpnet":  "paraphrase-multilingual-mpnet-base-v2 — 768 dims, multilingual.",
+    }
+    st.sidebar.info(_enc_info[selected_encoder])
 
     st.subheader("Single Prediction")
     description    = st.text_input("Product description")
