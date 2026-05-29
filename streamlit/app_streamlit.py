@@ -197,13 +197,13 @@ def show_presentation_page():
     """, unsafe_allow_html=True)
 
     # Key metrics
-    c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
-    _cv_acc_str = _clip_acc_str = _ml_acc_str = "—"
-    _cv_epoch_str = _clip_epoch_str = _ml_epoch_str = "—"
+    _cv_acc_str = _clip_acc_str = _ml_acc_str = _mpnet_acc_str = "—"
+    _cv_epoch_str = _clip_epoch_str = _ml_epoch_str = _mpnet_epoch_str = "—"
     for _hp, _enc in [
         (Path("/app/data/artifacts/train_history.json"),        "cv"),
         (Path("/app/data/artifacts/train_history_clip.json"),   "clip"),
         (Path("/app/data/artifacts/train_history_minilm.json"), "minilm"),
+        (Path("/app/data/artifacts/train_history_mpnet.json"),  "mpnet"),
     ]:
         if _hp.exists():
             try:
@@ -213,22 +213,27 @@ def show_presentation_page():
                     _best = f"{max(_vas):.1%}"
                     _ep   = str(len(_vas))
                     if _enc == "cv":
-                        _cv_acc_str,   _cv_epoch_str   = _best, _ep
+                        _cv_acc_str,    _cv_epoch_str    = _best, _ep
                     elif _enc == "clip":
-                        _clip_acc_str, _clip_epoch_str = _best, _ep
+                        _clip_acc_str,  _clip_epoch_str  = _best, _ep
+                    elif _enc == "minilm":
+                        _ml_acc_str,    _ml_epoch_str    = _best, _ep
                     else:
-                        _ml_acc_str,   _ml_epoch_str   = _best, _ep
+                        _mpnet_acc_str, _mpnet_epoch_str = _best, _ep
             except Exception:
                 pass
 
-    c1.metric("Product classes",     "27",             help="Rakuten categories to predict")
-    c2.metric("Image features",      "384",            help="ResNet50(2048) → PCA(384)")
-    c3.metric("CV best val acc",     _cv_acc_str,      help="CountVectorizer + PCA — 84 916 samples")
-    c4.metric("CV epochs",           _cv_epoch_str,    help="Epochs trained (early stopping)")
-    c5.metric("CLIP best val acc",   _clip_acc_str,    help="CLIP ViT-B/32 512-dim — 84 916 samples")
-    c6.metric("CLIP epochs",         _clip_epoch_str,  help="Epochs trained (early stopping)")
-    c7.metric("MiniLM best val acc", _ml_acc_str,      help="MiniLM 384-dim — 84 916 samples")
-    c8.metric("MiniLM epochs",       _ml_epoch_str,    help="Epochs trained (early stopping)")
+    c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns(10)
+    c1.metric("Product classes",      "27",              help="Rakuten categories to predict")
+    c2.metric("Image features",       "384",             help="ResNet50(2048) → PCA(384)")
+    c3.metric("TF-IDF best val acc",  _cv_acc_str,       help="TF-IDF + OCR + PCA — 84 916 samples")
+    c4.metric("TF-IDF epochs",        _cv_epoch_str,     help="Epochs trained (macro F1 early stopping)")
+    c5.metric("CLIP best val acc",    _clip_acc_str,     help="CLIP ViT-B/32 512-dim — 84 916 samples")
+    c6.metric("CLIP epochs",          _clip_epoch_str,   help="Epochs trained (macro F1 early stopping)")
+    c7.metric("MiniLM best val acc",  _ml_acc_str,       help="MiniLM 384-dim — 84 916 samples")
+    c8.metric("MiniLM epochs",        _ml_epoch_str,     help="Epochs trained (macro F1 early stopping)")
+    c9.metric("mpnet best val acc",   _mpnet_acc_str,    help="mpnet 768-dim — 84 916 samples")
+    c10.metric("mpnet epochs",        _mpnet_epoch_str,  help="Epochs trained (macro F1 early stopping)")
     st.divider()
 
     tab_ml, tab_ops, tab_stack, tab_services = st.tabs([
@@ -246,9 +251,9 @@ def show_presentation_page():
                         border-radius:8px;padding:18px 20px">
                 <b style="color:#e94560">Text branch — 3 encoders</b><br><br>
                 <code style="color:#a8b2d8">description</code> <span style="color:#6d7a9f">(raw string)</span><br><br>
-                <span style="color:#e94560;font-size:12px;font-weight:600">Encoder A — CountVectorizer</span><br>
-                <span style="color:#6d7a9f">&nbsp;&nbsp;SpaCy lemmatisation + stopword removal (single-pass)</span><br>
-                <span style="color:#6d7a9f">&nbsp;&nbsp;CountVectorizer</span> <code>max_features=10000</code><br>
+                <span style="color:#e94560;font-size:12px;font-weight:600">Encoder A — TF-IDF + OCR</span><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;SpaCy lemmatisation + stopword removal + OCR text</span><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;TfidfVectorizer</span> <code>max_features=10000, sublinear_tf=True</code><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;IncrementalPCA</span> <code>n_components=512</code><br>
                 <b style="color:#28a745">&nbsp;&nbsp;output: 1 × 512</b><br><br>
                 <span style="color:#7c3aed;font-size:12px;font-weight:600">Encoder B — CLIP ViT-B/32</span><br>
@@ -338,9 +343,10 @@ def show_presentation_page():
         st.markdown("#### Training curves")
         _artifacts_base = Path("/app/data/artifacts")
         _hist_configs = [
-            ("CountVectorizer + PCA",           _artifacts_base / "train_history.json",        "#e94560"),
+            ("TF-IDF + OCR + PCA",              _artifacts_base / "train_history.json",        "#e94560"),
             ("CLIP ViT-B/32",                   _artifacts_base / "train_history_clip.json",   "#7c3aed"),
             ("MiniLM (paraphrase-multilingual)", _artifacts_base / "train_history_minilm.json", "#a8b2d8"),
+            ("mpnet (paraphrase-multilingual)",  _artifacts_base / "train_history_mpnet.json",  "#f59e0b"),
         ]
         _chart_cols = st.columns(3)
         _any_chart  = False

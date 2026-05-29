@@ -11,10 +11,11 @@ stages:
   # ── Text encoding ─────────────────────────────────────────────────────────
 
   preprocess_text_cv:
-    desc: "SpaCy lemmatisation + CountVectorizer(5000) → text_features.npy + text_vectorizer.pkl"
+    desc: "SpaCy lemmatisation + TfidfVectorizer(10000, sublinear_tf=True) + OCR text → text_features.npy + text_vectorizer.pkl"
     cmd: python train-api/services/preprocess_text.py
     deps:
       - data/X_train_update.csv
+      - data/feature_cache/ocr_text.csv
       - train-api/services/preprocess_text.py
     outs:
       - data/feature_cache/text_features.npy
@@ -123,7 +124,7 @@ stages:
   # ── Model training ────────────────────────────────────────────────────────
 
   train_cv:
-    desc: "Train Dense(512→256→27) on 896-d features (512 CV text PCA + 384 image PCA) — registers rakuten_multimodal_cv in MLflow"
+    desc: "Train Dense(512→256→27) on 896-d features (512 TF-IDF+OCR PCA + 384 image PCA) — focal loss γ=2, macro F1 early stopping — registers rakuten_multimodal_cv in MLflow"
     cmd: python train-api/services/run_full_pipeline.py
               cv_dvc countvectorizer 10 32 false true
     deps:

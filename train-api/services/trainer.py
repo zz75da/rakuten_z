@@ -289,7 +289,8 @@ def build_and_train_model(
         # gamma=0 reduces to standard crossentropy; gamma=2 focuses on hard/minority samples.
         # Captures n_classes via closure — defined here after label_encoder is fit.
         def _focal_loss_fn(y_true, y_pred):
-            y_true_int = tf.cast(tf.squeeze(y_true, axis=-1) if len(y_true.shape) > 1 else y_true, tf.int32)
+            # tf.reshape handles both (batch,) and (batch,1) shapes safely in graph mode
+            y_true_int = tf.reshape(tf.cast(y_true, tf.int32), [-1])
             y_pred_clipped = tf.clip_by_value(y_pred, 1e-7, 1.0 - 1e-7)
             y_true_one_hot = tf.one_hot(y_true_int, depth=n_classes)
             p_t = tf.reduce_sum(y_true_one_hot * y_pred_clipped, axis=-1)
@@ -476,8 +477,8 @@ def build_and_train_model(
         "mpnet": (
             "Rakuten multimodal product classifier — paraphrase-multilingual-mpnet-base-v2. "
             "Text: sentence-transformers/paraphrase-multilingual-mpnet-base-v2 (768-dim, normalize=False). "
-            "Image: ResNet50 → IncrementalPCA(384). Dense 1024→384→Dropout→27 classes. "
-            "Input dim: 1152 (768 text + 384 image)."
+            "Image: ResNet50 → IncrementalPCA(384). Dense 1152→384→Dropout→27 classes. "
+            "Input dim: 1152 (768 text + 384 image). hidden_1=1152 eliminates lossy bottleneck (run 2)."
         ),
         "clip": (
             "Rakuten multimodal product classifier — CLIP ViT-B/32 text encoder. "
