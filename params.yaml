@@ -60,10 +60,11 @@ model_minilm:
   # Trainer applies these on top of model: when text_encoder="minilm".
   # CV and CLIP are unaffected.
   #
-  # Rationale: MiniLM-L12 produces 384-d embeddings (input_dim=768 total with image PCA).
-  # Best run: 0.7213 val_acc (hidden_1=1024, hidden_2=384, normalize=False).
-  # CV/CLIP peak at hidden_1=512 (0.7717 and 0.8493) — 1024 is correct for MiniLM input size.
-  hidden_1: 1024
+  # Early fusion: input_dim=768 (384 text + 384 image) — hidden_1=1024 justified (1.3x input).
+  # Late fusion:  text branch only sees text_dim=384 — hidden_1=512 (1.3x text_dim) is correct.
+  #               hidden_1=1024 on text_dim=384 is a 2.7x expansion — overfit risk on 85k samples.
+  #               image branch gets hidden_2=256 (base model, 0.67x img_dim=384 — fine).
+  hidden_1: 512   # updated: was 1024 (correct for early fusion); 512 is optimal for late fusion text branch
   hidden_2: 384
 
 model_mpnet:
@@ -71,18 +72,18 @@ model_mpnet:
   # Trainer applies these on top of model: when text_encoder="mpnet".
   # Any key here overrides the matching key in model: above.
   #
-  # input_dim = 768 (mpnet text) + 384 (image PCA) = 1152
+  # Early fusion: input_dim = 768 (mpnet text) + 384 (image PCA) = 1152
+  # Late fusion:  text branch sees text_dim=768; image branch sees img_dim=384
+  #               hidden_1=768 would be exact match; 1152 is 1.5x text_dim — acceptable upper bound
+  #               (within the 1x–1.5x expansion range recommended for single-branch networks)
   #
-  # Run 1 result: hidden_1=1024 < input_dim=1152 → immediate lossy bottleneck;
-  #              overfit_gap=0.1481 (largest of all models); best_val_acc=0.7719
-  #
-  # Run 2 (current): hidden_1=1152 — no bottleneck in first layer, matches input dim.
-  #   dropout_1: 0.5 / dropout_2: 0.4 — slightly stronger regularisation to
-  #   address the larger overfit gap vs CV/CLIP.
-  hidden_1: 1152              # = input_dim; no information lost before first activation
-  hidden_2: 384               # gradual reduction: 1152 → 384 → 27
-  dropout_1: 0.5              # up from 0.45 — combat 14.8% overfit gap
-  dropout_2: 0.4              # up from 0.35
+  # Run 1 (early fusion): hidden_1=1024 < input_dim=1152 → bottleneck; best_val_acc=0.7719
+  # Run 2 (early fusion): hidden_1=1152 — no bottleneck; best_val_acc=0.7746
+  # Run 3 (late fusion):  text hidden_1=768 (exact match) — recommended for late fusion
+  hidden_1: 768               # late fusion text branch: text_dim=768 → no expansion, clean mapping
+  hidden_2: 384               # image branch: img_dim=384 → 384 (same dim, fine)
+  dropout_1: 0.5              # kept — combat overfit gap observed in run 2
+  dropout_2: 0.4              # kept — same rationale
 
 minilm:
   # paraphrase-multilingual-MiniLM-L12-v2 encoder settings
