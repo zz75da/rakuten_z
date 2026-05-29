@@ -237,8 +237,9 @@ def build_and_train_model(
     LR_PATIENCE   = _m.get("lr_patience", 2)
     LR_FACTOR     = _m.get("lr_factor", 0.3)
     LR_MIN        = 1e-6
-    FOCAL_GAMMA   = float(_m.get("focal_gamma", 2.0))
-    _reg          = keras_l2(L2_REG) if L2_REG > 0 else None
+    FOCAL_GAMMA      = float(_m.get("focal_gamma", 2.0))
+    USE_LATE_FUSION  = bool(_m.get("use_late_fusion", True))
+    _reg             = keras_l2(L2_REG) if L2_REG > 0 else None
 
     label_encoder = LabelEncoder()
     y_encoded = label_encoder.fit_transform(y)
@@ -277,13 +278,65 @@ def build_and_train_model(
         del X
         gc.collect()
 
-        # Build model
+        # ── Model architecture ────────────────────────────────────────────────
+        # Late fusion (default): separate text/image branches each producing
+        # per-class logits, combined via a learned per-sample gated average.
+        # Backward-compatible input: still a single concatenated vector [text|image].
+        #
+        # Early/concat fusion (use_late_fusion=false): original architecture.
         inp = Input(shape=(input_dim,))
-        h = Dense(HIDDEN_1, activation="relu", kernel_regularizer=_reg)(inp)
-        h = Dropout(DROPOUT_1)(h)
-        h = Dense(HIDDEN_2, activation="relu", kernel_regularizer=_reg)(h)
-        h = Dropout(DROPOUT_2)(h)
-        out = Dense(n_classes, activation="softmax")(h)
+
+        _img_dim  = pca_models["image"].n_components_ if (pca_models and pca_models.get("image")) else None
+        _text_dim = (input_dim - _img_dim) if _img_dim else None
+
+        if USE_LATE_FUSION and _img_dim and _text_dim and _text_dim > 0:
+            from tensorflow.keras.layers import Lambda, Concatenate, Multiply, Add
+
+            # Split input into text and image portions
+            text_inp  = Lambda(lambda x: x[:, :_text_dim],  name="text_split")(inp)
+            image_inp = Lambda(lambda x: x[:, _text_dim:],  name="image_split")(inp)
+
+            # Text branch: text_dim → HIDDEN_1 → n_classes (logits)
+            t = Dense(HIDDEN_1, activation="relu", kernel_regularizer=_reg, name="text_dense1")(text_inp)
+            t = Dropout(DROPOUT_1, name="text_drop1")(t)
+            t_logits = Dense(n_classes, name="text_logits")(t)
+
+            # Image branch: img_dim → HIDDEN_2 → n_classes (logits)
+            i = Dense(HIDDEN_2, activation="relu", kernel_regularizer=_reg, name="image_dense1")(image_inp)
+            i = Dropout(DROPOUT_2, name="image_drop1")(i)
+            i_logits = Dense(n_classes, name="image_logits")(i)
+
+            # Gated fusion: per-sample learned weight alpha ∈ (0,1)
+            # alpha=1 → text only, alpha=0 → image only
+            # Initialised near 0.5 so both branches contribute equally at start.
+            branch_summary = Concatenate(name="branch_summary")([
+                Lambda(lambda x: tf.reduce_mean(x, axis=1, keepdims=True))(t_logits),
+                Lambda(lambda x: tf.reduce_mean(x, axis=1, keepdims=True))(i_logits),
+            ])
+            alpha = Dense(1, activation="sigmoid", kernel_initializer="zeros",
+                          bias_initializer=tf.initializers.Constant(0.0),
+                          name="fusion_alpha")(branch_summary)
+
+            # Mixture of softmax outputs: valid probability distribution
+            t_probs   = tf.keras.layers.Softmax(name="text_softmax")(t_logits)
+            i_probs   = tf.keras.layers.Softmax(name="image_softmax")(i_logits)
+            alpha_inv = Lambda(lambda x: 1.0 - x, name="alpha_inv")(alpha)
+            out = Add(name="fused_probs")([
+                Multiply(name="alpha_text") ([alpha,     t_probs]),
+                Multiply(name="alpha_image")([alpha_inv, i_probs]),
+            ])
+            print(f"Late fusion model: text_dim={_text_dim}, img_dim={_img_dim}, "
+                  f"text_branch=Dense({HIDDEN_1})→{n_classes}, "
+                  f"image_branch=Dense({HIDDEN_2})→{n_classes}")
+        else:
+            # Early fusion (fallback)
+            h   = Dense(HIDDEN_1, activation="relu", kernel_regularizer=_reg)(inp)
+            h   = Dropout(DROPOUT_1)(h)
+            h   = Dense(HIDDEN_2, activation="relu", kernel_regularizer=_reg)(h)
+            h   = Dropout(DROPOUT_2)(h)
+            out = Dense(n_classes, activation="softmax")(h)
+            if USE_LATE_FUSION:
+                print("Late fusion requested but pca_models unavailable — using early fusion")
 
         # Focal loss: FL = -(1-p_t)^gamma * log(p_t)
         # gamma=0 reduces to standard crossentropy; gamma=2 focuses on hard/minority samples.
@@ -362,6 +415,9 @@ def build_and_train_model(
                 "l2_reg": L2_REG,
                 "class_weights": "balanced",
                 "focal_gamma": FOCAL_GAMMA,
+                "use_late_fusion": USE_LATE_FUSION,
+                "fusion_text_dim": _text_dim if USE_LATE_FUSION else "n/a",
+                "fusion_image_dim": _img_dim if USE_LATE_FUSION else "n/a",
                 "early_stopping_monitor": "val_macro_f1",
                 "early_stopping_patience": ES_PATIENCE,
                 "lr_reduce_patience": LR_PATIENCE,

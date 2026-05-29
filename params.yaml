@@ -51,6 +51,9 @@ model:
   lr_factor: 0.5              # LR reduction multiplier (was 0.3 — gentler decay)
   focal_gamma: 2.0            # focal loss gamma — Lin et al. 2017; 0 = standard crossentropy
                               # gamma=2 canonical for moderate imbalance (4:1 ratio, 27 classes)
+  use_late_fusion: true       # late fusion: separate text/image branches, learned gated average
+                              # 2024-2025 papers: late fusion beats concatenation on heterogeneous modalities
+                              # set false to revert to early/concat fusion
 
 model_minilm:
   # Architecture overrides for paraphrase-multilingual-MiniLM-L12-v2 encoder only.
