@@ -33,5 +33,6 @@ h5py>=3.10.0
 
 psutil>=5.9.0
 tqdm>=4.66.0
+cleanlab==2.6.5
 # sentence-transformers excluded — PyTorch conflicts with TF allocator in same process
 # MiniLM encoding runs in a dedicated container when text_encoder=minilm

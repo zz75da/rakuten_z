@@ -571,6 +571,59 @@ def evaluate_from_result(**context):
     return {}
 
 
+def run_quality_gate(**context):
+    """
+    POST /quality-gate on train-api — runs pytest model quality assertions.
+    Raises AirflowException on failure so the DAG blocks deployment.
+    """
+    token = context["ti"].xcom_pull(task_ids="get_auth_token", key="auth_token")
+    if not token:
+        raise AirflowException("No auth token — cannot run quality gate")
+    resp = requests.post(
+        f"{TRAIN_API}/quality-gate",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=180,
+    )
+    output = ""
+    try:
+        output = resp.json().get("output", "")
+    except Exception:
+        output = resp.text[:2000]
+    print(output)
+    if not resp.ok:
+        raise AirflowException(f"Quality gate FAILED (HTTP {resp.status_code})\n{output[-1000:]}")
+    print("Quality gate PASSED")
+    return {}
+
+
+def run_cleanlab_audit(**context):
+    """
+    POST /cleanlab on train-api using the CLIP model (best accuracy).
+    Non-fatal — a label audit failure must not block deployment.
+    Timeout: 15 min (cleanlab on 85k samples takes ~5-10 min).
+    """
+    token = context["ti"].xcom_pull(task_ids="get_auth_token", key="auth_token")
+    if not token:
+        print("No auth token available — skipping cleanlab audit")
+        return {}
+    try:
+        resp = requests.post(
+            f"{TRAIN_API}/cleanlab",
+            params={"encoder": "clip"},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=960,   # 16 min — slightly above the 15-min server cap
+        )
+        if resp.ok:
+            data = resp.json()
+            print(f"Cleanlab audit complete — {data.get('n_issues')} issues found")
+            print(f"Report: {data.get('report')}")
+        else:
+            print(f"Cleanlab audit returned {resp.status_code}: {resp.text[:500]}")
+    except Exception as e:
+        print(f"Cleanlab audit failed (non-fatal): {e}")
+    return {}
+
+
 _RUN_LOG = Path("/opt/airflow/data/dag_runs.log")
 _RUN_SEP = "=" * 72
 _MAX_RUNS = 3
@@ -957,6 +1010,21 @@ with DAG(
     )
 
     # Always runs — writes last-3-runs summary to /opt/airflow/data/dag_runs.log
+    quality_gate = PythonOperator(
+        task_id="quality_gate",
+        python_callable=run_quality_gate,
+        provide_context=True,
+        execution_timeout=timedelta(minutes=5),
+    )
+
+    cleanlab_audit = PythonOperator(
+        task_id="cleanlab_audit",
+        python_callable=run_cleanlab_audit,
+        provide_context=True,
+        trigger_rule=TriggerRule.ALL_SUCCESS,   # only run if all training succeeded
+        execution_timeout=timedelta(minutes=18), # hard DAG-level cap above the 15-min server cap
+    )
+
     run_summary = PythonOperator(
         task_id="write_run_summary",
         python_callable=write_run_summary,
@@ -993,6 +1061,8 @@ with DAG(
         >> [get_version, push_metrics]
         >> eval_results
         >> verify_mlflow
+        >> quality_gate
+        >> cleanlab_audit
         >> success_message
         >> run_summary
     )

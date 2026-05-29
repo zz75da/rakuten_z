@@ -354,6 +354,83 @@ async def push_cache_endpoint():
     return {"status": "ok", "details": results}
 
 
+@app.post("/quality-gate")
+async def run_quality_gate(user: dict = Depends(verify_jwt_token)):
+    """
+    Run pytest model quality gate tests.
+    Returns pass/fail + full pytest output. Admin only.
+    Fails (HTTP 422) if any test fails so the DAG can block on it.
+    """
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can run quality gate")
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "/app/tests/test_model_quality.py",
+         "-v", "--tb=short", "--no-header"],
+        capture_output=True, text=True, cwd="/app", timeout=120,
+        env={**os.environ, "ARTIFACTS_PATH": "/app/data/artifacts"},
+    )
+
+    passed = proc.returncode == 0
+    logger.info(f"Quality gate {'PASSED' if passed else 'FAILED'} (rc={proc.returncode})")
+
+    if not passed:
+        raise HTTPException(
+            status_code=422,
+            detail={"status": "failed", "output": proc.stdout[-3000:]},
+        )
+    return {"status": "passed", "output": proc.stdout[-3000:]}
+
+
+@app.post("/cleanlab")
+async def run_cleanlab(
+    encoder: str = "clip",
+    user: dict = Depends(verify_jwt_token),
+):
+    """
+    Run Cleanlab label-quality audit using the specified trained model.
+    Synchronous — blocks until complete (max 15 min). Admin only.
+    Output saved to /app/data/artifacts/cleanlab_report_<encoder>.csv
+    """
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can run cleanlab audit")
+
+    valid = {"clip", "countvectorizer", "minilm", "mpnet"}
+    if encoder not in valid:
+        raise HTTPException(status_code=400, detail=f"encoder must be one of {valid}")
+
+    logger.info(f"Cleanlab audit requested by {user.get('username')} — encoder={encoder}")
+
+    proc = subprocess.run(
+        [sys.executable, "/app/services/run_cleanlab_audit.py", "--encoder", encoder],
+        capture_output=True, text=True, cwd="/app", timeout=900,   # 15-min hard cap
+    )
+
+    out_path = f"/app/data/artifacts/cleanlab_report_{encoder}.csv"
+    if proc.returncode != 0:
+        logger.error(f"Cleanlab audit failed: {proc.stderr[-2000:]}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cleanlab audit failed:\n{proc.stderr[-1000:]}",
+        )
+
+    import pandas as pd
+    try:
+        report_df = pd.read_csv(out_path)
+        n_issues  = len(report_df)
+    except Exception:
+        n_issues  = -1
+
+    logger.info(f"Cleanlab audit complete — {n_issues} issues found -> {out_path}")
+    return {
+        "status":    "complete",
+        "encoder":   encoder,
+        "n_issues":  n_issues,
+        "report":    out_path,
+        "stdout":    proc.stdout[-2000:],
+    }
+
+
 @app.get("/health")
 def health():
     running = sum(1 for j in _training_jobs.values() if j.get("status") == "running")

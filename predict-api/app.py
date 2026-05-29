@@ -94,6 +94,7 @@ clip_text_model = None
 label_encoder: LabelEncoder = None
 pca_image: IncrementalPCA = None
 resnet_model = None
+_gradcam_model = None   # lazily built from resnet_model on first GradCAM request
 
 # Encoder model names — must match what was used during training / encoding
 _MINILM_MODEL_NAME = os.getenv("MINILM_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
@@ -149,6 +150,12 @@ class MultimodalRequest(BaseModel):
 class BatchStreamRequest(BaseModel):
     items: list[MultimodalRequest]
     batch_size: int = 50
+
+
+class GradCAMRequest(BaseModel):
+    image_base64: str
+    model: str = "clip"       # which trained model to use for class prediction
+    target_class: int = None  # if None, uses predicted class
 
 
 # --- Auth helper ---
@@ -480,36 +487,242 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
         raise HTTPException(status_code=400, detail="Must provide description or image_base64")
 
     active_model, text_dim = _resolve_model(req.model)
-    if req.description:
-        if req.model == "minilm":
-            text_features = extract_text_features_minilm(req.description)
-        elif req.model == "mpnet":
-            text_features = extract_text_features_mpnet(req.description)
-        elif req.model == "clip":
-            text_features = extract_text_features_clip(req.description)
-        else:
-            text_features = extract_text_features(req.description)
+
+    # ── Text features (fallback: zeros if missing) ────────────────────────────
+    has_text = bool(req.description and req.description.strip())
+    if has_text:
+        try:
+            if req.model == "minilm":
+                text_features = extract_text_features_minilm(req.description)
+            elif req.model == "mpnet":
+                text_features = extract_text_features_mpnet(req.description)
+            elif req.model == "clip":
+                text_features = extract_text_features_clip(req.description)
+            else:
+                text_features = extract_text_features(req.description)
+        except Exception as e:
+            print(f"Text extraction failed, falling back to zeros: {e}")
+            text_features = np.zeros((1, text_dim), dtype=np.float32)
+            has_text = False
     else:
-        text_features = np.zeros((1, text_dim))
-    image_features = (
-        extract_image_features(req.image_base64)
-        if req.image_base64
-        else np.zeros((1, pca_image.n_components_))
-    )
+        text_features = np.zeros((1, text_dim), dtype=np.float32)
+
+    # ── Image features (fallback: zeros if missing or decode error) ───────────
+    has_image = bool(req.image_base64)
+    if has_image:
+        try:
+            image_features = extract_image_features(req.image_base64)
+        except Exception as e:
+            print(f"Image extraction failed, falling back to zeros: {e}")
+            image_features = np.zeros((1, pca_image.n_components_), dtype=np.float32)
+            has_image = False
+    else:
+        image_features = np.zeros((1, pca_image.n_components_), dtype=np.float32)
+
+    # ── Determine effective mode ──────────────────────────────────────────────
+    if has_text and has_image:
+        mode = "multimodal"
+    elif has_text:
+        mode = "text_only_fallback"
+    else:
+        mode = "image_only_fallback"
 
     combined = np.hstack([text_features, image_features])
-    probs = active_model.predict(combined)
-    pred = int(np.argmax(probs, axis=1)[0])
-    label = str(label_encoder.inverse_transform([pred])[0])
+    probs    = active_model.predict(combined)
+    pred     = int(np.argmax(probs, axis=1)[0])
+    label    = str(label_encoder.inverse_transform([pred])[0])
     category = CATEGORY_NAMES.get(label, label)
+    confidence = float(np.max(probs[0]))
 
     _record_drift_metrics(probs[0], label, "/predict-multimodal")
     FEATURE_TEXT_MEAN.set(float(np.mean(text_features)))
     FEATURE_IMAGE_MEAN.set(float(np.mean(image_features)))
     REQUEST_COUNT.labels("/predict-multimodal", "POST", "200").inc()
-    return {
+
+    response = {
         "pred_class": pred, "label": label, "category": category,
-        "probs": probs.tolist(), "mode": "multimodal", "encoder": req.model,
+        "probs": probs.tolist(), "mode": mode, "encoder": req.model,
+    }
+    # Warn caller when operating in fallback mode with low confidence
+    if mode != "multimodal" and confidence < 0.4:
+        response["warning"] = (
+            f"Operating in {mode} — confidence is low ({confidence:.2f}). "
+            f"Provide both text and image for best results."
+        )
+    return response
+
+
+def _get_gradcam_model():
+    """
+    Lazily build a sub-model that outputs (last_conv_layer, global_avg_pool)
+    from the already-loaded resnet_model.  No extra weights loaded.
+    Cached in _gradcam_model so it's only built once.
+    """
+    global _gradcam_model
+    if resnet_model is None:
+        return None
+    if _gradcam_model is None:
+        try:
+            last_conv = resnet_model.get_layer("conv5_block3_out")
+            _gradcam_model = tf.keras.Model(
+                inputs=resnet_model.input,
+                outputs=[last_conv.output, resnet_model.output],
+            )
+        except Exception as e:
+            print(f"GradCAM model build failed: {e}")
+            return None
+    return _gradcam_model
+
+
+def _compute_gradcam(img_rgb: np.ndarray, active_model, target_class: int = None) -> np.ndarray:
+    """
+    Class-aware GradCAM for our PCA-in-the-middle pipeline.
+
+    Because PCA is non-differentiable, we can't backprop through the full
+    image → ResNet → PCA → Dense chain.  Instead we use an analytical
+    approximation:
+      1. Compute ResNet50 last-conv activations (7×7×2048).
+      2. Project the dense head's image-branch weights back to ResNet50 space
+         via the PCA components matrix, giving a 2048-d class vector.
+      3. Weight the spatial activation map by that vector → class-discriminative
+         heatmap without requiring gradient flow through PCA.
+
+    Falls back to plain mean-activation (no class guidance) if model introspection
+    fails (e.g., architecture mismatch).
+    """
+    gm = _get_gradcam_model()
+    if gm is None:
+        raise HTTPException(status_code=503, detail="GradCAM model not available")
+
+    img_batch = resnet_preprocess(
+        np.expand_dims(img_rgb.astype(np.float32), axis=0)
+    )
+
+    conv_out, pool_out = gm(img_batch, training=False)
+    conv_out = conv_out.numpy()[0]   # (7, 7, 2048)
+    pool_out = pool_out.numpy()      # (1, 2048)
+
+    # ── Determine target class from full pipeline if not specified ────────────
+    if target_class is None and active_model is not None and pca_image is not None:
+        try:
+            img_pca = pca_image.transform(pool_out)   # (1, 384)
+            # Zero-pad text dim so shape matches model input
+            input_dim = active_model.input_shape[1]
+            text_dim  = input_dim - img_pca.shape[1]
+            combined  = np.hstack([np.zeros((1, text_dim)), img_pca])
+            probs     = active_model.predict(combined, verbose=0)
+            target_class = int(np.argmax(probs[0]))
+        except Exception:
+            target_class = None   # fall back to mean activation
+
+    # ── Class-discriminative weights in ResNet50 space ────────────────────────
+    if (target_class is not None
+            and active_model is not None
+            and pca_image is not None):
+        try:
+            # Extract image-branch weights from dense layer for target_class
+            dense_weights = active_model.layers[-3].get_weights()[0]  # (input_dim, hidden_1)
+            dense_out_w   = active_model.layers[-1].get_weights()[0]  # (hidden_2, n_classes)
+            # Simplified: use direct output layer weights mapped back through PCA
+            # output_layer is last Dense (n_classes); prev layers are intermediate
+            # Use last Dense weights as class discriminator
+            out_layer = None
+            for layer in reversed(active_model.layers):
+                if hasattr(layer, 'get_weights') and len(layer.get_weights()) == 2:
+                    w, _ = layer.get_weights()
+                    if w.shape[-1] == len(label_encoder.classes_):
+                        out_layer = w
+                        break
+            if out_layer is not None:
+                class_w = out_layer[:, target_class]  # (hidden_2,)
+                # Go one layer further back
+                prev_layer_w = None
+                found = False
+                for layer in reversed(active_model.layers):
+                    if hasattr(layer, 'get_weights') and len(layer.get_weights()) == 2:
+                        w, _ = layer.get_weights()
+                        if w.shape[-1] == len(class_w):
+                            prev_layer_w = w
+                            found = True
+                            break
+                if found:
+                    # Image portion of prev_layer weights → pca_image.components_
+                    n_img = pca_image.n_components_
+                    img_w = prev_layer_w[-n_img:, :]  # (n_img, hidden_1) slice
+                    resnet_w = img_w.T @ pca_image.components_  # (hidden_1, 2048)
+                    cam_weights = (resnet_w @ class_w).reshape(-1)  # (2048,)
+                else:
+                    cam_weights = np.mean(pool_out[0])  # fallback
+            else:
+                cam_weights = None
+        except Exception as e:
+            print(f"GradCAM weight projection failed ({e}), using mean activation")
+            cam_weights = None
+    else:
+        cam_weights = None
+
+    # ── Build spatial heatmap ─────────────────────────────────────────────────
+    if cam_weights is not None and len(cam_weights) == conv_out.shape[2]:
+        heatmap = np.maximum(conv_out @ cam_weights, 0)           # (7, 7)
+    else:
+        heatmap = np.mean(conv_out, axis=2)                        # (7, 7) fallback
+
+    heatmap = heatmap / (np.max(np.abs(heatmap)) + 1e-8)
+    return heatmap, target_class
+
+
+@app.post("/gradcam")
+def gradcam_endpoint(req: GradCAMRequest, user: dict = Depends(verify_jwt_token)):
+    """
+    Generate a class-discriminative GradCAM heatmap for an uploaded image.
+    Returns the heatmap overlaid on the original image as base64 JPEG.
+
+    Memory: ~50 MB peak (gradient-free — uses analytical weight projection).
+    Disk  : nothing saved — result returned inline.
+    """
+    if resnet_model is None or pca_image is None:
+        raise HTTPException(status_code=503, detail="Artifacts not loaded")
+
+    try:
+        image_bytes = base64.b64decode(req.image_base64)
+        img_array   = np.frombuffer(image_bytes, np.uint8)
+        img_bgr     = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        if img_bgr is None:
+            raise ValueError("Image decode failed")
+        img_rgb = cv2.cvtColor(cv2.resize(img_bgr, (224, 224)), cv2.COLOR_BGR2RGB)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Image processing failed: {e}")
+
+    try:
+        active_model, _ = _resolve_model(req.model)
+    except HTTPException:
+        active_model = None
+
+    heatmap, used_class = _compute_gradcam(img_rgb, active_model, req.target_class)
+
+    # ── Overlay on original image ─────────────────────────────────────────────
+    heatmap_resized = cv2.resize(heatmap, (224, 224))
+    heatmap_color   = cv2.applyColorMap(
+        np.uint8(255 * np.clip(heatmap_resized, 0, 1)), cv2.COLORMAP_JET
+    )
+    overlay = cv2.addWeighted(
+        cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR), 0.6,
+        heatmap_color, 0.4, 0,
+    )
+
+    _, buf = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    heatmap_b64 = base64.b64encode(buf).decode("utf-8")
+
+    label = str(label_encoder.inverse_transform([used_class])[0]) if (
+        used_class is not None and label_encoder is not None
+    ) else "unknown"
+
+    REQUEST_COUNT.labels("/gradcam", "POST", "200").inc()
+    return {
+        "heatmap_base64": heatmap_b64,
+        "predicted_class": used_class,
+        "predicted_label": label,
+        "encoder": req.model,
     }
 
 
