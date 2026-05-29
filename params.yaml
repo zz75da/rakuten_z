@@ -46,9 +46,11 @@ model:
   dropout_1: 0.45
   dropout_2: 0.35
   l2_reg: 0.0001              # reverted — 0.0003 degraded both models; 0.0001 is the sweet spot
-  early_stopping_patience: 8  # epochs without val_loss improvement before stopping
+  early_stopping_patience: 8  # epochs without val_macro_f1 improvement before stopping
   lr_patience: 4              # reverted — lrp=4 produced both CV and MiniLM best results
   lr_factor: 0.5              # LR reduction multiplier (was 0.3 — gentler decay)
+  focal_gamma: 2.0            # focal loss gamma — Lin et al. 2017; 0 = standard crossentropy
+                              # gamma=2 canonical for moderate imbalance (4:1 ratio, 27 classes)
 
 model_minilm:
   # Architecture overrides for paraphrase-multilingual-MiniLM-L12-v2 encoder only.

@@ -78,20 +78,37 @@ def evaluate_model(model, X_val, y_val_encoded, label_encoder):
     Accepts pre-encoded y so the full X_reduced can be freed before this call.
     Returns plain-Python dict (no numpy types) ready for JSON serialisation.
     """
+    from sklearn.metrics import f1_score
     probs = model.predict(X_val, verbose=0)
     y_pred = np.argmax(probs, axis=1)
     acc = accuracy_score(y_val_encoded, y_pred)
     report = classification_report(y_val_encoded, y_pred, output_dict=True)
 
+    macro_f1 = float(f1_score(y_val_encoded, y_pred, average="macro", zero_division=0))
+
+    # Top-3 accuracy: true label in top-3 predicted classes
+    top3_hits = np.sum([
+        y_val_encoded[i] in np.argsort(probs[i])[-3:]
+        for i in range(len(y_val_encoded))
+    ])
+    top3_acc = float(top3_hits / len(y_val_encoded))
+
     try:
         mlflow.log_metric("final_val_accuracy", float(acc))
+        mlflow.log_metric("final_val_macro_f1", macro_f1)
+        mlflow.log_metric("final_val_top3_accuracy", top3_acc)
         for label, metrics in report.items():
             if isinstance(metrics, dict) and "f1-score" in metrics:
                 mlflow.log_metric(f"f1_{label}", float(np.asarray(metrics["f1-score"]).item()))
     except Exception as e:
         print(f"Warning: failed to log final metrics: {e}")
 
-    return _to_python_native({"accuracy": acc, "report": report})
+    return _to_python_native({
+        "accuracy": acc,
+        "macro_f1": macro_f1,
+        "top3_accuracy": top3_acc,
+        "report": report,
+    })
 
 
 def _log_datasets(train_data, x_csv_path, y_csv_path, X_reduced):
@@ -220,6 +237,7 @@ def build_and_train_model(
     LR_PATIENCE   = _m.get("lr_patience", 2)
     LR_FACTOR     = _m.get("lr_factor", 0.3)
     LR_MIN        = 1e-6
+    FOCAL_GAMMA   = float(_m.get("focal_gamma", 2.0))
     _reg          = keras_l2(L2_REG) if L2_REG > 0 else None
 
     label_encoder = LabelEncoder()
@@ -251,7 +269,8 @@ def build_and_train_model(
             _log_datasets(train_data, x_csv_path, y_csv_path, X)
 
         X_train, X_val, y_train, y_val = train_test_split(
-            X, y_encoded, test_size=VAL_SPLIT, random_state=RANDOM_SEED
+            X, y_encoded, test_size=VAL_SPLIT, random_state=RANDOM_SEED,
+            stratify=y_encoded,   # guarantees all 27 classes in both splits
         )
         # Free the full feature matrix (~2 GB) before model.fit to avoid OOM.
         # X_train and X_val are independent copies; input_dim is already captured.
@@ -266,11 +285,40 @@ def build_and_train_model(
         h = Dropout(DROPOUT_2)(h)
         out = Dense(n_classes, activation="softmax")(h)
 
+        # Focal loss: FL = -(1-p_t)^gamma * log(p_t)
+        # gamma=0 reduces to standard crossentropy; gamma=2 focuses on hard/minority samples.
+        # Captures n_classes via closure — defined here after label_encoder is fit.
+        def _focal_loss_fn(y_true, y_pred):
+            y_true_int = tf.cast(tf.squeeze(y_true, axis=-1) if len(y_true.shape) > 1 else y_true, tf.int32)
+            y_pred_clipped = tf.clip_by_value(y_pred, 1e-7, 1.0 - 1e-7)
+            y_true_one_hot = tf.one_hot(y_true_int, depth=n_classes)
+            p_t = tf.reduce_sum(y_true_one_hot * y_pred_clipped, axis=-1)
+            focal_weight = tf.pow(1.0 - p_t, FOCAL_GAMMA)
+            return tf.reduce_mean(focal_weight * (-tf.math.log(p_t)))
+
+        # Macro F1 callback — sklearn-based, runs one extra predict on val set per epoch.
+        # Must appear BEFORE EarlyStopping in callbacks list so logs['val_macro_f1'] is set first.
+        class _MacroF1Callback(tf.keras.callbacks.Callback):
+            def __init__(self, X_v, y_v):
+                super().__init__()
+                self._X_v = X_v
+                self._y_v = y_v
+            def on_epoch_end(self, epoch, logs=None):
+                from sklearn.metrics import f1_score as _f1
+                probs = self.model.predict(self._X_v, verbose=0)
+                y_pred = np.argmax(probs, axis=1)
+                f1 = float(_f1(self._y_v, y_pred, average="macro", zero_division=0))
+                if logs is not None:
+                    logs["val_macro_f1"] = f1
+
         model = Model(inp, out)
         model.compile(
             optimizer=Adam(learning_rate=LEARNING_RATE),
-            loss="sparse_categorical_crossentropy",
-            metrics=["accuracy"],
+            loss=_focal_loss_fn,
+            metrics=[
+                "accuracy",
+                tf.keras.metrics.SparseTopKCategoricalAccuracy(k=3, name="top3_accuracy"),
+            ],
         )
 
         # Log all hyperparameters in one call
@@ -312,6 +360,8 @@ def build_and_train_model(
                 "dropout_1": DROPOUT_1, "dropout_2": DROPOUT_2,
                 "l2_reg": L2_REG,
                 "class_weights": "balanced",
+                "focal_gamma": FOCAL_GAMMA,
+                "early_stopping_monitor": "val_macro_f1",
                 "early_stopping_patience": ES_PATIENCE,
                 "lr_reduce_patience": LR_PATIENCE,
                 "lr_reduce_factor": LR_FACTOR, "lr_min": LR_MIN,
@@ -341,8 +391,9 @@ def build_and_train_model(
             batch_size=batch_size,
             class_weight=class_weight_dict,
             callbacks=[
-                EarlyStopping(monitor="val_accuracy", patience=ES_PATIENCE,
-                              restore_best_weights=True, verbose=1),
+                _MacroF1Callback(X_val, y_val),                          # must be first
+                EarlyStopping(monitor="val_macro_f1", patience=ES_PATIENCE,
+                              mode="max", restore_best_weights=True, verbose=1),
                 ReduceLROnPlateau(monitor="val_loss", factor=LR_FACTOR,
                                   patience=LR_PATIENCE, min_lr=LR_MIN, verbose=1),
             ],
@@ -361,6 +412,12 @@ def build_and_train_model(
                     epoch_metrics["train_accuracy"] = float(history.history["accuracy"][epoch])
                 if "val_accuracy"  in history.history:
                     epoch_metrics["val_accuracy"]   = float(history.history["val_accuracy"][epoch])
+                if "top3_accuracy" in history.history:
+                    epoch_metrics["train_top3_accuracy"] = float(history.history["top3_accuracy"][epoch])
+                if "val_top3_accuracy" in history.history:
+                    epoch_metrics["val_top3_accuracy"] = float(history.history["val_top3_accuracy"][epoch])
+                if "val_macro_f1" in history.history:
+                    epoch_metrics["val_macro_f1"] = float(history.history["val_macro_f1"][epoch])
                 mlflow.log_metrics(epoch_metrics, step=epoch)
         except Exception as e:
             print(f"Warning: failed to log epoch metrics: {e}")
@@ -428,9 +485,10 @@ def build_and_train_model(
             "Image: ResNet50 → IncrementalPCA(384). Dense 512→256→Dropout→27 classes."
         ),
         "countvectorizer": (
-            "Rakuten multimodal product classifier — CountVectorizer text encoder. "
-            "Text: CountVectorizer(max_features=10000) → IncrementalPCA(512). "
-            "Image: ResNet50 → IncrementalPCA(384). Dense 512→256→Dropout→27 classes."
+            "Rakuten multimodal product classifier — TF-IDF text encoder. "
+            "Text: TfidfVectorizer(max_features=10000, sublinear_tf=True) + spaCy lemmatization → IncrementalPCA(512). "
+            "Image: ResNet50 → IncrementalPCA(384). Dense 512→256→Dropout→27 classes. "
+            "Focal loss (gamma=2), stratified split, macro F1 early stopping, top-3 accuracy."
         ),
     }
     _desc = _DESCRIPTIONS.get(text_encoder, "Rakuten multimodal product classifier")
