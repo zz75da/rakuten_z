@@ -197,7 +197,7 @@ def load_artifacts():
             keras_path = os.path.join(ARTIFACTS_PATH, "neural_network_model.keras")
             h5_path = os.path.join(ARTIFACTS_PATH, "neural_network_model.h5")
             model_path = keras_path if os.path.exists(keras_path) else h5_path
-            model_cv = tf.keras.models.load_model(model_path)
+            model_cv = tf.keras.models.load_model(model_path, compile=False)
             text_vectorizer = pickle.load(open(os.path.join(ARTIFACTS_PATH, "text_vectorizer.pkl"), "rb"))
             pca_text = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_text.pkl"), "rb"))
             print("✓ CV model loaded from disk")
@@ -209,7 +209,7 @@ def load_artifacts():
         minilm_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_minilm.keras")
         if os.path.exists(minilm_keras):
             try:
-                model_minilm = tf.keras.models.load_model(minilm_keras)
+                model_minilm = tf.keras.models.load_model(minilm_keras, compile=False)
                 # Load encoder directly — no pkl, model cached by sentence-transformers
                 from sentence_transformers import SentenceTransformer
                 minilm_encoder = SentenceTransformer(_MINILM_MODEL_NAME, device="cpu")
@@ -227,7 +227,7 @@ def load_artifacts():
         mpnet_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_mpnet.keras")
         if os.path.exists(mpnet_keras):
             try:
-                model_mpnet = tf.keras.models.load_model(mpnet_keras)
+                model_mpnet = tf.keras.models.load_model(mpnet_keras, compile=False)
                 from sentence_transformers import SentenceTransformer
                 mpnet_encoder = SentenceTransformer(_MPNET_MODEL_NAME, device="cpu")
                 print(f"✓ mpnet model loaded ({_MPNET_MODEL_NAME})")
@@ -244,7 +244,7 @@ def load_artifacts():
         clip_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_clip.keras")
         if os.path.exists(clip_keras):
             try:
-                model_clip = tf.keras.models.load_model(clip_keras)
+                model_clip = tf.keras.models.load_model(clip_keras, compile=False)
                 from transformers import CLIPTokenizer, CLIPTextModel
                 clip_tokenizer  = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
                 clip_text_model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32")

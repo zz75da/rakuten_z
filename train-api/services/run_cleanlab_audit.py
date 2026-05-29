@@ -92,11 +92,7 @@ def run_audit(encoder: str = "clip", batch_size: int = 512):
     log.info("Loading model...")
     import tensorflow as tf
     tf.get_logger().setLevel("ERROR")
-    model = tf.keras.models.load_model(
-        model_path,
-        compile=False,
-        custom_objects={"_focal_loss_fn": lambda y, p: p},  # dummy — compile=False skips it
-    )
+    model = tf.keras.models.load_model(model_path, compile=False)
 
     log.info(f"Predicting on {n_samples:,} samples (batch_size={batch_size})...")
     pred_probs = np.zeros((n_samples, len(label_enc.classes_)), dtype=np.float32)
