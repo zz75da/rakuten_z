@@ -15,23 +15,19 @@ Design constraints (20 GB disk, memory-limited laptop):
 """
 import os
 import gc
-import csv
-import json
 import threading
 import logging
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 log = logging.getLogger(__name__)
 
-ARTIFACTS   = Path("/app/data/artifacts")
-REPORT_DIR  = ARTIFACTS / "drift_reports"
-REF_PATH    = ARTIFACTS / "drift_reference.csv"
-META_PATH   = Path("/app/data/feature_cache/text_features_meta.json")
+ARTIFACTS  = Path("/app/data/artifacts")
+REPORT_DIR = ARTIFACTS / "drift_reports"
+REF_PATH   = ARTIFACTS / "drift_reference.csv"   # built by train-api POST /drift-rebuild-reference
 
 MAX_BUFFER  = 2000   # max live prediction rows before computing a report
 MAX_REPORTS = 10     # max report files kept on disk
@@ -73,42 +69,9 @@ def record_prediction(features: dict):
         threading.Thread(target=_generate_report, daemon=True).start()
 
 
-# ── Reference dataset ────────────────────────────────────────────────────────
-def build_reference(n_samples: int = 5000):
-    """
-    Build a stratified reference sample from the training label file.
-    Called once after training completes (via POST /drift-rebuild-reference).
-    Saves to drift_reference.csv — ~1 MB.
-    """
-    y_csv = os.getenv("TRAIN_CSV_Y_PATH", "/app/data/Y_train_CVw08PX.csv")
-    x_csv = os.getenv("TRAIN_CSV_X_PATH", "/app/data/X_train_update.csv")
-    if not (os.path.exists(y_csv) and os.path.exists(x_csv)):
-        log.warning("Training CSVs not found — drift reference not built")
-        return False
-    try:
-        Y = pd.read_csv(y_csv)
-        X = pd.read_csv(x_csv, usecols=["Unnamed: 0", "designation"])
-        merged = X.merge(Y, on="Unnamed: 0")
-        # Stratified sample
-        sampled = (
-            merged.groupby("prdtypecode", group_keys=False)
-            .apply(lambda g: g.sample(
-                min(len(g), max(1, int(n_samples * len(g) / len(merged)))),
-                random_state=42,
-            ))
-        ).head(n_samples)
-        ARTIFACTS.mkdir(parents=True, exist_ok=True)
-        sampled[["Unnamed: 0", "designation", "prdtypecode"]].to_csv(REF_PATH, index=False)
-        log.info(f"Drift reference built: {len(sampled)} rows → {REF_PATH}")
-        del Y, X, merged, sampled
-        gc.collect()
-        return True
-    except Exception as e:
-        log.warning(f"Drift reference build failed: {e}")
-        return False
-
-
 def reference_exists() -> bool:
+    """drift_reference.csv is built by train-api POST /drift-rebuild-reference and saved
+    to the shared /app/data/artifacts/ volume."""
     return REF_PATH.exists() and REF_PATH.stat().st_size > 1000
 
 

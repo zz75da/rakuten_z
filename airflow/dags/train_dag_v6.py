@@ -596,6 +596,33 @@ def run_quality_gate(**context):
     return {}
 
 
+def rebuild_drift_reference(**context):
+    """
+    POST /drift-rebuild-reference on train-api.
+    Builds the 5k stratified reference CSV for Evidently drift monitoring.
+    Non-fatal — drift reference failure must not block deployment.
+    """
+    token = context["ti"].xcom_pull(task_ids="get_auth_token", key="auth_token")
+    if not token:
+        print("No auth token — skipping drift reference rebuild")
+        return {}
+    try:
+        resp = requests.post(
+            f"{TRAIN_API}/drift-rebuild-reference",
+            params={"n_samples": 5000},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=120,
+        )
+        if resp.ok:
+            d = resp.json()
+            print(f"Drift reference built: {d.get('rows')} rows → {d.get('path')}")
+        else:
+            print(f"Drift reference returned {resp.status_code}: {resp.text[:300]}")
+    except Exception as e:
+        print(f"Drift reference rebuild failed (non-fatal): {e}")
+    return {}
+
+
 def run_cleanlab_audit(**context):
     """
     POST /cleanlab on train-api using the CLIP model (best accuracy).
@@ -1010,6 +1037,14 @@ with DAG(
     )
 
     # Always runs — writes last-3-runs summary to /opt/airflow/data/dag_runs.log
+    drift_reference = PythonOperator(
+        task_id="rebuild_drift_reference",
+        python_callable=rebuild_drift_reference,
+        provide_context=True,
+        trigger_rule=TriggerRule.ALL_SUCCESS,
+        execution_timeout=timedelta(minutes=3),
+    )
+
     quality_gate = PythonOperator(
         task_id="quality_gate",
         python_callable=run_quality_gate,
@@ -1061,6 +1096,7 @@ with DAG(
         >> [get_version, push_metrics]
         >> eval_results
         >> verify_mlflow
+        >> drift_reference
         >> quality_gate
         >> cleanlab_audit
         >> success_message

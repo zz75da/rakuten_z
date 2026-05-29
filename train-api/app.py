@@ -382,6 +382,48 @@ async def run_quality_gate(user: dict = Depends(verify_jwt_token)):
     return {"status": "passed", "output": proc.stdout[-3000:]}
 
 
+@app.post("/drift-rebuild-reference")
+async def drift_rebuild_reference(
+    n_samples: int = 5000,
+    user: dict = Depends(verify_jwt_token),
+):
+    """
+    Build a stratified 5k reference dataset for drift monitoring.
+    Saves to /app/data/artifacts/drift_reference.csv (shared volume).
+    Admin only. Called by DAG after training completes.
+    """
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    x_csv = os.getenv("TRAIN_CSV_X_PATH", "/app/data/X_train_update.csv")
+    y_csv = os.getenv("TRAIN_CSV_Y_PATH", "/app/data/Y_train_CVw08PX.csv")
+    out   = "/app/data/artifacts/drift_reference.csv"
+
+    try:
+        import pandas as pd
+        import gc
+        Y = pd.read_csv(y_csv)
+        X = pd.read_csv(x_csv, usecols=["Unnamed: 0", "designation"])
+        merged = X.merge(Y, on="Unnamed: 0")
+        sampled = (
+            merged.groupby("prdtypecode", group_keys=False)
+            .apply(lambda g: g.sample(
+                min(len(g), max(1, int(n_samples * len(g) / len(merged)))),
+                random_state=42,
+            ))
+        ).head(n_samples)
+        os.makedirs("/app/data/artifacts", exist_ok=True)
+        sampled[["Unnamed: 0", "designation", "prdtypecode"]].to_csv(out, index=False)
+        n = len(sampled)
+        del Y, X, merged, sampled
+        gc.collect()
+        logger.info(f"Drift reference built: {n} rows → {out}")
+        return {"status": "built", "rows": n, "path": out}
+    except Exception as e:
+        logger.error(f"Drift reference build failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/cleanlab")
 async def run_cleanlab(
     encoder: str = "clip",

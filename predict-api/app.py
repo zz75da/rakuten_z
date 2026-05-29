@@ -15,7 +15,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import base64
 import cv2
 from pydantic import BaseModel
-from services.drift_monitor import record_prediction, build_reference, trigger_report, buffer_size, reference_exists
+from services.drift_monitor import record_prediction, trigger_report, buffer_size, reference_exists
 import mlflow
 from mlflow.tracking import MlflowClient
 
@@ -399,13 +399,13 @@ def startup_event():
 
 
 # --- Drift monitoring endpoints ---
-@app.post("/drift-rebuild-reference")
-def drift_rebuild_reference(user: dict = Depends(verify_jwt_token)):
-    """Rebuild the 5k stratified reference dataset for drift monitoring. Admin only."""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
-    ok = build_reference(n_samples=5000)
-    return {"status": "built" if ok else "failed", "reference_exists": reference_exists()}
+@app.get("/drift-rebuild-reference-info")
+def drift_rebuild_reference_info(_user: dict = Depends(verify_jwt_token)):
+    """Reference is built by train-api POST /drift-rebuild-reference (has CSV access)."""
+    return {
+        "info": "Call POST /drift-rebuild-reference on train-api (port 5002) to rebuild.",
+        "reference_exists": reference_exists(),
+    }
 
 
 @app.post("/drift-trigger-report")
@@ -577,12 +577,12 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
     # Record lightweight summary stats for drift monitoring (no raw high-dim vectors)
     try:
         record_prediction({
-            "prdtypecode":    int(label_encoder.inverse_transform([pred])[0]) if label.isdigit() else label,
-            "confidence":     round(confidence, 4),
-            "text_norm":      round(float(np.linalg.norm(text_features)), 4),
-            "image_norm":     round(float(np.linalg.norm(image_features)), 4),
-            "encoder":        req.model,
-            "mode":           mode,
+            "prdtypecode": label,
+            "confidence":  round(confidence, 4),
+            "text_norm":   round(float(np.linalg.norm(text_features)), 4),
+            "image_norm":  round(float(np.linalg.norm(image_features)), 4),
+            "encoder":     req.model,
+            "mode":        mode,
         })
     except Exception:
         pass
@@ -664,50 +664,58 @@ def _compute_gradcam(img_rgb: np.ndarray, active_model, target_class: int = None
             target_class = None   # fall back to mean activation
 
     # ── Class-discriminative weights in ResNet50 space ────────────────────────
-    if (target_class is not None
-            and active_model is not None
-            and pca_image is not None):
+    # Strategy: find the image-branch output Dense layer by name (late fusion)
+    # or by position (early fusion), project class weights back through PCA.
+    # Falls back to mean activation (no class guidance) on any failure.
+    cam_weights = None
+    if target_class is not None and active_model is not None and pca_image is not None:
         try:
-            # Extract image-branch weights from dense layer for target_class
-            dense_weights = active_model.layers[-3].get_weights()[0]  # (input_dim, hidden_1)
-            dense_out_w   = active_model.layers[-1].get_weights()[0]  # (hidden_2, n_classes)
-            # Simplified: use direct output layer weights mapped back through PCA
-            # output_layer is last Dense (n_classes); prev layers are intermediate
-            # Use last Dense weights as class discriminator
-            out_layer = None
-            for layer in reversed(active_model.layers):
-                if hasattr(layer, 'get_weights') and len(layer.get_weights()) == 2:
-                    w, _ = layer.get_weights()
-                    if w.shape[-1] == len(label_encoder.classes_):
-                        out_layer = w
+            n_classes_local = len(label_encoder.classes_) if label_encoder else 0
+            n_img = pca_image.n_components_
+
+            # Prefer the named image_logits layer (late fusion model)
+            img_logits_layer = None
+            for layer in active_model.layers:
+                if layer.name == "image_logits" and len(layer.get_weights()) == 2:
+                    img_logits_layer = layer
+                    break
+
+            if img_logits_layer is not None:
+                # Late fusion: image_logits Dense(n_img_hidden → n_classes)
+                # Find the preceding image Dense layer
+                img_out_w = img_logits_layer.get_weights()[0]  # (hidden, n_classes)
+                class_w = img_out_w[:, target_class]            # (hidden,)
+                img_dense = None
+                for layer in active_model.layers:
+                    if layer.name == "image_dense1" and len(layer.get_weights()) == 2:
+                        img_dense = layer
                         break
-            if out_layer is not None:
-                class_w = out_layer[:, target_class]  # (hidden_2,)
-                # Go one layer further back
-                prev_layer_w = None
-                found = False
-                for layer in reversed(active_model.layers):
-                    if hasattr(layer, 'get_weights') and len(layer.get_weights()) == 2:
-                        w, _ = layer.get_weights()
-                        if w.shape[-1] == len(class_w):
-                            prev_layer_w = w
-                            found = True
-                            break
-                if found:
-                    # Image portion of prev_layer weights → pca_image.components_
-                    n_img = pca_image.n_components_
-                    img_w = prev_layer_w[-n_img:, :]  # (n_img, hidden_1) slice
-                    resnet_w = img_w.T @ pca_image.components_  # (hidden_1, 2048)
-                    cam_weights = (resnet_w @ class_w).reshape(-1)  # (2048,)
-                else:
-                    cam_weights = np.mean(pool_out[0])  # fallback
+                if img_dense is not None:
+                    img_d_w = img_dense.get_weights()[0]   # (n_img, hidden)
+                    resnet_w = img_d_w.T @ pca_image.components_  # (hidden, 2048)
+                    cam_weights = (resnet_w @ class_w).ravel()     # (2048,)
             else:
-                cam_weights = None
+                # Early fusion: find last Dense(n_classes) and preceding Dense
+                all_dense = [
+                    l for l in active_model.layers
+                    if len(l.get_weights()) == 2
+                    and l.get_weights()[0].shape[-1] == n_classes_local
+                ]
+                if all_dense:
+                    out_w = all_dense[-1].get_weights()[0]  # (hidden_2, n_classes)
+                    class_w = out_w[:, target_class]         # (hidden_2,)
+                    # Find Dense before this one (hidden_1 × hidden_2)
+                    for layer in reversed(active_model.layers):
+                        if (len(layer.get_weights()) == 2
+                                and layer.get_weights()[0].shape[-1] == len(class_w)
+                                and layer is not all_dense[-1]):
+                            prev_w = layer.get_weights()[0]   # (input_dim, hidden_2)
+                            img_w  = prev_w[-n_img:, :]        # (n_img, hidden_2)
+                            resnet_w = img_w.T @ pca_image.components_
+                            cam_weights = (resnet_w @ class_w).ravel()
+                            break
         except Exception as e:
             print(f"GradCAM weight projection failed ({e}), using mean activation")
-            cam_weights = None
-    else:
-        cam_weights = None
 
     # ── Build spatial heatmap ─────────────────────────────────────────────────
     if cam_weights is not None and len(cam_weights) == conv_out.shape[2]:
