@@ -223,17 +223,21 @@ def show_presentation_page():
             except Exception:
                 pass
 
-    c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns(10)
-    c1.metric("Product classes",      "27",              help="Rakuten categories to predict")
-    c2.metric("Image features",       "384",             help="ResNet50(2048) → PCA(384)")
-    c3.metric("TF-IDF best val acc",  _cv_acc_str,       help="TF-IDF + OCR + PCA — 84 916 samples")
-    c4.metric("TF-IDF epochs",        _cv_epoch_str,     help="Epochs trained (macro F1 early stopping)")
-    c5.metric("CLIP best val acc",    _clip_acc_str,     help="CLIP ViT-B/32 512-dim — 84 916 samples")
-    c6.metric("CLIP epochs",          _clip_epoch_str,   help="Epochs trained (macro F1 early stopping)")
-    c7.metric("MiniLM best val acc",  _ml_acc_str,       help="MiniLM 384-dim — 84 916 samples")
-    c8.metric("MiniLM epochs",        _ml_epoch_str,     help="Epochs trained (macro F1 early stopping)")
-    c9.metric("mpnet best val acc",   _mpnet_acc_str,    help="mpnet 768-dim — 84 916 samples")
-    c10.metric("mpnet epochs",        _mpnet_epoch_str,  help="Epochs trained (macro F1 early stopping)")
+    # Row 1 — static dataset stats
+    r1c1, r1c2 = st.columns(2)
+    r1c1.metric("Product classes", "27",  help="Rakuten categories to predict")
+    r1c2.metric("Image features",  "384", help="ResNet50(2048) → PCA(384)")
+
+    # Row 2 — one column per encoder: best val accuracy + epochs as delta
+    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+    r2c1.metric("TF-IDF + OCR",  _cv_acc_str,    delta=f"{_cv_epoch_str} epochs",
+                delta_color="off", help="TF-IDF + OCR + PCA — 84 916 samples, macro F1 early stopping")
+    r2c2.metric("CLIP ViT-B/32", _clip_acc_str,  delta=f"{_clip_epoch_str} epochs",
+                delta_color="off", help="CLIP ViT-B/32 512-dim — 84 916 samples, macro F1 early stopping")
+    r2c3.metric("MiniLM",        _ml_acc_str,    delta=f"{_ml_epoch_str} epochs",
+                delta_color="off", help="MiniLM 384-dim — 84 916 samples, macro F1 early stopping")
+    r2c4.metric("mpnet",         _mpnet_acc_str, delta=f"{_mpnet_epoch_str} epochs",
+                delta_color="off", help="mpnet 768-dim — 84 916 samples, macro F1 early stopping")
     st.divider()
 
     tab_ml, tab_ops, tab_stack, tab_services = st.tabs([
