@@ -30,6 +30,7 @@ dagshub==0.7.0
 # === Monitoring ===
 prometheus-client==0.20.0
 prometheus-fastapi-instrumentator
+evidently==0.4.33              # drift monitoring — HTML reports, PSI-based detection
 
 # === Text encoders ===
 sentence-transformers>=2.7.0  # MiniLM

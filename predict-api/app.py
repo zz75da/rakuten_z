@@ -15,6 +15,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import base64
 import cv2
 from pydantic import BaseModel
+from services.drift_monitor import record_prediction, build_reference, trigger_report, buffer_size, reference_exists
 import mlflow
 from mlflow.tracking import MlflowClient
 
@@ -397,6 +398,41 @@ def startup_event():
     load_artifacts()
 
 
+# --- Drift monitoring endpoints ---
+@app.post("/drift-rebuild-reference")
+def drift_rebuild_reference(user: dict = Depends(verify_jwt_token)):
+    """Rebuild the 5k stratified reference dataset for drift monitoring. Admin only."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    ok = build_reference(n_samples=5000)
+    return {"status": "built" if ok else "failed", "reference_exists": reference_exists()}
+
+
+@app.post("/drift-trigger-report")
+def drift_trigger_report(user: dict = Depends(verify_jwt_token)):
+    """Force a drift report from the current prediction buffer. Admin only."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    n = buffer_size()
+    trigger_report()
+    return {"status": "report_triggered", "buffer_size_at_trigger": n}
+
+
+@app.get("/drift-status")
+def drift_status(_user: dict = Depends(verify_jwt_token)):
+    """Return current drift monitoring status."""
+    from pathlib import Path
+    report_dir = Path("/app/data/artifacts/drift_reports")
+    reports = sorted(report_dir.glob("drift_*.html"), key=lambda p: p.stat().st_mtime) if report_dir.exists() else []
+    return {
+        "reference_exists":   reference_exists(),
+        "buffer_size":        buffer_size(),
+        "buffer_capacity":    2000,
+        "n_reports_on_disk":  len(reports),
+        "latest_report":      reports[-1].name if reports else None,
+    }
+
+
 # --- Endpoints ---
 @app.get("/health")
 def health():
@@ -538,6 +574,18 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
     FEATURE_TEXT_MEAN.set(float(np.mean(text_features)))
     FEATURE_IMAGE_MEAN.set(float(np.mean(image_features)))
     REQUEST_COUNT.labels("/predict-multimodal", "POST", "200").inc()
+    # Record lightweight summary stats for drift monitoring (no raw high-dim vectors)
+    try:
+        record_prediction({
+            "prdtypecode":    int(label_encoder.inverse_transform([pred])[0]) if label.isdigit() else label,
+            "confidence":     round(confidence, 4),
+            "text_norm":      round(float(np.linalg.norm(text_features)), 4),
+            "image_norm":     round(float(np.linalg.norm(image_features)), 4),
+            "encoder":        req.model,
+            "mode":           mode,
+        })
+    except Exception:
+        pass
 
     response = {
         "pred_class": pred, "label": label, "category": category,
