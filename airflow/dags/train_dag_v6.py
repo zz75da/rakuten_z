@@ -766,9 +766,9 @@ def _dag_failure_callback(context):
 
 # --- DAG Definition ---
 with DAG(
-    dag_id="rakuten_multimodal_pipeline_v6",
+    dag_id="rakuten_multimodal_pipeline_v7",
     default_args=default_args,
-    description="Sequential CV + MiniLM dual-model training with MLflow & Prometheus",
+    description="4-encoder pipeline: late fusion, focal loss, cleanlab audit, quality gate, drift monitoring",
     schedule_interval=None,
     start_date=datetime(2024, 1, 1),
     catchup=False,
