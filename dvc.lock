@@ -137,10 +137,14 @@ stages:
       md5: c936389910c88bb29bf2c438af3476df
       size: 54129120
       isexec: true
+    - path: data/feature_cache/ocr_text.csv
+      hash: md5
+      md5: 5529a5d86362506d46f055a428242679
+      size: 5026735
     - path: train-api/services/preprocess_text.py
       hash: md5
-      md5: a322f966e415f0f3b6f54795b1691c7a
-      size: 5875
+      md5: c47ed04a63825360ef54cf89784469e6
+      size: 7352
       isexec: true
     outs:
     - path: data/artifacts/text_vectorizer.pkl
@@ -149,7 +153,7 @@ stages:
       size: 4
     - path: data/feature_cache/text_features.npy
       hash: md5
-      md5: 8163c6a2f12191af8ee7ab2f38f762a5
+      md5: 8dbcd25452b2fbb13e9489cbcb600b6f
       size: 3396640128
   preprocess_text_minilm:
     cmd: python minilm-encoder/encode.py
