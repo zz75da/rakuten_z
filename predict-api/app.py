@@ -183,6 +183,24 @@ def verify_jwt_token(authorization: str = Header(...)):
 
 
 # --- Load artifacts ---
+def _fix_lambda_globals(model):
+    """
+    Keras 3 deserialises Lambda closures with wrong global bindings — `tf` becomes
+    a dict rather than the TensorFlow module, causing AttributeError on predict().
+    Walk every Lambda layer and replace any dict-typed `tf` global with the real module.
+    """
+    for layer in model.layers:
+        fn = getattr(layer, 'function', None)
+        if callable(fn) and hasattr(fn, '__globals__'):
+            try:
+                globs = fn.__globals__
+                if isinstance(globs.get('tf'), dict):
+                    globs['tf'] = tf
+            except Exception:
+                pass
+    return model
+
+
 def load_artifacts():
     global model_cv, model_minilm, model_mpnet, model_clip, label_encoder, text_vectorizer, \
            pca_text, pca_image, resnet_model, minilm_encoder, mpnet_encoder, \
@@ -203,7 +221,7 @@ def load_artifacts():
             keras_path = os.path.join(ARTIFACTS_PATH, "neural_network_model.keras")
             h5_path = os.path.join(ARTIFACTS_PATH, "neural_network_model.h5")
             model_path = keras_path if os.path.exists(keras_path) else h5_path
-            model_cv = tf.keras.models.load_model(model_path, compile=False)
+            model_cv = _fix_lambda_globals(tf.keras.models.load_model(model_path, compile=False))
             text_vectorizer = pickle.load(open(os.path.join(ARTIFACTS_PATH, "text_vectorizer.pkl"), "rb"))
             pca_text = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_text.pkl"), "rb"))
             print("✓ CV model loaded from disk")
@@ -215,7 +233,7 @@ def load_artifacts():
         minilm_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_minilm.keras")
         if os.path.exists(minilm_keras):
             try:
-                model_minilm = tf.keras.models.load_model(minilm_keras, compile=False)
+                model_minilm = _fix_lambda_globals(tf.keras.models.load_model(minilm_keras, compile=False))
                 # Load encoder directly — no pkl, model cached by sentence-transformers
                 from sentence_transformers import SentenceTransformer
                 minilm_encoder = SentenceTransformer(_MINILM_MODEL_NAME, device="cpu")
@@ -233,7 +251,7 @@ def load_artifacts():
         mpnet_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_mpnet.keras")
         if os.path.exists(mpnet_keras):
             try:
-                model_mpnet = tf.keras.models.load_model(mpnet_keras, compile=False)
+                model_mpnet = _fix_lambda_globals(tf.keras.models.load_model(mpnet_keras, compile=False))
                 from sentence_transformers import SentenceTransformer
                 mpnet_encoder = SentenceTransformer(_MPNET_MODEL_NAME, device="cpu")
                 print(f"✓ mpnet model loaded ({_MPNET_MODEL_NAME})")
@@ -250,7 +268,7 @@ def load_artifacts():
         clip_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_clip.keras")
         if os.path.exists(clip_keras):
             try:
-                model_clip = tf.keras.models.load_model(clip_keras, compile=False)
+                model_clip = _fix_lambda_globals(tf.keras.models.load_model(clip_keras, compile=False))
                 from transformers import CLIPTokenizer, CLIPTextModel
                 clip_tokenizer  = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
                 clip_text_model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32")
