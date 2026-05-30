@@ -219,7 +219,8 @@ def build_and_train_model(
     # Architecture / training constants — read from params.yaml, fall back to defaults.
     # Per-encoder overrides: model_minilm: / model_clip: sections win over model: base.
     _m = _PARAMS.get("model", {})
-    _encoder_key = f"model_{text_encoder}"  # e.g. "model_minilm", "model_clip"
+    # encoder key: "model_countvectorizer" for CV, "model_minilm" etc for others
+    _encoder_key = f"model_{text_encoder}"
     _m_override  = _PARAMS.get(_encoder_key, {})
     if _m_override:
         _m = {**_m, **_m_override}  # encoder-specific values take priority
@@ -239,6 +240,7 @@ def build_and_train_model(
     LR_MIN        = 1e-6
     FOCAL_GAMMA      = float(_m.get("focal_gamma", 2.0))
     USE_LATE_FUSION  = bool(_m.get("use_late_fusion", True))
+    USE_LAYER_NORM   = bool(_m.get("use_layer_norm", False))
     _reg             = keras_l2(L2_REG) if L2_REG > 0 else None
 
     label_encoder = LabelEncoder()
@@ -297,13 +299,17 @@ def build_and_train_model(
             text_inp  = Lambda(lambda x: x[:, :_text_dim],  output_shape=(_text_dim,),  name="text_split")(inp)
             image_inp = Lambda(lambda x: x[:, _text_dim:],  output_shape=(_img_dim,),   name="image_split")(inp)
 
-            # Text branch: text_dim → HIDDEN_1 → n_classes (logits)
+            # Text branch: text_dim → HIDDEN_1 [→ LayerNorm] → Dropout → n_classes (logits)
             t = Dense(HIDDEN_1, activation="relu", kernel_regularizer=_reg, name="text_dense1")(text_inp)
+            if USE_LAYER_NORM:
+                t = tf.keras.layers.LayerNormalization(name="text_ln1")(t)
             t = Dropout(DROPOUT_1, name="text_drop1")(t)
             t_logits = Dense(n_classes, name="text_logits")(t)
 
-            # Image branch: img_dim → HIDDEN_2 → n_classes (logits)
+            # Image branch: img_dim → HIDDEN_2 [→ LayerNorm] → Dropout → n_classes (logits)
             i = Dense(HIDDEN_2, activation="relu", kernel_regularizer=_reg, name="image_dense1")(image_inp)
+            if USE_LAYER_NORM:
+                i = tf.keras.layers.LayerNormalization(name="image_ln1")(i)
             i = Dropout(DROPOUT_2, name="image_drop1")(i)
             i_logits = Dense(n_classes, name="image_logits")(i)
 
@@ -417,6 +423,7 @@ def build_and_train_model(
                 "class_weights": "balanced",
                 "focal_gamma": FOCAL_GAMMA,
                 "use_late_fusion": USE_LATE_FUSION,
+                "use_layer_norm": USE_LAYER_NORM,
                 "fusion_text_dim": _text_dim if USE_LATE_FUSION else "n/a",
                 "fusion_image_dim": _img_dim if USE_LATE_FUSION else "n/a",
                 "early_stopping_monitor": "val_macro_f1",

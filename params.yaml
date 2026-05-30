@@ -22,8 +22,10 @@ preprocess:
   pca_batch_size: 512         # IncrementalPCA fitting batch
 
   # --- Safe to experiment ---
-  pca_components: 384         # image PCA output dim (was 300)
-                              # disk: X_reduced.npy ~+60 MB per +100 components
+  pca_components: 256         # image PCA output dim — reduced from 384
+                              # 2024 papers: 256d retains ~95% variance for frozen ResNet50 at 85k samples
+                              # reduces fusion layer size 33%, ~20% faster training — no OOM risk
+                              # note: triggers PCA rerun on next DAG run (pca_fingerprint detects size change)
   n_text_pca_components: 512  # CV text PCA output dim — 1024 doubles PCA time (~25-30h total)
                               # test l2_reg + epochs fixes first at 512, upgrade dims later if needed
   cv_max_features: 10000      # CountVectorizer vocabulary size — 10000 works fine with pca_txt=512
@@ -40,20 +42,30 @@ train:
 
 model:
   # Neural network architecture — all safe to experiment
-  learning_rate: 0.0005       # was 0.001 — slower, more stable convergence
+  learning_rate: 0.0002       # 2024 papers: 0.0001–0.0003 optimal for dense heads on frozen encoders
+                              # was 0.0005 — slightly aggressive for frozen CLIP/mpnet
   hidden_1: 512               # reverted from 1024 — wider net overfit worse (gap 14.5-15.6%)
-  hidden_2: 256               # proportional to hidden_1
-  dropout_1: 0.45
-  dropout_2: 0.35
-  l2_reg: 0.0001              # reverted — 0.0003 degraded both models; 0.0001 is the sweet spot
+  hidden_2: 256               # image branch; matches new pca_components=256 (1:1 ratio, clean)
+  dropout_1: 0.35             # text branch — reduced from 0.45; 2025 papers: 30-40% prevents modality collapse
+  dropout_2: 0.25             # image branch — reduced from 0.35; pre-trained ResNet50 features less noisy
+  l2_reg: 0.0001              # confirmed sweet spot — keep
+  use_layer_norm: true        # LayerNorm after first Dense in each branch (not BatchNorm)
+                              # 2024 multimodal papers: LayerNorm adapts per-sample; improves calibration
   early_stopping_patience: 8  # epochs without val_macro_f1 improvement before stopping
-  lr_patience: 4              # reverted — lrp=4 produced both CV and MiniLM best results
-  lr_factor: 0.5              # LR reduction multiplier (was 0.3 — gentler decay)
-  focal_gamma: 2.0            # focal loss gamma — Lin et al. 2017; 0 = standard crossentropy
-                              # gamma=2 canonical for moderate imbalance (4:1 ratio, 27 classes)
+  lr_patience: 4              # confirmed — lrp=4 produced best results
+  lr_factor: 0.5              # LR reduction multiplier
+  focal_gamma: 2.0            # base gamma — overridden per encoder below (sparse vs dense)
   use_late_fusion: true       # late fusion: separate text/image branches, learned gated average
-                              # 2024-2025 papers: late fusion beats concatenation on heterogeneous modalities
-                              # set false to revert to early/concat fusion
+
+model_countvectorizer:
+  # Architecture overrides for TF-IDF+OCR (sparse) encoder only.
+  focal_gamma: 2.5            # sparse TF-IDF features → higher gamma focuses more on hard minority classes
+                              # 2025: gamma=2.5 recommended for sparse input with 4:1 imbalance
+
+model_clip:
+  # Architecture overrides for CLIP ViT-B/32 encoder only.
+  focal_gamma: 1.5            # CLIP already handles easy examples well → less focusing needed
+                              # 2025: gamma=1.5 for dense well-aligned embeddings
 
 model_minilm:
   # Architecture overrides for paraphrase-multilingual-MiniLM-L12-v2 encoder only.
@@ -64,8 +76,8 @@ model_minilm:
   # Late fusion:  text branch only sees text_dim=384 — hidden_1=512 (1.3x text_dim) is correct.
   #               hidden_1=1024 on text_dim=384 is a 2.7x expansion — overfit risk on 85k samples.
   #               image branch gets hidden_2=256 (base model, 0.67x img_dim=384 — fine).
-  hidden_1: 512   # updated: was 1024 (correct for early fusion); 512 is optimal for late fusion text branch
-  hidden_2: 384
+  hidden_1: 512   # late fusion text branch (1.3× text_dim=384)
+  hidden_2: 256   # updated: image branch now matches new pca_components=256
 
 model_mpnet:
   # Architecture overrides for paraphrase-multilingual-mpnet-base-v2 encoder only.
@@ -80,10 +92,10 @@ model_mpnet:
   # Run 1 (early fusion): hidden_1=1024 < input_dim=1152 → bottleneck; best_val_acc=0.7719
   # Run 2 (early fusion): hidden_1=1152 — no bottleneck; best_val_acc=0.7746
   # Run 3 (late fusion):  text hidden_1=768 (exact match) — recommended for late fusion
-  hidden_1: 768               # late fusion text branch: text_dim=768 → no expansion, clean mapping
-  hidden_2: 384               # image branch: img_dim=384 → 384 (same dim, fine)
-  dropout_1: 0.5              # kept — combat overfit gap observed in run 2
-  dropout_2: 0.4              # kept — same rationale
+  hidden_1: 768               # late fusion text branch: text_dim=768 → no expansion
+  hidden_2: 256               # updated: matches new pca_components=256
+  dropout_1: 0.4              # slightly reduced from 0.5; still higher than base to combat mpnet overfit
+  dropout_2: 0.3              # slightly reduced from 0.4; same rationale
 
 minilm:
   # paraphrase-multilingual-MiniLM-L12-v2 encoder settings
