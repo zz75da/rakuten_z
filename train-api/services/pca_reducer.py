@@ -150,16 +150,19 @@ def reduce_features(
     log_memory_usage("After combining features")
 
     # --- Save outputs ---
-    # Encoder-specific X_reduced prevents CV/CLIP/MiniLM caches overwriting each other
-    X_reduced_path = os.path.join(save_dir, f"X_reduced_{text_encoder}.npy")
-    pca_img_path = os.path.join(save_dir, "pca_image.pkl")
+    # Both pca_components AND encoder in filename so different PCA configs coexist on disk.
+    # Switching pca_components no longer triggers a full 6-hour recompute — the right
+    # versioned file is loaded directly on cache hit.
+    # pca_image.pkl (unversioned) is also saved by save_artifacts for predict-api compatibility.
+    X_reduced_path = os.path.join(save_dir, f"X_reduced_{text_encoder}_{n_components_img}.npy")
+    pca_img_path   = os.path.join(save_dir, f"pca_image_{n_components_img}.pkl")
 
     np.save(X_reduced_path, X_reduced)
     with open(pca_img_path, "wb") as f:
         pickle.dump(pca_img, f)
 
     if pca_text is not None:
-        pca_text_path = os.path.join(save_dir, "pca_text.pkl")
+        pca_text_path = os.path.join(save_dir, f"pca_text_{n_text_components}.pkl")
         with open(pca_text_path, "wb") as f:
             pickle.dump(pca_text, f)
         logging.info(f"Saved PCA text model -> {pca_text_path}")

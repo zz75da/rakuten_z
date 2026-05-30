@@ -64,7 +64,7 @@ stages:
   # ── Dimensionality reduction ──────────────────────────────────────────────
 
   reduce_features_cv:
-    desc: "IncrementalPCA: text 10000→512, image 2048→384 — produces shared pca_image.pkl"
+    desc: "IncrementalPCA: text 10000→512, image 2048→{pca_components} — versioned by n: pca_image_{n}.pkl"
     cmd: python train-api/services/run_pca.py
               data/feature_cache/text_features.npy
               data/feature_cache/image_features.npy
@@ -76,8 +76,8 @@ stages:
       - train-api/services/pca_reducer.py
       - train-api/services/run_pca.py
     outs:
-      - data/artifacts/pca_text.pkl
-      - data/artifacts/pca_image.pkl
+      - data/artifacts/pca_text_512.pkl
+      - data/artifacts/pca_image_256.pkl
 
   reduce_features_minilm:
     desc: "IncrementalPCA: image 2048→384 (reuses pca_image.pkl) for MiniLM 384-d text features"

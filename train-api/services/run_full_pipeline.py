@@ -193,11 +193,13 @@ try:
     # actually regenerated; mtimes are NOT used because DVC add/push and np.save can
     # update them even when the content is identical — which caused spurious PCA reruns.
     _ARTIFACTS = "/app/data/artifacts"
-    # Encoder-specific X_reduced path — prevents CV/CLIP/MiniLM caches colliding
-    _X_reduced_cached    = os.path.join(_ARTIFACTS, f"X_reduced_{text_encoder}.npy")
-    _pca_img_cached      = os.path.join(_ARTIFACTS, "pca_image.pkl")
-    _pca_text_cached     = os.path.join(_ARTIFACTS, "pca_text.pkl") if text_encoder not in ("minilm", "clip", "mpnet") else None
-    _pca_fingerprint     = os.path.join(_ARTIFACTS, f"pca_fingerprint_{text_encoder}.json")
+    # Versioned paths: encoder + pca_components in filename so different PCA configs
+    # coexist on disk. Switching pca_components hits cache instead of recomputing 6h.
+    _X_reduced_cached = os.path.join(_ARTIFACTS, f"X_reduced_{text_encoder}_{pca_components}.npy")
+    _pca_img_cached   = os.path.join(_ARTIFACTS, f"pca_image_{pca_components}.pkl")
+    _pca_text_cached  = (os.path.join(_ARTIFACTS, f"pca_text_{n_text_pca_components}.pkl")
+                         if text_encoder not in ("minilm", "clip", "mpnet") else None)
+    _pca_fingerprint  = os.path.join(_ARTIFACTS, f"pca_fingerprint_{text_encoder}_{pca_components}.json")
 
     def _make_pca_fingerprint() -> dict:
         """Cheap fingerprint: encoder + PCA params + feature file sizes."""
