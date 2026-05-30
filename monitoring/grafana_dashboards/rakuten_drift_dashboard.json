@@ -27,7 +27,7 @@
           },
           {
             "selected": false,
-            "text": "CV (CountVectorizer)",
+            "text": "CV (TF-IDF+OCR)",
             "value": "countvectorizer"
           },
           {
@@ -43,7 +43,7 @@
         ],
         "includeAll": true,
         "multi": false,
-        "query": "countvectorizer,clip,minilm"
+        "query": "countvectorizer,clip,minilm,mpnet"
       }
     ]
   },
@@ -164,7 +164,7 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "CV Final Val Accuracy",
+      "title": "CV (TF-IDF+OCR) Final Val Accuracy",
       "description": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
       "gridPos": {
         "x": 8,
@@ -1306,7 +1306,7 @@
         {
           "refId": "A",
           "expr": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
-          "legendFormat": "CV (CountVectorizer)"
+          "legendFormat": "CV (TF-IDF+OCR)"
         },
         {
           "refId": "B",

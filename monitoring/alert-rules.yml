@@ -111,15 +111,27 @@ groups:
   # ── Model quality — per encoder ───────────────────────────────────────────
 
   - alert: CVModelValAccuracyLow
-    expr: model_final_val_accuracy{encoder="countvectorizer"} < 0.70
+    expr: model_final_val_accuracy{encoder="countvectorizer"} < 0.72
     for: 30m
     labels:
       severity: warning
       service: train-api
     annotations:
-      summary: "CV model val accuracy is {{ $value | printf \"%.2f\" }}"
+      summary: "CV (TF-IDF+OCR) model val accuracy is {{ $value | printf \"%.2f\" }}"
       description: >
-        The CountVectorizer model's validation accuracy has dropped below 0.70
+        The TF-IDF+OCR model's validation accuracy has dropped below 0.72
+        after the latest training run. Consider retraining or checking data quality.
+
+  - alert: mpnetModelValAccuracyLow
+    expr: model_final_val_accuracy{encoder="mpnet"} < 0.72
+    for: 30m
+    labels:
+      severity: warning
+      service: train-api
+    annotations:
+      summary: "mpnet model val accuracy is {{ $value | printf \"%.2f\" }}"
+      description: >
+        The mpnet model's validation accuracy has dropped below 0.72
         after the latest training run. Consider retraining or checking data quality.
 
   - alert: MiniLMModelValAccuracyLow
