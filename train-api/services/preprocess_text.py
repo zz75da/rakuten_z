@@ -118,20 +118,18 @@ def _build_combined_text(data: pd.DataFrame) -> list[str]:
 
 
 @track_time
-def extract_text_features(data: pd.DataFrame, max_features: int = 10000):
+def extract_text_features(data: pd.DataFrame, max_features: int = 10000, fit_only: bool = False):
     """
     Vectorize product text using French spaCy lemmatization + TF-IDF (TfidfVectorizer).
 
-    Improvements over original English-only pipeline:
-    - Input: designation + description (vs description-only with 35% nulls)
-    - spaCy model: fr_core_news_sm (French lemmatization + French stopwords)
-    - Stopwords: French + English (prevents "de", "la", "les" from consuming vocab)
-    - Alphanumeric tokens kept: model numbers, sizes, years (was is_alpha only)
-    - ngram_range=(1,2): captures "jeu video", "livre enfant" as single features
+    fit_only=True: fits and returns the vectorizer but does NOT create the dense feature
+    matrix. Use when text_features.npy already exists on disk but text_vectorizer.pkl
+    was corrupted or deleted — avoids the 3.4 GB OOM that full regeneration would cause.
+    Returns (None, vectorizer) when fit_only=True.
     """
     all_texts = _build_combined_text(data)
     n = len(all_texts)
-    logging.info(f"Total samples: {n}, n_process={N_CORES}")
+    logging.info(f"Total samples: {n}, n_process={N_CORES}, fit_only={fit_only}")
     log_memory("Before preprocessing")
 
     def _lemmatize(doc):
@@ -161,6 +159,14 @@ def extract_text_features(data: pd.DataFrame, max_features: int = 10000):
         min_df=2,             # ignore tokens appearing in only 1 document
         sublinear_tf=True,    # apply log(1+tf) instead of raw tf — compresses high-freq tokens
     )
+
+    if fit_only:
+        # fit() only — vocabulary built but no dense matrix created.
+        # Peak memory: sparse CSR matrix (~100 MB) vs toarray() → 3.4 GB.
+        vectorizer.fit(processed)
+        log_memory("After fit-only vectorization")
+        return None, vectorizer
+
     text_features = vectorizer.fit_transform(processed).toarray().astype(np.float32)
     log_memory("After vectorization")
     return text_features, vectorizer

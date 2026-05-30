@@ -35,6 +35,15 @@ def save_artifacts(model, vectorizer, pca_models, label_encoder, skip_existing=T
             "pca_image.pkl": pca_models["image"],
             "label_encoder.pkl": label_encoder,
         }
+    elif text_encoder == "mpnet":
+        # No vectorizer/pca_text — predict-api loads SentenceTransformer directly
+        # IMPORTANT: must NOT save text_vectorizer.pkl or pca_text.pkl here;
+        # they are None for mpnet and would corrupt the CV TfidfVectorizer on disk.
+        artifacts_to_save = {
+            "neural_network_model_mpnet.keras": model,
+            "pca_image.pkl": pca_models["image"],
+            "label_encoder.pkl": label_encoder,
+        }
     elif text_encoder == "clip":
         # No vectorizer/pca_text — predict-api loads CLIP model directly
         artifacts_to_save = {
@@ -43,6 +52,7 @@ def save_artifacts(model, vectorizer, pca_models, label_encoder, skip_existing=T
             "label_encoder.pkl": label_encoder,
         }
     else:
+        # countvectorizer — saves TF-IDF vectorizer and text PCA
         artifacts_to_save = {
             "neural_network_model.keras": model,
             "text_vectorizer.pkl": vectorizer,

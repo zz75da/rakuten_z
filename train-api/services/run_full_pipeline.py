@@ -155,6 +155,18 @@ try:
         if use_cache and _text_cache_valid():
             with open(VECTORIZER_CACHE, "rb") as f:
                 text_vectorizer = pickle.load(f)
+        elif (use_cache
+              and os.path.exists(TEXT_CACHE)
+              and not os.path.exists(VECTORIZER_CACHE)):
+            # text_features.npy is valid but vectorizer was deleted/corrupted.
+            # Re-fit vectorizer only (fit_only=True) — avoids the 3.4 GB toarray() OOM.
+            print("text_features.npy present but vectorizer missing — re-fitting vectorizer only")
+            _, text_vectorizer = extract_text_features(
+                train_data, max_features=cv_max_features, fit_only=True
+            )
+            with open(VECTORIZER_CACHE, "wb") as f:
+                pickle.dump(text_vectorizer, f)
+            _write_text_meta()
         else:
             text_features, text_vectorizer = extract_text_features(
                 train_data, max_features=cv_max_features
