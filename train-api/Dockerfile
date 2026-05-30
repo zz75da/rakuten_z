@@ -23,8 +23,14 @@ COPY requirements.txt /app/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
     pip install --ignore-installed blinker && \
-    pip install -r /app/requirements.txt && \
-    pip uninstall -y keras 2>/dev/null || true
+    pip install -r /app/requirements.txt
+
+# Keras 3 calls tf.__internal__.register_load_context_function which was removed
+# in TF 2.17. Patch the one offending line so keras 3 and TF 2.17 coexist.
+RUN LOAD_CTX=/usr/local/lib/python3.11/dist-packages/keras/src/saving/legacy/saved_model/load_context.py && \
+    [ -f "$LOAD_CTX" ] && \
+    sed -i 's/tf\.__internal__\.register_load_context_function(in_load_context)/pass  # patched: removed in TF 2.17/' "$LOAD_CTX" && \
+    echo "Patched $LOAD_CTX" || true
 
 # 4. Copie du reste du code
 COPY . .
