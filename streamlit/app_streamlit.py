@@ -731,7 +731,7 @@ def show_docker_workflow():
         ("clip-encoder",   "FastAPI + transformers",          "Bulk CLIP ViT-B/32 text encoding to .npy",  "#7c3aed"),
         ("predict-api",    "FastAPI + TF 2.17 + jemalloc",   "4-model inference + GradCAM + modality fallback + Evidently drift", "#e94560"),
         ("airflow",        "Airflow 2.x",                    "DAG v7 — training, quality gate, cleanlab, drift reference",  "#017cee"),
-        ("prometheus",     "Prometheus 3.x",                  "Metrics scraping (15 s), 9 targets",      "#e6522c"),
+        ("prometheus",     "Prometheus 3.x",                  "Metrics scraping (15 s), 8 targets",      "#e6522c"),
         ("grafana",        "Grafana",                         "Dashboards + per-encoder drift detection","#f46800"),
         ("alertmanager",   "Alertmanager",                    "Email routing via Brevo SMTP",            "#e6522c"),
         ("pushgateway",    "Pushgateway",                     "Batch metrics from Airflow",              "#e6522c"),
