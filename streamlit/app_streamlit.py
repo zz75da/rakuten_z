@@ -226,7 +226,7 @@ def show_presentation_page():
     # Row 1 — static dataset stats
     r1c1, r1c2 = st.columns(2)
     r1c1.metric("Product classes", "27",  help="Rakuten categories to predict")
-    r1c2.metric("Image features",  "384", help="ResNet50(2048) → PCA(384)")
+    r1c2.metric("Image features",  "256", help="ResNet50(2048) → PCA(256)")
 
     # Row 2 — one column per encoder: best val accuracy + epochs as delta
     r2c1, r2c2, r2c3, r2c4 = st.columns(4)
@@ -253,21 +253,21 @@ def show_presentation_page():
             st.markdown("""
             <div style="background:#1e1e2e;border-left:4px solid #e94560;
                         border-radius:8px;padding:18px 20px">
-                <b style="color:#e94560">Text branch — 3 encoders</b><br><br>
-                <code style="color:#a8b2d8">description</code> <span style="color:#6d7a9f">(raw string)</span><br><br>
+                <b style="color:#e94560">Text branch — 4 encoders</b><br><br>
+                <code style="color:#a8b2d8">designation + description + OCR</code><br><br>
                 <span style="color:#e94560;font-size:12px;font-weight:600">Encoder A — TF-IDF + OCR</span><br>
-                <span style="color:#6d7a9f">&nbsp;&nbsp;SpaCy lemmatisation + stopword removal + OCR text</span><br>
-                <span style="color:#6d7a9f">&nbsp;&nbsp;TfidfVectorizer</span> <code>max_features=10000, sublinear_tf=True</code><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;SpaCy lemmatisation + Tesseract OCR + TfidfVectorizer</span><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;IncrementalPCA</span> <code>n_components=512</code><br>
                 <b style="color:#28a745">&nbsp;&nbsp;output: 1 × 512</b><br><br>
                 <span style="color:#7c3aed;font-size:12px;font-weight:600">Encoder B — CLIP ViT-B/32</span><br>
-                <span style="color:#6d7a9f">&nbsp;&nbsp;openai/clip-vit-base-patch32 (text encoder only)</span><br>
-                <span style="color:#6d7a9f">&nbsp;&nbsp;L2-normalised embeddings (clip-encoder service)</span><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;openai/clip-vit-base-patch32 · L2-normalised</span><br>
                 <b style="color:#28a745">&nbsp;&nbsp;output: 1 × 512</b><br><br>
-                <span style="color:#a8b2d8;font-size:12px;font-weight:600">Encoder C — MiniLM</span><br>
+                <span style="color:#a8b2d8;font-size:12px;font-weight:600">Encoder C — MiniLM-L12-v2</span><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;paraphrase-multilingual-MiniLM-L12-v2</span><br>
-                <span style="color:#6d7a9f">&nbsp;&nbsp;multilingual sentence embeddings (minilm-encoder service)</span><br>
-                <b style="color:#28a745">&nbsp;&nbsp;output: 1 × 384</b>
+                <b style="color:#28a745">&nbsp;&nbsp;output: 1 × 384</b><br><br>
+                <span style="color:#f59e0b;font-size:12px;font-weight:600">Encoder D — mpnet-base-v2</span><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;paraphrase-multilingual-mpnet-base-v2</span><br>
+                <b style="color:#28a745">&nbsp;&nbsp;output: 1 × 768</b>
             </div>
             """, unsafe_allow_html=True)
 
@@ -279,67 +279,57 @@ def show_presentation_page():
                 <code style="color:#a8b2d8">image_jpg</code> <span style="color:#6d7a9f">(224 x 224 px)</span><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;ResNet50 pre-trained (ImageNet, no top)</span><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;Global Average Pooling →</span> <code>2048 dims</code><br>
-                <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;IncrementalPCA</span> <code>n_components=384</code><br>
-                <b style="color:#28a745">output: 1 × 384</b><br><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;&nbsp;IncrementalPCA</span> <code>n_components=256</code><br>
+                <b style="color:#28a745">output: 1 × 256</b><br><br>
                 <span style="color:#6d7a9f;font-size:11px">Single-pass predict() over full dataset<br>
                 (batch_size=64, one generator — eliminates ~2 600 redundant predict calls)</span>
             </div>
             """, unsafe_allow_html=True)
 
-        st.markdown("#### Classification model — shared architecture, 3 variants")
-
-        def _card(label, sub, border, label_color):
-            return (
-                f"<div style='background:#16213e;border:1px solid {border};"
-                f"border-radius:6px;padding:6px 10px;font-size:0.78rem;"
-                f"text-align:center;min-width:68px'>"
-                f"<span style='color:{label_color};font-weight:600'>{label}</span><br>"
-                f"<span style='color:#6d7a9f'>{sub}</span></div>"
-            )
-
-        arrow = "<div style='color:#6d7a9f;padding:0 5px;font-size:0.9rem;align-self:center'>&#9654;</div>"
-        row = "".join([
-            "<div style='display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:4px'>",
-            "<div style='display:flex;flex-direction:column;gap:6px'>",
-            f"<div style='background:#16213e;border:1px solid #e94560;border-radius:6px;"
-            f"padding:6px 12px;font-size:0.78rem;text-align:center'>"
-            f"<span style='color:#e94560;font-weight:600'>text</span>"
-            f"<span style='color:#6d7a9f'> 1×512 (CV/CLIP)<br>or 1×384 (MiniLM)</span></div>",
-            f"<div style='background:#16213e;border:1px solid #4a6fa5;border-radius:6px;"
-            f"padding:6px 12px;font-size:0.78rem;text-align:center'>"
-            f"<span style='color:#a8b2d8;font-weight:600'>image</span>"
-            f"<span style='color:#6d7a9f'> 1×384</span></div>",
-            "</div>",
-            "<div style='color:#6d7a9f;font-size:1.6rem;padding:0 2px;align-self:center;line-height:0.9'>}</div>",
-            f"<div style='background:#0f3460;border-radius:6px;padding:6px 10px;"
-            f"font-size:0.78rem;color:#a8b2d8;text-align:center;min-width:60px;align-self:center'>"
-            f"hstack<br><span style='color:#6d7a9f'>1×896 (CV/CLIP)<br>or 1×768 (MiniLM)</span></div>",
-            arrow,
-            _card("Dense",   "512 &middot; ReLU",   "#28a745", "#28a745"),
-            arrow,
-            _card("Dropout", "p = 0.3",              "#9aabb8", "#a8b2d8"),
-            arrow,
-            _card("Dense",   "256 &middot; ReLU",    "#28a745", "#28a745"),
-            arrow,
-            _card("Dropout", "p = 0.2",              "#9aabb8", "#a8b2d8"),
-            arrow,
-            _card("Dense",   "27 &middot; Softmax",  "#e94560", "#e94560"),
-            arrow,
-            f"<div style='background:#1a3a1a;border:1px solid #28a745;border-radius:6px;"
-            f"padding:6px 12px;font-size:0.82rem;text-align:center;min-width:56px;align-self:center'>"
-            f"<span style='color:#28a745;font-weight:600'>class</span><br>"
-            f"<span style='color:#6d7a9f'>1 / 27</span></div>",
-            "</div>",
-        ])
+        st.markdown("#### Classification model — late fusion, 4 variants")
         st.markdown(
-            f"<div style='background:#1e1e2e;border-radius:8px;padding:20px 24px;margin-top:8px'>"
-            f"{row}"
-            f"<div style='display:flex;gap:20px;margin-top:14px;flex-wrap:wrap;font-size:0.8rem'>"
-            f"<span style='color:#e94560'>Optimizer: Adam lr=0.001</span>"
-            f"<span style='color:#a8b2d8'>Loss: sparse_categorical_crossentropy</span>"
-            f"<span style='color:#6d7a9f'>Split: 80 / 20 &nbsp;|&nbsp; Class weights: balanced</span>"
-            f"<span style='color:#6d7a9f'>Early stopping patience=5 &nbsp;|&nbsp; ReduceLROnPlateau</span>"
-            f"</div></div>",
+            "<div style='background:#1e1e2e;border-radius:8px;padding:20px 24px;margin-top:8px'>"
+            "<div style='display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start'>"
+
+            # Text branch
+            "<div style='flex:1;min-width:180px;background:#16213e;border:1px solid #e94560;border-radius:6px;padding:10px 12px;font-size:0.78rem'>"
+            "<span style='color:#e94560;font-weight:700'>Text branch</span><br>"
+            "<span style='color:#6d7a9f'>text features (512/384/768)</span><br>"
+            "&#9654; <span style='color:#28a745'>Dense(HIDDEN_1) · ReLU</span><br>"
+            "&#9654; <span style='color:#a8b2d8'>LayerNorm</span><br>"
+            "&#9654; <span style='color:#a8b2d8'>Dropout(0.35)</span><br>"
+            "&#9654; <span style='color:#28a745'>Dense(27) text logits</span>"
+            "</div>"
+
+            "<div style='color:#6d7a9f;font-size:1.4rem;align-self:center'>⊕</div>"
+
+            # Image branch
+            "<div style='flex:1;min-width:180px;background:#16213e;border:1px solid #4a6fa5;border-radius:6px;padding:10px 12px;font-size:0.78rem'>"
+            "<span style='color:#a8b2d8;font-weight:700'>Image branch</span><br>"
+            "<span style='color:#6d7a9f'>image PCA features (256)</span><br>"
+            "&#9654; <span style='color:#28a745'>Dense(256) · ReLU</span><br>"
+            "&#9654; <span style='color:#a8b2d8'>LayerNorm</span><br>"
+            "&#9654; <span style='color:#a8b2d8'>Dropout(0.25)</span><br>"
+            "&#9654; <span style='color:#28a745'>Dense(27) image logits</span>"
+            "</div>"
+
+            "<div style='color:#6d7a9f;font-size:1.4rem;align-self:center'>→</div>"
+
+            # Fusion + output
+            "<div style='flex:1;min-width:180px;background:#16213e;border:1px solid #f59e0b;border-radius:6px;padding:10px 12px;font-size:0.78rem'>"
+            "<span style='color:#f59e0b;font-weight:700'>Learned gated fusion</span><br>"
+            "<span style='color:#6d7a9f'>α = Dense(1, sigmoid) from branch means</span><br>"
+            "&#9654; <span style='color:#28a745'>α·softmax(text) + (1-α)·softmax(image)</span><br>"
+            "&#9654; <span style='color:#e94560;font-weight:700'>class 1 / 27</span>"
+            "</div>"
+
+            "</div>"
+            "<div style='display:flex;gap:16px;margin-top:12px;flex-wrap:wrap;font-size:0.8rem'>"
+            "<span style='color:#e94560'>Adam lr=0.0002</span>"
+            "<span style='color:#a8b2d8'>Focal loss γ∈{1.5,2.0,2.5} per encoder</span>"
+            "<span style='color:#6d7a9f'>Stratified 80/20 · Class weights balanced</span>"
+            "<span style='color:#6d7a9f'>Early stop patience=8 on val_macro_F1 · ReduceLROnPlateau</span>"
+            "</div></div>",
             unsafe_allow_html=True,
         )
 
@@ -352,7 +342,7 @@ def show_presentation_page():
             ("MiniLM (paraphrase-multilingual)", _artifacts_base / "train_history_minilm.json", "#a8b2d8"),
             ("mpnet (paraphrase-multilingual)",  _artifacts_base / "train_history_mpnet.json",  "#f59e0b"),
         ]
-        _chart_cols = st.columns(3)
+        _chart_cols = st.columns(4)
         _any_chart  = False
         for _col, (_enc_label, _hist_file, _color) in zip(_chart_cols, _hist_configs):
             with _col:
@@ -402,9 +392,9 @@ def show_presentation_page():
             st.markdown("""
             <div style="background:#1e1e2e;border:1px solid #017cee;border-radius:8px;
                         padding:14px 16px;text-align:center">
-                <div style="color:#017cee;font-weight:700;font-size:14px">Airflow DAG v6</div>
+                <div style="color:#017cee;font-weight:700;font-size:14px">Airflow DAG v7</div>
                 <div style="color:#9aabb8;font-size:12px;margin-top:6px">
-                    Triggers training<br>Polls status every 60 s<br>Last-3-runs log
+                    Triggers training · quality gate<br>Cleanlab audit · drift reference<br>Polls every 60 s · last-3-runs log
                 </div>
             </div>""", unsafe_allow_html=True)
         with arr1:
@@ -442,7 +432,7 @@ def show_presentation_page():
                         padding:14px 16px;text-align:center">
                 <div style="color:#f7981c;font-weight:700;font-size:14px">DagsHub MLflow</div>
                 <div style="color:#9aabb8;font-size:12px;margin-top:6px">
-                    Params · metrics<br>datasets · PCAs<br>Model Registry (CV + MiniLM)
+                    Params · metrics · macro F1 · top-3<br>datasets · PCAs<br>Registry: CV · CLIP · MiniLM · mpnet
                 </div>
             </div>""", unsafe_allow_html=True)
         with o2:
@@ -451,7 +441,7 @@ def show_presentation_page():
                         padding:14px 16px;text-align:center">
                 <div style="color:#28a745;font-weight:700;font-size:14px">Disk artifacts</div>
                 <div style="color:#9aabb8;font-size:12px;margin-top:6px">
-                    neural_network_model.keras<br>neural_network_model_clip.keras<br>neural_network_model_minilm.keras<br>pca_image/text · vectorizer
+                    model.keras · model_clip.keras<br>model_minilm.keras · model_mpnet.keras<br>pca_image/text · tfidf_vectorizer<br>cleanlab_report · drift_reference
                 </div>
             </div>""", unsafe_allow_html=True)
         with o3:
@@ -493,13 +483,14 @@ def show_presentation_page():
                         padding:14px 16px">
                 <div style="color:#a8b2d8;font-weight:700;font-size:14px">Predict-API :5003</div>
                 <div style="color:#9aabb8;font-size:12px;margin-top:8px;display:flex;gap:12px;flex-wrap:wrap">
-                    <span><code style="font-size:11px">POST /predict-text?model=cv|clip|minilm</code></span>
+                    <span><code style="font-size:11px">POST /predict-text?model=cv|clip|minilm|mpnet</code></span>
                     <span><code style="font-size:11px">POST /predict-image</code></span>
-                    <span><code style="font-size:11px">POST /predict-multimodal</code></span>
+                    <span><code style="font-size:11px">POST /predict-multimodal</code> (modality fallback)</span>
+                    <span><code style="font-size:11px">POST /gradcam</code></span>
                     <span><code style="font-size:11px">POST /reload-artifacts</code></span>
                 </div>
                 <div style="color:#6d7a9f;font-size:11px;margin-top:6px">
-                    model_cv + model_minilm loaded simultaneously &nbsp;|&nbsp; jemalloc LD_PRELOAD
+                    4 models loaded · modality fallback · GradCAM · Evidently drift &nbsp;|&nbsp; jemalloc LD_PRELOAD
                 </div>
             </div>""", unsafe_allow_html=True)
 
@@ -511,7 +502,7 @@ def show_presentation_page():
                 <b style="color:#e94560">MLflow</b>
                 <p style="color:#a8b2d8;font-size:13px;margin:6px 0 0">
                 Run tracking, params,<br>metrics, datasets, PCAs.<br>
-                Models: rakuten_multimodal_cv<br>+ rakuten_multimodal_minilm
+                Models: CV · CLIP<br>MiniLM · mpnet
                 </p>
             </div>""", unsafe_allow_html=True)
         with cb:
@@ -534,22 +525,29 @@ def show_presentation_page():
     # ── Tab 3 : Tech Stack ────────────────────────────────────────────────────
     with tab_stack:
         rows = [
-            ("Category",          "Tool",                          "Role"),
-            ("Orchestration",     "Apache Airflow 2.x (v6)",       "Training DAG, async polling, per-encoder metrics push, last-3-runs log"),
-            ("Text encoding A",   "SpaCy + CountVectorizer",       "Lemmatised NLP, single-pass pipe, IncrementalPCA (1 024-d)"),
-            ("Text encoding B",   "MiniLM-L12-v2 (sentence-transformers)", "Multilingual sentence embeddings (384-d), dedicated microservice"),
-            ("Image encoding",    "ResNet50 (Keras)",              "ImageNet pretrained, global avg pool, single predict() pass, batch_size=64"),
-            ("Dim. reduction",    "IncrementalPCA (sklearn)",      "Memory-safe batched PCA — result cached, skipped on re-runs"),
-            ("Classifier",        "Keras / TensorFlow 2.17",       "Dense 512→Dropout→256→Dropout→Softmax 27, jemalloc subprocess"),
-            ("Experiment tracking","MLflow 2.17 + DagsHub",        "Params, metrics, datasets — per-encoder registered models"),
-            ("Serving",           "FastAPI + uvicorn",             "predict-api (dual-model), train-api (409 guard), gate-api"),
-            ("Auth",              "JWT (PyJWT)",                   "Bearer tokens, RBAC admin/user"),
-            ("Memory allocator",  "jemalloc (LD_PRELOAD)",         "Replaces glibc in train-api + predict-api — eliminates TF/PyTorch heap corruption"),
-            ("Monitoring",        "Prometheus + Grafana",          "Drift confidence/entropy, per-encoder accuracy, latency, UP/DOWN"),
-            ("Alerting",          "Alertmanager",                  "Email (Brevo SMTP) — drift, latency, per-encoder accuracy, service down"),
-            ("Storage",           "MinIO + PostgreSQL",            "S3 artifacts + Airflow/MLflow metadata"),
-            ("Data versioning",   "DVC + DagsHub S3",             "CSVs and images versioned, dual-pipeline dvc.yaml"),
-            ("Containerisation",  "Docker Compose",                "13 services, dedicated bridge network, jobs volume-mounted"),
+            ("Category",           "Tool",                                   "Role"),
+            ("Orchestration",      "Apache Airflow 2.x (DAG v7)",            "Training · quality gate · cleanlab · drift reference · last-3-runs log"),
+            ("Text encoding A",    "SpaCy + TF-IDF + Tesseract OCR",         "Lemmatised NLP + image OCR text, TfidfVectorizer(sublinear_tf), PCA 512-d"),
+            ("Text encoding B",    "CLIP ViT-B/32 (laion/clip)",             "Vision-language embeddings 512-d, dedicated clip-encoder service"),
+            ("Text encoding C",    "MiniLM-L12-v2 (sentence-transformers)",  "Multilingual sentence embeddings 384-d, dedicated minilm-encoder service"),
+            ("Text encoding D",    "mpnet-base-v2 (sentence-transformers)",  "Multilingual sentence embeddings 768-d, shared minilm-encoder service"),
+            ("Image encoding",     "ResNet50 (Keras)",                       "ImageNet pretrained, global avg pool → 2048-d, PCA 256-d"),
+            ("Fusion",             "Late fusion (learned gated average)",     "Separate text/image branches → per-class logits → α·text + (1-α)·image"),
+            ("Loss",               "Focal loss (Lin et al. 2017)",            "γ per encoder (CV:2.5, CLIP:1.5, MiniLM/mpnet:2.0); focal + class weights"),
+            ("Dim. reduction",     "IncrementalPCA (sklearn)",                "Memory-safe batched PCA — fingerprint cache, skipped on re-runs"),
+            ("Experiment tracking","MLflow 2.17 + DagsHub",                  "Params, val_acc, macro_F1, top-3 per epoch — 4 registered models"),
+            ("Label quality",      "Cleanlab 2.6.5",                         "Confident learning audit post-training — flags mislabeled samples"),
+            ("Quality gate",       "pytest (post-training)",                  "Accuracy floors, macro F1 floor, no class collapse, overfit gap ≤ 0.20"),
+            ("Drift monitoring",   "Evidently AI 0.4.33",                    "PSI-based feature drift — bounded 2000-row buffer, 10 HTML reports max"),
+            ("Explainability",     "GradCAM (predict-api)",                  "Class-discriminative heatmaps via analytical weight projection through PCA"),
+            ("Serving",            "FastAPI + uvicorn",                      "predict-api (4 models + GradCAM + fallback), train-api (409 guard), gate-api"),
+            ("Auth",               "JWT (PyJWT)",                            "Bearer tokens, RBAC admin/user"),
+            ("Memory allocator",   "jemalloc (LD_PRELOAD)",                  "Replaces glibc — eliminates TF/NumPy heap corruption during training"),
+            ("Monitoring",         "Prometheus + Grafana",                   "Drift confidence/entropy, per-encoder accuracy, latency, UP/DOWN"),
+            ("Alerting",           "Alertmanager",                           "Email (Brevo SMTP) — drift, latency, accuracy (CV≥0.72, CLIP≥0.80), down"),
+            ("Storage",            "MinIO + PostgreSQL",                     "S3 artifacts + Airflow/MLflow metadata"),
+            ("Data versioning",    "DVC + DagsHub S3",                      "Feature caches + models versioned, ocr_text.csv tracked"),
+            ("Containerisation",   "Docker Compose",                         "14 services, static subnet 172.20.0.0/16, jobs volume-mounted"),
         ]
         header = rows[0]
         st.markdown(
@@ -586,6 +584,7 @@ def show_presentation_page():
             ("Predict-API",     predict_url,                  "/health"),
             ("Train-API",       "http://train-api:5002",      "/health"),
             ("MiniLM Encoder",  "http://minilm-encoder:5004", "/health"),
+            ("CLIP Encoder",    "http://clip-encoder:5007",   "/health"),
             ("Prometheus",      "http://prometheus:9090",     "/-/healthy"),
             ("Grafana",         "http://grafana:3000",        "/api/health"),
             ("Pushgateway",     "http://pushgateway:9091",    "/"),
@@ -730,8 +729,8 @@ def show_docker_workflow():
         ("train-api",      "FastAPI + TF 2.17 + jemalloc",   "Async training pipeline (subprocess)",    "#e94560"),
         ("minilm-encoder", "FastAPI + sentence-transformers", "Bulk MiniLM text encoding to .npy cache",   "#a8b2d8"),
         ("clip-encoder",   "FastAPI + transformers",          "Bulk CLIP ViT-B/32 text encoding to .npy",  "#7c3aed"),
-        ("predict-api",    "FastAPI + TF 2.17 + jemalloc",   "Tri-model inference (CV + CLIP + MiniLM)", "#e94560"),
-        ("airflow",        "Airflow 2.x",                    "DAG v6 orchestration",                     "#017cee"),
+        ("predict-api",    "FastAPI + TF 2.17 + jemalloc",   "4-model inference + GradCAM + modality fallback + Evidently drift", "#e94560"),
+        ("airflow",        "Airflow 2.x",                    "DAG v7 — training, quality gate, cleanlab, drift reference",  "#017cee"),
         ("prometheus",     "Prometheus 3.x",                  "Metrics scraping (15 s), 9 targets",      "#e6522c"),
         ("grafana",        "Grafana",                         "Dashboards + per-encoder drift detection","#f46800"),
         ("alertmanager",   "Alertmanager",                    "Email routing via Brevo SMTP",            "#e6522c"),
@@ -768,17 +767,18 @@ def show_docker_workflow():
         st.markdown("""
         **train-api** exposes (labeled by encoder):
         - `train_loss` / `val_loss` / `train_accuracy` / `val_accuracy`
-        - `model_final_val_accuracy{encoder="cv|clip|minilm"}` — final val accuracy
-        - `model_final_val_loss{encoder="cv|clip|minilm"}` — final val loss
+        - `model_final_val_accuracy{encoder="cv|clip|minilm|mpnet"}` — final val accuracy
+        - `model_final_val_loss{encoder="cv|clip|minilm|mpnet"}` — final val loss
         - `training_dataset_size` — dataset size
         - `model_num_classes` / `epochs_completed_total`
         """)
 
     st.markdown("### Configured alerts")
     alerts = [
-        ("CVModelValAccuracyLow",     "warning",  "CV model val_accuracy < 0.70"),
-        ("CLIPModelValAccuracyLow",   "warning",  "CLIP model val_accuracy < 0.70"),
-        ("MiniLMModelValAccuracyLow", "warning",  "MiniLM model val_accuracy < 0.70"),
+        ("CVModelValAccuracyLow",     "warning",  "CV (TF-IDF+OCR) val_accuracy < 0.72"),
+        ("CLIPModelValAccuracyLow",   "warning",  "CLIP val_accuracy < 0.70"),
+        ("MiniLMModelValAccuracyLow", "warning",  "MiniLM val_accuracy < 0.70"),
+        ("mpnetModelValAccuracyLow",  "warning",  "mpnet val_accuracy < 0.72"),
         ("PredictionConfidenceDrift", "warning",  "P50 confidence < 0.40 for 15 min"),
         ("PredictionEntropyHigh",     "warning",  "P90 entropy > 2.5 nats for 15 min"),
         ("ClassDistributionSkewed",   "warning",  "One class > 80% of predictions"),
@@ -789,8 +789,8 @@ def show_docker_workflow():
         ("MiniLMEncoderDown",         "warning",  "minilm-encoder unreachable > 3 min"),
         ("CLIPEncoderDown",           "warning",  "clip-encoder unreachable > 3 min"),
         ("GateAPIDown",               "critical", "gate-api (auth) unreachable > 2 min"),
-        ("MinIODown",                 "critical", "MinIO unreachable > 3 min"),
         ("DiskSpaceLow",              "critical", "Root filesystem < 10% free"),
+        ("HighMemoryUsage",           "warning",  "System memory > 90% for 10 min"),
     ]
     for name, severity, desc in alerts:
         color = "#dc3545" if severity == "critical" else "#ffc107"
