@@ -208,13 +208,20 @@ def build_and_train_model(
 
     # Deferred TF imports (CPU image: no BFCAllocator, safe after any numpy work)
     import tensorflow as tf
-    import mlflow.tensorflow
     from tensorflow.keras import Model, Input
     from tensorflow.keras.layers import Dense, Dropout
     from tensorflow.keras.optimizers import Adam
     from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
     from tensorflow.keras.regularizers import l2 as keras_l2
-    mlflow.tensorflow.autolog(disable=True)
+    # mlflow.tensorflow conflicts with standalone Keras 3 installed by cleanlab.
+    # Import is optional — model is still saved to disk and registered via model registry.
+    _mlflow_tf_available = False
+    try:
+        import mlflow.tensorflow
+        mlflow.tensorflow.autolog(disable=True)
+        _mlflow_tf_available = True
+    except Exception as _e:
+        print(f"Warning: mlflow.tensorflow unavailable ({_e}) — skipping TF autolog")
 
     # Architecture / training constants — read from params.yaml, fall back to defaults.
     # Per-encoder overrides: model_minilm: / model_clip: sections win over model: base.
@@ -520,12 +527,13 @@ def build_and_train_model(
             except Exception as e:
                 print(f"Warning: failed to log PCA models: {e}")
 
-        try:
-            n_sample = min(64, len(X_train))
-            sig = infer_signature(X_train[:n_sample], model.predict(X_train[:n_sample], verbose=0))
-            mlflow.tensorflow.log_model(model, artifact_path="model", signature=sig)
-        except Exception as e:
-            print(f"Warning: mlflow.tensorflow.log_model failed: {e}")
+        if _mlflow_tf_available:
+            try:
+                n_sample = min(64, len(X_train))
+                sig = infer_signature(X_train[:n_sample], model.predict(X_train[:n_sample], verbose=0))
+                mlflow.tensorflow.log_model(model, artifact_path="model", signature=sig)
+            except Exception as e:
+                print(f"Warning: mlflow.tensorflow.log_model failed: {e}")
 
         # Evaluate on held-out val set (X already freed; X_val still in scope)
         eval_results = evaluate_model(model, X_val, y_val, label_encoder)

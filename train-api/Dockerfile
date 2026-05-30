@@ -23,7 +23,8 @@ COPY requirements.txt /app/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
     pip install --ignore-installed blinker && \
-    pip install -r /app/requirements.txt
+    pip install -r /app/requirements.txt && \
+    pip install --force-reinstall "keras<3.0" 2>/dev/null || true
 
 # 4. Copie du reste du code
 COPY . .
