@@ -25,6 +25,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, "/app")
+# Force Keras 2 (tf.keras) — cleanlab installs keras>=3 which breaks Lambda layer loading
+os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
