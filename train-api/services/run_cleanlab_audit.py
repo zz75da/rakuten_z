@@ -37,10 +37,10 @@ FEAT_CACHE = "/app/data/feature_cache"
 DATA_PATH  = "/app/data"
 
 _ENCODER_FILES = {
-    "clip":             (f"{FEAT_CACHE}/X_reduced_clip.npy",          f"{ARTIFACTS}/neural_network_model_clip.keras"),
-    "minilm":           (f"{FEAT_CACHE}/X_reduced_minilm.npy",        f"{ARTIFACTS}/neural_network_model_minilm.keras"),
-    "mpnet":            (f"{FEAT_CACHE}/X_reduced_mpnet.npy",         f"{ARTIFACTS}/neural_network_model_mpnet.keras"),
-    "countvectorizer":  (f"{FEAT_CACHE}/X_reduced_countvectorizer.npy", f"{ARTIFACTS}/neural_network_model.keras"),
+    "clip":             (f"{ARTIFACTS}/X_reduced_clip.npy",          f"{ARTIFACTS}/neural_network_model_clip.keras"),
+    "minilm":           (f"{ARTIFACTS}/X_reduced_minilm.npy",        f"{ARTIFACTS}/neural_network_model_minilm.keras"),
+    "mpnet":            (f"{ARTIFACTS}/X_reduced_mpnet.npy",         f"{ARTIFACTS}/neural_network_model_mpnet.keras"),
+    "countvectorizer":  (f"{ARTIFACTS}/X_reduced_countvectorizer.npy", f"{ARTIFACTS}/neural_network_model.keras"),
 }
 
 
