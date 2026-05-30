@@ -92,6 +92,13 @@ def run_audit(encoder: str = "clip", batch_size: int = 512):
     log.info("Loading model...")
     import tensorflow as tf
     tf.get_logger().setLevel("ERROR")
+    # Lambda layers in late fusion models require unsafe deserialization —
+    # safe because we always load our own trained models, never external artifacts.
+    try:
+        import keras
+        keras.config.enable_unsafe_deserialization()
+    except Exception:
+        pass
     model = tf.keras.models.load_model(model_path, compile=False)
 
     log.info(f"Predicting on {n_samples:,} samples (batch_size={batch_size})...")

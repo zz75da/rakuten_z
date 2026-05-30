@@ -293,8 +293,9 @@ def build_and_train_model(
             from tensorflow.keras.layers import Lambda, Concatenate, Multiply, Add
 
             # Split input into text and image portions
-            text_inp  = Lambda(lambda x: x[:, :_text_dim],  name="text_split")(inp)
-            image_inp = Lambda(lambda x: x[:, _text_dim:],  name="image_split")(inp)
+            # output_shape required for Keras 3 Lambda shape inference
+            text_inp  = Lambda(lambda x: x[:, :_text_dim],  output_shape=(_text_dim,),  name="text_split")(inp)
+            image_inp = Lambda(lambda x: x[:, _text_dim:],  output_shape=(_img_dim,),   name="image_split")(inp)
 
             # Text branch: text_dim → HIDDEN_1 → n_classes (logits)
             t = Dense(HIDDEN_1, activation="relu", kernel_regularizer=_reg, name="text_dense1")(text_inp)
@@ -310,8 +311,8 @@ def build_and_train_model(
             # alpha=1 → text only, alpha=0 → image only
             # Initialised near 0.5 so both branches contribute equally at start.
             branch_summary = Concatenate(name="branch_summary")([
-                Lambda(lambda x: tf.reduce_mean(x, axis=1, keepdims=True))(t_logits),
-                Lambda(lambda x: tf.reduce_mean(x, axis=1, keepdims=True))(i_logits),
+                Lambda(lambda x: tf.reduce_mean(x, axis=1, keepdims=True), output_shape=(1,), name="t_mean")(t_logits),
+                Lambda(lambda x: tf.reduce_mean(x, axis=1, keepdims=True), output_shape=(1,), name="i_mean")(i_logits),
             ])
             alpha = Dense(1, activation="sigmoid", kernel_initializer="zeros",
                           bias_initializer=tf.initializers.Constant(0.0),
@@ -320,7 +321,7 @@ def build_and_train_model(
             # Mixture of softmax outputs: valid probability distribution
             t_probs   = tf.keras.layers.Softmax(name="text_softmax")(t_logits)
             i_probs   = tf.keras.layers.Softmax(name="image_softmax")(i_logits)
-            alpha_inv = Lambda(lambda x: 1.0 - x, name="alpha_inv")(alpha)
+            alpha_inv = Lambda(lambda x: 1.0 - x, output_shape=(1,), name="alpha_inv")(alpha)
             out = Add(name="fused_probs")([
                 Multiply(name="alpha_text") ([alpha,     t_probs]),
                 Multiply(name="alpha_image")([alpha_inv, i_probs]),

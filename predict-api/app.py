@@ -187,6 +187,12 @@ def load_artifacts():
     global model_cv, model_minilm, model_mpnet, model_clip, label_encoder, text_vectorizer, \
            pca_text, pca_image, resnet_model, minilm_encoder, mpnet_encoder, \
            clip_tokenizer, clip_text_model
+    # Late fusion models use Lambda layers — enable unsafe deserialization for our own trusted models
+    try:
+        import keras
+        keras.config.enable_unsafe_deserialization()
+    except Exception:
+        pass
     try:
         # --- Shared artifacts ---
         label_encoder = pickle.load(open(os.path.join(ARTIFACTS_PATH, "label_encoder.pkl"), "rb"))
