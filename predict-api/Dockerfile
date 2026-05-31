@@ -20,7 +20,7 @@ RUN sed -i '/tensorflow-cpu/d' /app/requirements.txt
 # Pre-install CPU-only torch so sentence-transformers doesn't pull CUDA wheels
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --ignore-installed -r requirements.txt
 
 # Same Keras 3 / TF 2.17 compatibility patch as train-api
 RUN find /usr/local/lib -name "load_context.py" -path "*/saved_model/*" \
