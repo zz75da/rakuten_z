@@ -204,16 +204,17 @@ def predict_batch_stream(batch_items, token, output_file_path, chunk_size=50,
     st.markdown(f"### Results — {len(results)} predictions")
 
     # Header row
-    h_img, h_file, h_cat, h_code, h_conf = st.columns([1, 3, 3, 1, 1])
+    h_img, h_file, h_desc, h_cat, h_code, h_conf = st.columns([1, 2, 3, 3, 1, 1])
     h_img.markdown("**Image**")
     h_file.markdown("**Filename**")
+    h_desc.markdown("**Description**")
     h_cat.markdown("**Category**")
     h_code.markdown("**Code**")
     h_conf.markdown("**Confidence**")
     st.divider()
 
     for idx, r in enumerate(results):
-        c_img, c_file, c_cat, c_code, c_conf = st.columns([1, 3, 3, 1, 1])
+        c_img, c_file, c_desc, c_cat, c_code, c_conf = st.columns([1, 2, 3, 3, 1, 1])
 
         # Thumbnail
         if uploaded_files and idx < len(uploaded_files):
@@ -225,6 +226,11 @@ def predict_batch_stream(batch_items, token, output_file_path, chunk_size=50,
         # File name
         fname = uploaded_files[idx].name if uploaded_files and idx < len(uploaded_files) else f"item {idx+1}"
         c_file.markdown(f"<small>{fname}</small>", unsafe_allow_html=True)
+
+        # Description
+        desc = batch_items[idx].get("description", "") if idx < len(batch_items) else ""
+        c_desc.markdown(f"<small>{desc[:80]}{'…' if len(desc) > 80 else ''}</small>",
+                        unsafe_allow_html=True)
 
         # Category
         category = r.get("category", r.get("label", "?"))
