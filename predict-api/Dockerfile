@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential curl libglib2.0-0 libsm6 libxrender1 libxext6 libgl1 \
-    libjemalloc2 \
+    libjemalloc2 tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng \
     && JEMALLOC=$(find /usr/lib -name 'libjemalloc.so.2' 2>/dev/null | head -1) \
     && [ -n "$JEMALLOC" ] && ln -sf "$JEMALLOC" /usr/local/lib/libjemalloc.so.2 || true \
     && rm -rf /var/lib/apt/lists/*

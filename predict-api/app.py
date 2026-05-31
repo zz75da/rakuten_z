@@ -424,9 +424,43 @@ def _record_drift_metrics(probs_flat: np.ndarray, label: str, endpoint: str):
     PREDICTION_CLASS_COUNT.labels(endpoint=endpoint, label=label).inc()
 
 
+# --- OCR helper for real-time image text extraction (CV/TF-IDF encoder only) ---
+def _ocr_from_image(img_bgr: np.ndarray) -> str:
+    """
+    Run Tesseract on a BGR image and return cleaned text.
+    Returns '' on any error — never raises.
+    Consistent with training pipeline: psm 11 (sparse text), fra+eng, LSTM only.
+    """
+    try:
+        import pytesseract
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        if min(h, w) < 300:
+            scale = 300 / min(h, w)
+            gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+        gray = cv2.filter2D(gray, -1, kernel)
+        raw = pytesseract.image_to_string(gray, lang="fra+eng",
+                                          config="--psm 11 --oem 1")
+        return " ".join(raw.split())
+    except Exception:
+        return ""
+
+
 # --- Preprocessing helpers ---
-def extract_text_features(description: str):
-    processed = [" ".join(description.lower().split())]
+def extract_text_features(description: str, img_bgr: np.ndarray = None):
+    """
+    Vectorise text for the CV/TF-IDF encoder.
+    If img_bgr is provided (multimodal requests), appends real-time OCR text
+    so the model benefits from text embedded in the image — matching training.
+    Only applies to CV encoder; CLIP/MiniLM/mpnet ignore img_bgr.
+    """
+    text = description or ""
+    if img_bgr is not None:
+        ocr = _ocr_from_image(img_bgr)
+        if ocr:
+            text = f"{text} {ocr}".strip()
+    processed = [" ".join(text.lower().split())]
     bow = text_vectorizer.transform(processed).toarray()
     reduced = pca_text.transform(bow)
     return reduced
@@ -666,7 +700,19 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
     active_model, text_dim = _resolve_model(req.model)
 
     # ── Text features (fallback: zeros if missing) ────────────────────────────
-    has_text = bool(req.description and req.description.strip())
+    has_text  = bool(req.description and req.description.strip())
+    has_image = bool(req.image_base64)
+
+    # Decode image once — shared by feature extraction AND OCR for CV encoder
+    _img_bgr = None
+    if has_image:
+        try:
+            _img_bgr = cv2.imdecode(
+                np.frombuffer(base64.b64decode(req.image_base64), np.uint8),
+                cv2.IMREAD_COLOR)
+        except Exception:
+            pass
+
     if has_text:
         try:
             if req.model == "minilm":
@@ -676,7 +722,8 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
             elif req.model == "clip":
                 text_features = extract_text_features_clip(req.description)
             else:
-                text_features = extract_text_features(req.description)
+                # CV/TF-IDF: pass decoded image so OCR can supplement description
+                text_features = extract_text_features(req.description, img_bgr=_img_bgr)
         except Exception as e:
             print(f"Text extraction failed, falling back to zeros: {e}")
             text_features = np.zeros((1, text_dim), dtype=np.float32)
@@ -685,7 +732,6 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
         text_features = np.zeros((1, text_dim), dtype=np.float32)
 
     # ── Image features (fallback: zeros if missing or decode error) ───────────
-    has_image = bool(req.image_base64)
     if has_image:
         try:
             image_features = extract_image_features(req.image_base64)
