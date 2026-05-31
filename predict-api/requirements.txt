@@ -32,9 +32,7 @@ prometheus-client==0.20.0
 prometheus-fastapi-instrumentator
 evidently==0.4.33              # drift monitoring — HTML reports, PSI-based detection
 
-# Pin keras to same version as train-api (set by cleanlab) so .keras model files
-# are compatible. tensorflow-cpu 2.17 allows keras>=3.3.3; 3.4.1 satisfies that.
-keras==3.4.1
+# keras version is provided by the tensorflow/tensorflow:2.17.0 base image
 
 # === Text encoders ===
 sentence-transformers>=2.7.0  # MiniLM
