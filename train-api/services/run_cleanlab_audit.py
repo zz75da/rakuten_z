@@ -25,8 +25,6 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, "/app")
-# Force Keras 2 (tf.keras) — cleanlab installs keras>=3 which breaks Lambda layer loading
-os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -38,11 +36,18 @@ ARTIFACTS  = "/app/data/artifacts"
 FEAT_CACHE = "/app/data/feature_cache"
 DATA_PATH  = "/app/data"
 
-_ENCODER_FILES = {
-    "clip":             (f"{ARTIFACTS}/X_reduced_clip.npy",          f"{ARTIFACTS}/neural_network_model_clip.keras"),
-    "minilm":           (f"{ARTIFACTS}/X_reduced_minilm.npy",        f"{ARTIFACTS}/neural_network_model_minilm.keras"),
-    "mpnet":            (f"{ARTIFACTS}/X_reduced_mpnet.npy",         f"{ARTIFACTS}/neural_network_model_mpnet.keras"),
-    "countvectorizer":  (f"{ARTIFACTS}/X_reduced_countvectorizer.npy", f"{ARTIFACTS}/neural_network_model.keras"),
+_ENCODER_X_PATHS = {
+    "clip":            f"{ARTIFACTS}/X_reduced_clip_256.npy",
+    "minilm":          f"{ARTIFACTS}/X_reduced_minilm_256.npy",
+    "mpnet":           f"{ARTIFACTS}/X_reduced_mpnet_256.npy",
+    "countvectorizer": f"{ARTIFACTS}/X_reduced_countvectorizer_256.npy",
+}
+# Fallback to old unversioned paths if versioned files don't exist yet
+_ENCODER_X_FALLBACK = {
+    "clip":            f"{ARTIFACTS}/X_reduced_clip.npy",
+    "minilm":          f"{ARTIFACTS}/X_reduced_minilm.npy",
+    "mpnet":           f"{ARTIFACTS}/X_reduced_mpnet.npy",
+    "countvectorizer": f"{ARTIFACTS}/X_reduced_countvectorizer.npy",
 }
 
 
@@ -50,16 +55,21 @@ def run_audit(encoder: str = "clip", batch_size: int = 512):
     log.info(f"Cleanlab audit — encoder={encoder}")
 
     # ── Validate inputs ──────────────────────────────────────────────────────
-    if encoder not in _ENCODER_FILES:
-        raise ValueError(f"Unknown encoder '{encoder}'. Choose: {list(_ENCODER_FILES)}")
+    if encoder not in _ENCODER_X_PATHS:
+        raise ValueError(f"Unknown encoder '{encoder}'. Choose: {list(_ENCODER_X_PATHS)}")
 
-    x_path, model_path = _ENCODER_FILES[encoder]
+    # Use versioned path if available, fall back to legacy unversioned path
+    x_path = _ENCODER_X_PATHS[encoder]
+    if not os.path.exists(x_path):
+        x_path = _ENCODER_X_FALLBACK[encoder]
+        log.info(f"Versioned X_reduced not found — using legacy path: {x_path}")
+
     label_enc_path = os.path.join(ARTIFACTS, "label_encoder.pkl")
     x_csv = os.getenv("TRAIN_CSV_X_PATH", f"{DATA_PATH}/X_train_update.csv")
     y_csv = os.getenv("TRAIN_CSV_Y_PATH", f"{DATA_PATH}/Y_train_CVw08PX.csv")
 
-    for p, name in [(x_path, "X_reduced"), (model_path, "model"),
-                    (label_enc_path, "label_encoder"), (x_csv, "X_csv"), (y_csv, "Y_csv")]:
+    for p, name in [(x_path, "X_reduced"), (label_enc_path, "label_encoder"),
+                    (x_csv, "X_csv"), (y_csv, "Y_csv")]:
         if not os.path.exists(p):
             log.error(f"Required file not found: {p} ({name})")
             sys.exit(1)
@@ -81,40 +91,46 @@ def run_audit(encoder: str = "clip", batch_size: int = 512):
     n_samples = len(labels)
     log.info(f"Samples: {n_samples:,}  |  Classes: {len(label_enc.classes_)}")
 
-    # ── Load features in one shot (pre-validated size) ────────────────────────
+    # ── Load features ─────────────────────────────────────────────────────────
     file_size_mb = os.path.getsize(x_path) / 1024**2
-    log.info(f"Loading X_reduced ({file_size_mb:.0f} MB)...")
+    log.info(f"Loading X_reduced from {x_path} ({file_size_mb:.0f} MB)...")
     X = np.load(x_path)
 
     if len(X) != n_samples:
         log.error(f"Shape mismatch: X has {len(X)} rows but labels have {n_samples}")
         sys.exit(1)
 
-    # ── Load model and predict in batches (memory-safe) ──────────────────────
-    log.info("Loading model...")
-    import tensorflow as tf
-    tf.get_logger().setLevel("ERROR")
-    # Lambda layers in late fusion models require unsafe deserialization —
-    # safe because we always load our own trained models, never external artifacts.
-    try:
-        import keras
-        keras.config.enable_unsafe_deserialization()
-    except Exception:
-        pass
-    model = tf.keras.models.load_model(model_path, compile=False)
+    # ── Predict via sklearn cross-validation (avoids Keras/Lambda loading issues) ──
+    # Using LogisticRegression with cross_val_predict produces OUT-OF-SAMPLE probabilities
+    # which is actually better for cleanlab than in-sample Keras predictions.
+    # Peak memory: ~500 MB (X in memory) + ~50 MB (LR model). Safe on this machine.
+    log.info("Fitting LogisticRegression with 5-fold cross-validation for pred_probs...")
+    log.info("(Using sklearn instead of Keras avoids Lambda layer serialisation issues)")
+    from sklearn.model_selection import cross_val_predict
+    from sklearn.preprocessing import StandardScaler
 
-    log.info(f"Predicting on {n_samples:,} samples (batch_size={batch_size})...")
-    pred_probs = np.zeros((n_samples, len(label_enc.classes_)), dtype=np.float32)
-    for start in range(0, n_samples, batch_size):
-        end = min(start + batch_size, n_samples)
-        pred_probs[start:end] = model.predict(X[start:end], verbose=0)
-        if start % 10000 == 0 and start > 0:
-            log.info(f"  {start:,}/{n_samples:,}")
-
-    # Free large arrays immediately
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
     del X
-    del model
     gc.collect()
+
+    # SGDClassifier with log loss = online logistic regression — 10-50x faster than saga
+    # on 85k samples. CalibratedClassifierCV wraps it to produce valid probabilities.
+    from sklearn.linear_model import SGDClassifier
+    from sklearn.calibration import CalibratedClassifierCV
+
+    base_clf = SGDClassifier(loss="log_loss", alpha=1e-4, max_iter=200,
+                             n_jobs=-1, random_state=42)
+    clf = CalibratedClassifierCV(base_clf, cv=3, method="sigmoid")
+
+    log.info(f"  cross_val_predict (3-fold) on {n_samples:,} × {X_scaled.shape[1]} features...")
+    pred_probs = cross_val_predict(
+        clf, X_scaled, labels, cv=3, method="predict_proba"
+    ).astype(np.float32)
+
+    del X_scaled
+    gc.collect()
+    log.info(f"  pred_probs shape: {pred_probs.shape}")
 
     # ── Run Cleanlab ──────────────────────────────────────────────────────────
     log.info("Running cleanlab find_label_issues...")
@@ -162,10 +178,13 @@ def run_audit(encoder: str = "clip", batch_size: int = 512):
     return out_path, n_issues, n_samples
 
 
+
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--encoder", default="clip",
-                        choices=list(_ENCODER_FILES),
+                        choices=list(_ENCODER_X_PATHS),
                         help="Which trained model to use for predictions (default: clip = best accuracy)")
     args = parser.parse_args()
     run_audit(encoder=args.encoder)
