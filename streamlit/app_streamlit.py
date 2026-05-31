@@ -719,7 +719,8 @@ def show_prediction_page():
             batch_items  = []
             descriptions = []
             if descriptions_file:
-                df_desc = pd.read_csv(descriptions_file)
+                df_desc = pd.read_csv(descriptions_file, encoding="utf-8-sig",
+                                      encoding_errors="replace")
                 if "description" in df_desc.columns:
                     descriptions = df_desc["description"].tolist()
             for idx, file in enumerate(uploaded_files):
