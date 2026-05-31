@@ -34,13 +34,18 @@ class TestTextToPCAMiniPipeline:
     def test_full_text_pipeline(self, tmp_path, preprocess_text_module,
                                 pca_reducer_module):
         """extract_text_features → reduce_features produces a usable X_reduced."""
-        df = pd.DataFrame({"description": [
-            "leather handbag premium quality",
-            "running shoes breathable mesh",
-            "winter jacket insulated",
-            "smart phone 128gb storage",
-            "bluetooth earphones noise cancel",
-        ]})
+        df = pd.DataFrame({
+            "designation": ["product"] * 5,
+            "description": [
+                "leather handbag premium quality",
+                "running shoes breathable mesh",
+                "winter jacket insulated",
+                "smart phone 128gb storage",
+                "bluetooth earphones noise cancel",
+            ],
+            "imageid":   list(range(5)),
+            "productid": list(range(5)),
+        })
 
         # 1. Extract text features
         text_features, vectorizer = preprocess_text_module.extract_text_features(df)
@@ -76,7 +81,7 @@ class TestTextToPCAMiniPipeline:
                                                     preprocess_text_module,
                                                     pca_reducer_module):
         """Saved PCA objects can transform unseen samples at inference time."""
-        df = pd.DataFrame({"description": ["book paperback fiction"] * 10})
+        df = pd.DataFrame({"designation": ["product"]*10, "description": ["book paperback fiction"]*10, "imageid": list(range(10)), "productid": list(range(10))})
         text_features, _ = preprocess_text_module.extract_text_features(df)
         np.save(tmp_path / "t.npy", text_features)
         img = np.random.rand(10, 2048).astype(np.float32)
@@ -109,7 +114,7 @@ class TestTextToPCAMiniPipeline:
     def test_deterministic_output_same_seed(self, tmp_path, preprocess_text_module,
                                              pca_reducer_module):
         """Same data → same X_reduced (IncrementalPCA is deterministic)."""
-        df = pd.DataFrame({"description": ["apple orange grape"] * 6})
+        df = pd.DataFrame({"designation": ["product"]*6, "description": ["apple orange grape"]*6, "imageid": list(range(6)), "productid": list(range(6))})
         text_features, _ = preprocess_text_module.extract_text_features(df)
 
         for run in range(2):
