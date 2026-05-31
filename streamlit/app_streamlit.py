@@ -154,33 +154,103 @@ def predict_single(description, uploaded_image, token, encoder="cv"):
         st.error(f"Unexpected error: {e}")
 
 
-def predict_batch_stream(batch_items, token, output_file_path, chunk_size=50):
+def predict_batch_stream(batch_items, token, output_file_path, chunk_size=50,
+                         uploaded_files=None):
+    """
+    Stream batch predictions and display results as an image+table layout.
+    uploaded_files: list of Streamlit UploadedFile objects matching batch_items order.
+    """
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     output_file_path = Path(output_file_path)
     output_file_path.parent.mkdir(parents=True, exist_ok=True)
 
+    total   = len(batch_items)
+    results = []   # collect parsed results for table display
+    progress = st.progress(0, text=f"Predicting 0 / {total}...")
+
     with output_file_path.open("w", encoding="utf-8") as f_out:
-        total = len(batch_items)
-        st.info(f"Streaming predictions for {total} items in chunks of {chunk_size}...")
         for i in range(0, total, chunk_size):
             chunk   = batch_items[i:i + chunk_size]
             payload = {"items": chunk, "batch_size": chunk_size}
             try:
                 with requests.post(f"{PREDICT_API_URL}/predict-multimodal-batch-stream",
-                                   json=payload, headers=headers, stream=True, timeout=600) as resp:
+                                   json=payload, headers=headers, stream=True,
+                                   timeout=600) as resp:
                     if resp.status_code == 200:
                         for line in resp.iter_lines():
                             if line:
                                 decoded = line.decode("utf-8")
                                 f_out.write(decoded + "\n")
                                 f_out.flush()
-                                st.text(f"Chunk {i // chunk_size + 1}/{(total - 1) // chunk_size + 1}: {decoded}")
+                                try:
+                                    results.append(json.loads(decoded))
+                                except Exception:
+                                    pass
+                                pct = min(len(results) / total, 1.0)
+                                progress.progress(pct,
+                                    text=f"Predicting {len(results)} / {total}...")
                     else:
                         st.error(f"API error on chunk {i // chunk_size + 1}: {resp.text}")
             except Exception as e:
                 st.error(f"Chunk {i // chunk_size + 1} failed: {e}")
 
-    st.success(f"All batch predictions saved to {output_file_path}")
+    progress.progress(1.0, text=f"Done — {len(results)} predictions")
+
+    if not results:
+        st.warning("No results returned.")
+        return
+
+    # ── Results table with thumbnails ────────────────────────────────────────
+    st.markdown(f"### Results — {len(results)} predictions")
+
+    # Header row
+    h_img, h_file, h_cat, h_code, h_conf = st.columns([1, 3, 3, 1, 1])
+    h_img.markdown("**Image**")
+    h_file.markdown("**Filename**")
+    h_cat.markdown("**Category**")
+    h_code.markdown("**Code**")
+    h_conf.markdown("**Confidence**")
+    st.divider()
+
+    for idx, r in enumerate(results):
+        c_img, c_file, c_cat, c_code, c_conf = st.columns([1, 3, 3, 1, 1])
+
+        # Thumbnail
+        if uploaded_files and idx < len(uploaded_files):
+            with c_img:
+                st.image(uploaded_files[idx], width=64)
+        else:
+            c_img.write("—")
+
+        # File name
+        fname = uploaded_files[idx].name if uploaded_files and idx < len(uploaded_files) else f"item {idx+1}"
+        c_file.markdown(f"<small>{fname}</small>", unsafe_allow_html=True)
+
+        # Category
+        category = r.get("category", r.get("label", "?"))
+        c_cat.markdown(f"**{category}**")
+
+        # Code
+        c_code.markdown(f"`{r.get('label', '?')}`")
+
+        # Confidence
+        probs = r.get("probs", [[]])
+        if probs and probs[0]:
+            conf = max(probs[0])
+            color = "#28a745" if conf > 0.6 else "#ffc107" if conf > 0.35 else "#dc3545"
+            c_conf.markdown(
+                f"<span style='color:{color};font-weight:700'>{conf:.0%}</span>",
+                unsafe_allow_html=True,
+            )
+        else:
+            c_conf.write("—")
+
+    st.success(f"Results saved to `{output_file_path.name}`")
+    # Download button for the JSONL file
+    with open(output_file_path, "rb") as f:
+        st.download_button("⬇ Download full JSONL",
+                           data=f, file_name=output_file_path.name,
+                           mime="application/json")
 
 
 # ======================
@@ -729,7 +799,8 @@ def show_prediction_page():
                     "image_base64": base64.b64encode(file.getvalue()).decode("utf-8"),
                 })
             predict_batch_stream(batch_items, st.session_state["user_token"],
-                                 "./batch_predictions_streamed.jsonl")
+                                 "./batch_predictions_streamed.jsonl",
+                                 uploaded_files=uploaded_files)
         else:
             st.warning("Please upload at least one image.")
 
