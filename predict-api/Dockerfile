@@ -21,6 +21,12 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Same Keras 3 / TF 2.17 compatibility patch as train-api
+RUN LOAD_CTX=/usr/local/lib/python3.11/dist-packages/keras/src/saving/legacy/saved_model/load_context.py && \
+    [ -f "$LOAD_CTX" ] && \
+    sed -i 's/tf\.__internal__\.register_load_context_function(in_load_context)/pass  # patched: removed in TF 2.17/' "$LOAD_CTX" && \
+    echo "Patched $LOAD_CTX" || true
+
 COPY . .
 
 EXPOSE 5003
