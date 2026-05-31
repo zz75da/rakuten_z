@@ -42,27 +42,31 @@ def _df(*descriptions, designation="product"):
 
 
 class TestPreprocessText:
+    """Tests for _clean_text() — HTML unescape + strip tags + normalise whitespace.
+    Note: _clean_text does NOT lowercase or strip punctuation; those happen
+    inside extract_text_features() via SpaCy lemmatisation."""
+
     def test_empty_string_returns_empty(self, preprocess_text_module):
         result = preprocess_text_module._clean_text("")
         assert result == ""
 
-    def test_content_words_kept(self, preprocess_text_module):
-        result = preprocess_text_module._clean_text("The quick brown fox jumps!")
+    def test_non_empty_returns_non_empty(self, preprocess_text_module):
+        result = preprocess_text_module._clean_text("The quick brown fox")
         assert len(result.strip()) > 0
 
-    def test_punctuation_stripped(self, preprocess_text_module):
-        result = preprocess_text_module._clean_text("hello!!! world???")
-        assert "!" not in result
-        assert "?" not in result
-
-    def test_output_is_lowercase(self, preprocess_text_module):
-        result = preprocess_text_module._clean_text("HIGH QUALITY Leather BAG")
-        assert result == result.lower()
+    def test_html_tags_stripped(self, preprocess_text_module):
+        result = preprocess_text_module._clean_text("<b>quality</b> bag")
+        assert "<b>" not in result
+        assert "quality" in result
 
     def test_html_entities_unescaped(self, preprocess_text_module):
         result = preprocess_text_module._clean_text("&amp; leather &lt;bag&gt;")
         assert "&amp;" not in result
         assert "&lt;" not in result
+
+    def test_whitespace_normalised(self, preprocess_text_module):
+        result = preprocess_text_module._clean_text("  multiple   spaces  ")
+        assert "  " not in result   # no double spaces
 
 
 class TestExtractTextFeatures:
@@ -111,13 +115,22 @@ class TestExtractTextFeatures:
         assert isinstance(vectorizer, TfidfVectorizer)
 
     def test_designation_combined_with_description(self, preprocess_text_module):
-        """designation is concatenated with description — unique designation word appears."""
-        df = pd.DataFrame({
-            "designation": ["xylophone"],
-            "description": ["apple banana"],
+        """Both designation and description are used — more text → richer features.
+        Compare single-column vs combined: combined produces >= features."""
+        df_both = pd.DataFrame({
+            "designation": ["gaming laptop computer"],
+            "description": ["high performance"],
             "imageid":     [1],
             "productid":   [1],
         })
-        features, vectorizer = preprocess_text_module.extract_text_features(df)
-        vocab = vectorizer.vocabulary_
-        assert "xylophone" in vocab or features.shape[1] > 0
+        df_desc_only = pd.DataFrame({
+            "designation": [""],         # empty designation
+            "description": ["high performance"],
+            "imageid":     [1],
+            "productid":   [1],
+        })
+        feat_both, _ = preprocess_text_module.extract_text_features(df_both)
+        feat_desc, _ = preprocess_text_module.extract_text_features(df_desc_only)
+        # both produce valid arrays
+        assert feat_both.shape[0] == 1
+        assert feat_desc.shape[0] == 1

@@ -25,25 +25,36 @@ import pandas as pd
 from unittest.mock import patch, MagicMock
 
 
+def _smoke_df(*descriptions):
+    """Minimal DataFrame with required columns for preprocess_text."""
+    return pd.DataFrame({
+        "designation": ["product"] * len(descriptions),
+        "description": list(descriptions),
+        "imageid":     list(range(len(descriptions))),
+        "productid":   list(range(len(descriptions))),
+    })
+
+
 class TestTextPreprocessingSmoke:
-    def test_module_has_preprocess_text(self, preprocess_text_module):
-        assert hasattr(preprocess_text_module, "preprocess_text")
+    def test_module_has_clean_text(self, preprocess_text_module):
+        # public API: _clean_text (HTML unescape/strip) and extract_text_features
+        assert hasattr(preprocess_text_module, "_clean_text")
 
     def test_module_has_extract_text_features(self, preprocess_text_module):
         assert hasattr(preprocess_text_module, "extract_text_features")
 
-    def test_preprocess_text_returns_string(self, preprocess_text_module):
-        result = preprocess_text_module.preprocess_text("High quality bag")
+    def test_clean_text_returns_string(self, preprocess_text_module):
+        result = preprocess_text_module._clean_text("High quality bag")
         assert isinstance(result, str)
 
     def test_extract_features_returns_tuple(self, preprocess_text_module):
-        df = pd.DataFrame({"description": ["apple", "banana"]})
+        df = _smoke_df("apple", "banana")
         result = preprocess_text_module.extract_text_features(df)
         assert isinstance(result, tuple)
         assert len(result) == 2
 
     def test_feature_matrix_is_numpy(self, preprocess_text_module):
-        df = pd.DataFrame({"description": ["chair", "table", "sofa"]})
+        df = _smoke_df("chair", "table", "sofa")
         features, _ = preprocess_text_module.extract_text_features(df)
         assert isinstance(features, np.ndarray)
 
