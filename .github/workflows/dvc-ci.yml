@@ -2,9 +2,10 @@ name: CI — Tests & DVC Sync
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'experiment/**']
   pull_request:
     branches: [main]
+  workflow_dispatch:   # allow manual trigger from GitHub UI
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
@@ -69,7 +70,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest tests/unit/ -v --tb=short -q \
+          pytest tests/unit/ train-api/tests/ -v --tb=short -q \
             --junitxml=tests/logs/unit-results.xml
 
       - name: Run integration tests

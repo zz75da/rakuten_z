@@ -109,17 +109,7 @@ route:
           match:
             severity: 'warning'
 
-    # --- STORAGE ALERTS ---
-    - receiver: 'slack-storage'
-      match:
-        service: 'minio'
-      routes:
-        - receiver: 'slack-critical'
-          match:
-            severity: 'critical'
-        - receiver: 'slack-warnings'
-          match:
-            severity: 'warning'
+    # MinIO storage alerts removed — MinIO alert was disabled (no Prometheus scrape without token)
 
 # Receivers - define where alerts are sent
 receivers:
