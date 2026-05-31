@@ -311,7 +311,8 @@ def _load_late_fusion_model(keras_path: str):
 def load_artifacts():
     global model_cv, model_minilm, model_mpnet, model_clip, label_encoder, text_vectorizer, \
            pca_text, pca_image, resnet_model, minilm_encoder, mpnet_encoder, \
-           clip_tokenizer, clip_text_model
+           clip_tokenizer, clip_text_model, _gradcam_model
+    _gradcam_model = None   # reset so GradCAM is rebuilt with updated ResNet50/models
     def _load_model(keras_path):
         """Try weights-only loader first (version-safe), fall back to standard load."""
         try:
@@ -522,6 +523,8 @@ def _resolve_model(model_key: str):
 
 
 def extract_image_features(image_input: str):
+    if pca_image is None:
+        raise HTTPException(status_code=503, detail="pca_image not loaded — artifacts not fully loaded")
     """
     Accepts either:
     - a path to a pre-computed .npy feature file (shape: [1, 2048])
@@ -680,9 +683,15 @@ def predict_ensemble(req: MultimodalRequest, user: dict = Depends(verify_jwt_tok
             pass
 
     # Image features — shared (same ResNet50 + PCA for all encoders)
+    # Pass already-decoded _img_bgr to avoid double base64 decode
     if _img_bgr is not None:
         try:
-            image_features = extract_image_features(req.image_base64)
+            import base64 as _b64
+            img_rgb = cv2.cvtColor(cv2.resize(_img_bgr, (224, 224)), cv2.COLOR_BGR2RGB)
+            img_batch = resnet_preprocess(
+                np.expand_dims(img_rgb.astype(np.float32), axis=0))
+            raw_features = resnet_model.predict(img_batch, verbose=0)
+            image_features = pca_image.transform(raw_features)
         except Exception:
             image_features = None
     else:
