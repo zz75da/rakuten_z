@@ -15,9 +15,9 @@ Fixtures provided :
   valid_user_token       — pre-signed HS256 JWT for role="user"
   mock_model             — MagicMock Keras model returning 5-class softmax
   mock_label_encoder     — MagicMock LabelEncoder with 5 known classes
-  mock_pca_image         — MagicMock IncrementalPCA (300 components)
-  mock_pca_text          — MagicMock IncrementalPCA (1024 components)
-  mock_vectorizer        — MagicMock CountVectorizer returning (1, 5000) array
+  mock_pca_image         — MagicMock IncrementalPCA (256 components)
+  mock_pca_text          — MagicMock IncrementalPCA (512 components)
+  mock_vectorizer        — MagicMock TfidfVectorizer returning (1, 5000) array
   mock_minilm_encoder    — MagicMock SentenceTransformer returning (1, 384) float32 array
   sample_image_b64       — 32x32 RGB JPEG as base64 string (via Pillow)
 
@@ -151,17 +151,17 @@ def mock_label_encoder():
 @pytest.fixture
 def mock_pca_image():
     pca = MagicMock()
-    pca.n_components_ = 300
+    pca.n_components_ = 256   # current pca_components in params.yaml
     pca.copy = True
-    pca.transform.return_value = np.zeros((1, 300), dtype=np.float32)
+    pca.transform.return_value = np.zeros((1, 256), dtype=np.float32)
     return pca
 
 @pytest.fixture
 def mock_pca_text():
     pca = MagicMock()
-    pca.n_components_ = 1024
+    pca.n_components_ = 512   # current n_text_pca_components in params.yaml
     pca.copy = True
-    pca.transform.return_value = np.zeros((1, 1024), dtype=np.float32)
+    pca.transform.return_value = np.zeros((1, 512), dtype=np.float32)
     return pca
 
 @pytest.fixture
