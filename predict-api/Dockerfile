@@ -1,13 +1,12 @@
 # predict-api/Dockerfile
-FROM python:3.11-slim
+# Same base as train-api — guarantees identical keras distribution so .keras
+# model files saved by train-api can be loaded without version conflicts.
+FROM tensorflow/tensorflow:2.17.0
 
 WORKDIR /app
-ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    libglib2.0-0 libsm6 libxrender1 libxext6 libgl1 \
+    build-essential curl libglib2.0-0 libsm6 libxrender1 libxext6 libgl1 \
     libjemalloc2 \
     && JEMALLOC=$(find /usr/lib -name 'libjemalloc.so.2' 2>/dev/null | head -1) \
     && [ -n "$JEMALLOC" ] && ln -sf "$JEMALLOC" /usr/local/lib/libjemalloc.so.2 || true \
@@ -15,16 +14,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt ./requirements.txt
 
+# Remove tensorflow-cpu (already provided by base image as tensorflow)
+RUN sed -i '/tensorflow-cpu/d' /app/requirements.txt
+
 # Pre-install CPU-only torch so sentence-transformers doesn't pull CUDA wheels
-# (nvidia 2.7 GB + triton 700 MB) from the PyPI default index.
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Keras 3 / TF 2.17 compatibility — patch load_context.py wherever it is installed
+# Same Keras 3 / TF 2.17 compatibility patch as train-api
 RUN find /usr/local/lib -name "load_context.py" -path "*/saved_model/*" \
     -exec sed -i 's/tf\.__internal__\.register_load_context_function(in_load_context)/pass  # patched: removed in TF 2.17/' {} \; \
-    -exec echo "Patched: " {} \; 2>/dev/null || true
+    2>/dev/null || true
 
 COPY . .
 
