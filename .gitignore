@@ -83,3 +83,7 @@ logs/
 # === Misc project-specific ===
 predict-api/deployment/
 monitoring/alertmanager.yml
+
+# Auto-generated
+.pytest_cache/
+streamlit/batch_predictions_streamed.jsonl

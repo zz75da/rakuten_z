@@ -2,8 +2,10 @@
 
 [![CI with DVC + Tests](https://github.com/zz75da/rakuten_z/actions/workflows/dvc-ci.yml/badge.svg?branch=main)](https://github.com/zz75da/rakuten_z/actions/workflows/dvc-ci.yml)
 
-End-to-end MLOps platform for **multimodal product classification** (text + image → 27 categories).  
-Built with FastAPI microservices, Apache Airflow, MLflow / DagsHub, and a full Prometheus / Grafana monitoring stack.
+End-to-end MLOps platform for **multimodal product classification** (text + image → 27 Rakuten categories, ~85k products).  
+Built with FastAPI microservices, Apache Airflow DAG v7, MLflow / DagsHub, and a full Prometheus / Grafana monitoring stack.
+
+**Current best accuracy:** CLIP 84.9% · mpnet 81.9% · CV 80.1% · MiniLM 79.4% · Ensemble (weighted avg) robust to single-model failures.
 
 ---
 
@@ -19,110 +21,120 @@ Built with FastAPI microservices, Apache Airflow, MLflow / DagsHub, and a full P
 - [Test Suite](#test-suite)
 - [Repository Structure](#repository-structure)
 - [Environment Variables](#environment-variables)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Model Overview
 
-Three text encoders are available. The image branch and classifier architecture are shared across all three.
+Four text encoders with a shared late-fusion architecture. All encoders are served simultaneously by predict-api.
 
-### Encoder A — CountVectorizer (default)
+### Late Fusion Architecture (all encoders)
 
 ```
-Text description ──► SpaCy lemmatise ──► CountVectorizer (10 000) ──► IncrementalPCA (512-d) ─┐
-                                                                                                ├─► hstack (896-d) ──► Dense 512 ──► Dropout ──► Dense 256 ──► Dropout ──► Dense 27 (softmax)
-Product image    ──► ResNet50 (2 048-d)                             ──► IncrementalPCA (384-d) ─┘
+Text branch:   text features ──► Dense(HIDDEN_1) ──► LayerNorm ──► Dropout ──► Dense(27, logits)
+                                                                                        │
+Image branch:  ResNet50(2048) ──► PCA(256) ──► Dense(256) ──► LayerNorm ──► Dropout ──► Dense(27, logits)
+                                                                                        │
+Fusion:        α = Dense(1, sigmoid)(mean(text_logits) ⊕ mean(image_logits))
+               output = α · softmax(text_logits) + (1−α) · softmax(image_logits)
 ```
 
-Registered in MLflow as **`rakuten_multimodal_cv`**.
+**Training:** Focal loss γ∈{1.5,2.0,2.5} per encoder · Macro F1 early stopping · Stratified 80/20 split · Class weights balanced
+
+### Encoder A — TF-IDF + OCR (CV)
+
+```
+designation + description + Tesseract OCR ──► SpaCy lemmatise ──► TfidfVectorizer(10k, sublinear_tf) ──► PCA(512)
+```
+Registered as **`rakuten_multimodal_cv`** · focal γ=2.5 · best val_acc 0.8008
 
 ### Encoder B — CLIP ViT-B/32
 
 ```
-Text description ──► openai/clip-vit-base-patch32 (CLIPTextModel) ──► L2-norm (512-d) ─────────┐
-                                                                                                ├─► hstack (896-d) ──► Dense 512 ──► Dropout ──► Dense 256 ──► Dropout ──► Dense 27 (softmax)
-Product image    ──► ResNet50 (2 048-d) ──► IncrementalPCA (384-d) ──────────────────────────┘
+Text ──► openai/clip-vit-base-patch32 (L2-normalised, 512-d)
 ```
-
-Registered in MLflow as **`rakuten_multimodal_clip`**.
+Registered as **`rakuten_multimodal_clip`** · focal γ=1.5 · best val_acc 0.8489 (highest single model)
 
 ### Encoder C — MiniLM (multilingual)
 
 ```
-Text description ──► paraphrase-multilingual-MiniLM-L12-v2 (sentence-transformers) ──► 384-d ─┐
-                                                                                                ├─► hstack (768-d) ──► Dense 512 ──► Dropout ──► Dense 256 ──► Dropout ──► Dense 27 (softmax)
-Product image    ──► ResNet50 (2 048-d) ──► IncrementalPCA (384-d) ──────────────────────────┘
+Text ──► paraphrase-multilingual-MiniLM-L12-v2 (384-d)
 ```
+Registered as **`rakuten_multimodal_minilm`** · focal γ=2.0 · best val_acc 0.7943
 
-Registered in MLflow as **`rakuten_multimodal_minilm`**.
+### Encoder D — mpnet (multilingual)
 
-| Component | CountVectorizer | CLIP ViT-B/32 | MiniLM |
-|-----------|-----------------|---------------|--------|
-| Text encoding | CountVectorizer (10 000) → PCA (512) | CLIPTextModel → L2-norm (512-d) | MiniLM-L12-v2 → 384-d |
-| Combined input dim | 896 | 896 | 768 |
-| Classifier | Dense 512 → Dropout 0.45 → Dense 256 → Dropout 0.35 → Softmax 27 | same | same |
-| Image encoder | ResNet50 (ImageNet, global avg pool, no top) → PCA (384) | same | same |
-| Encoding service | inline (train-api) | clip-encoder :5007 | minilm-encoder :5004 |
-| Training stability | jemalloc `LD_PRELOAD` — prevents TF/glibc allocator conflicts | same | same |
+```
+Text ──► paraphrase-multilingual-mpnet-base-v2 (768-d)
+```
+Registered as **`rakuten_multimodal_mpnet`** · focal γ=2.0 · best val_acc 0.8191
+
+### Ensemble
+
+`POST /predict-ensemble` averages 27-class probability vectors from all 4 encoders weighted by their recorded val_accuracy. Overrides single-model failures (e.g. CLIP's English-only text encoder on French products).
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────┐     JWT      ┌─────────────┐
-│  Streamlit  │◄────────────►│  gate-api   │  Authentication & token validation
-│    :8501    │              │    :5000    │
-└──────┬──────┘              └─────────────┘
+┌─────────────┐   JWT     ┌─────────────┐
+│  Streamlit  │◄─────────►│  gate-api   │  Auth, RBAC admin/user
+│    :8501    │           │    :5000    │
+└──────┬──────┘           └─────────────┘
        │ Bearer token
        ▼
-┌─────────────┐  POST /train   ┌────────────────────────────────────────────────┐
-│  Airflow    │───────────────►│  train-api  :5002                              │
-│    :8080    │◄─ poll status  │  ├── run_full_pipeline.py (subprocess)         │
-│  DAG v6     │                │  │   ├── preprocess_text / preprocess_image    │
-└─────────────┘                │  │   ├── pca_reducer (subprocess)              │
-       │                       │  │   └── trainer (TF, jemalloc)                │
-       ├── POST /encode ──────►│  clip-encoder  :5007 (CLIP only)              │
-       │                       │  minilm-encoder :5004 (MiniLM only)           │
-       │                       └───────────────┬────────────────────────────────┘
+┌────────────────┐  POST /train   ┌────────────────────────────────────────────────┐
+│   Airflow      │───────────────►│  train-api  :5002                              │
+│    :8080       │◄─ poll status  │  ├── run_full_pipeline.py (subprocess)         │
+│  DAG v7        │                │  │   ├── TF-IDF+OCR / PCA (versioned cache)    │
+│  quality gate  │                │  │   └── trainer (late fusion, focal loss)     │
+│  cleanlab      │                │  ├── POST /quality-gate  (pytest floors)       │
+│  drift ref     │                │  ├── POST /cleanlab      (confident learning)  │
+└────────────────┘                │  └── POST /drift-rebuild-reference             │
+       │                          └───────────────┬────────────────────────────────┘
+       ├── POST /encode ──────►  clip-encoder :5007  (CLIP ViT-B/32)
+       │                         minilm-encoder :5004  (MiniLM + mpnet)
        │                                       │ POST /reload-artifacts
        │                                       ▼
-       │                            ┌──────────────────┐     ┌──────────────┐
-       │                            │  predict-api     │────►│  MLflow      │
-       │                            │    :5003         │     │  / DagsHub   │
-       │                            │  model_cv        │     └──────────────┘
-       │                            │  model_clip      │
-       │                            │  model_minilm    │
-       │                            └──────────────────┘
-       │                            /predict-text  ?model=cv|clip|minilm
-       │                            /predict-image
-       │                            /predict-multimodal
-
-┌──────────────────────────────────────────────────────┐
-│  Prometheus (:9090)  ◄──  scrapes all FastAPI apps   │
-│  Grafana    (:3000)  ──►  drift dashboard            │
-│  Alertmanager(:9093) ──►  confidence / accuracy / UP alerts │
-└──────────────────────────────────────────────────────┘
+       │                         ┌──────────────────────────────┐
+       │                         │  predict-api  :5003          │
+       │                         │  model_cv · clip · minilm    │
+       │                         │  · mpnet (late fusion)        │
+       │                         │  /predict-ensemble            │
+       │                         │  /gradcam · /drift-*          │
+       │                         │  Evidently AI drift buffer    │
+       │                         └───────────────┬──────────────┘
+       │                                         │
+       └──────────────────────────────────────── ▼ ──────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────┐
+│  Prometheus (:9090)  ◄── scrapes 8 targets (all FastAPI apps)            │
+│  Grafana    (:3000)  ──► drift dashboard, val_acc × 4 encoders, latency  │
+│  Alertmanager(:9093) ──► confidence / accuracy / UP/DOWN / memory alerts │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Services
 
-| Service | External port | Role |
-|---------|--------------|------|
-| **gate-api** | 5000 | JWT authentication (`/login`, `/validate-token`) |
-| **train-api** | 5002 | Async model training — CV, CLIP, and MiniLM sequential runs via Airflow DAG |
-| **predict-api** | 5003 | Multimodal inference — serves CV, CLIP, and MiniLM models simultaneously |
-| **minilm-encoder** | 5005 | Bulk MiniLM sentence encoding (`POST /encode`, `GET /status`) |
-| **clip-encoder** | 5006 | Bulk CLIP ViT-B/32 text encoding (`POST /encode`, `GET /status`, `DELETE /cache`) |
-| **airflow** | 8080 | DAG v6 orchestration: CV → CLIP encode → CLIP train → MiniLM encode → MiniLM train |
-| **streamlit** | 8501 | Interactive demo UI + pipeline presentation + live training curves |
-| **mlflow** | — | Experiment tracking hosted on DagsHub (external) |
-| **minio** | 9002 | S3-compatible object storage for MLflow artifacts |
-| **prometheus** | 9090 | Metrics collection |
-| **grafana** | 3000 | Dashboards & alerting |
-| **alertmanager** | 9093 | Alert routing (email) |
+| Service | Port | Role |
+|---------|------|------|
+| **gate-api** | 5004 (ext) | JWT auth (`/login`, `/validate-token`) |
+| **train-api** | 5002 | Async training · quality gate · cleanlab · drift reference |
+| **predict-api** | 5003 | 4-model inference · ensemble · GradCAM · modality fallback · Evidently drift |
+| **minilm-encoder** | 5005 | Bulk MiniLM + mpnet sentence encoding → .npy caches |
+| **clip-encoder** | 5006 | Bulk CLIP ViT-B/32 text encoding → .npy cache |
+| **airflow** | 8080 | DAG v7: CV→CLIP→MiniLM→mpnet + quality gate + cleanlab + drift reference |
+| **streamlit** | 8501 | UI: predictions (single + batch) · drift reports · training curves |
+| **mlflow** | — | DagsHub-hosted experiment tracking + model registry (4 models) |
+| **prometheus** | 9090 | Metrics scraping (15s interval, 8 targets) |
+| **grafana** | 3000 | Dashboards + drift detection |
+| **alertmanager** | 9093 | Alert routing |
+| **postgres** | — | Airflow + MLflow backend |
+| **minio** | 9002 | Local S3-compatible storage |
+| **pushgateway** | 9091 | Batch metrics from Airflow |
 
 ---
 
@@ -131,44 +143,44 @@ Registered in MLflow as **`rakuten_multimodal_minilm`**.
 ### Prerequisites
 
 - Docker ≥ 24 and Docker Compose v2
-- ~20 GB RAM and ~20 GB free disk for the full stack (all three encoders)
+- ~20 GB free disk · ~8 GB RAM minimum
 
 ### 1 — Clone and configure
 
 ```bash
 git clone https://github.com/zz75da/rakuten_z.git
 cd rakuten_z
-cp .env.template .env          # fill in DAGSHUB_USER, DAGSHUB_TOKEN, etc.
+cp .env.template .env       # fill in DAGSHUB_USER, DAGSHUB_TOKEN
 ```
 
-### 2 — Pull DVC-tracked data
+### 2 — Pull DVC-tracked data and models
 
 ```bash
-pip install dvc dvc-s3
-dvc pull                      # downloads datasets and model artifacts from DagsHub
+pip install "dvc[s3]"
+dvc pull                    # downloads datasets + artifacts from DagsHub S3
 ```
 
 ### 3 — Start the stack
 
 ```bash
-docker-compose up -d --build
+docker compose build train-api
+docker compose build predict-api
+docker compose up -d
 ```
 
-### 4 — Verify services are healthy
+### 4 — Verify services
 
 ```bash
-docker-compose ps
-curl http://localhost:5000/health   # gate-api
+docker compose ps
 curl http://localhost:5002/health   # train-api
 curl http://localhost:5003/health   # predict-api
-curl http://localhost:5005/health   # minilm-encoder
-curl http://localhost:5006/health   # clip-encoder
+curl http://localhost:5004/health   # gate-api (external port)
 ```
 
-### 5 — Trigger a training run (via Airflow)
+### 5 — Trigger a training run
 
-Open `http://localhost:8080`, enable the `rakuten_multimodal_pipeline_v6` DAG and trigger it manually.  
-The DAG runs CV → CLIP → MiniLM sequentially (~6 h on first run; ~4 h on subsequent runs with warm caches).
+Open `http://localhost:8080`, enable **`rakuten_multimodal_pipeline_v7`** and trigger manually.  
+DAG runs all 4 encoders sequentially with cached feature reuse (~3h with warm caches).
 
 ---
 
@@ -177,104 +189,98 @@ The DAG runs CV → CLIP → MiniLM sequentially (~6 h on first run; ~4 h on sub
 ### gate-api — Authentication
 
 ```
-POST /login              {"username": "admin", "password": "admin_pass"}
+POST /login              {"username": "admin", "password": "admin_pass"}  → {"token": "..."}
 POST /validate-token     Authorization: Bearer <token>
 GET  /health
-GET  /metrics
 ```
 
-### train-api — Async Training
+### train-api — Training + Audit
 
 ```
-POST /train              {
-                           "use_dev_images": false,
-                           "epochs": 60,
-                           "batch_size": 128,
-                           "text_encoder": "countvectorizer"  // or "clip" | "minilm"
-                         }
-                         → 202 {"job_id": "...", "status": "running"}
-                         → 409 if another job is already running
-
-GET  /train/status/{id}  → {"status": "success|running|failed|interrupted",
-                             "step": "text_features|pca|training|...",
-                             "final_metrics": {...}, "mlflow_run_id": "..."}
+POST /train              {"epochs":60, "batch_size":128, "text_encoder":"countvectorizer|clip|minilm|mpnet",
+                          "use_cache":true, "use_dev_images":false}
+                         → 202 {"job_id":"...", "status":"running"}  |  409 if busy
+GET  /train/status/{id}  → {"status":"success|running|failed", "step":"...", "final_metrics":{...}}
+POST /quality-gate       Runs pytest quality assertions — returns pass/fail + output
+POST /cleanlab           Confident learning label audit using CLIP model → CSV report
+POST /drift-rebuild-reference  Builds 5k stratified reference for Evidently
 GET  /health
 GET  /metrics
-```
-
-### clip-encoder — Bulk CLIP Text Encoding
-
-```
-POST   /encode           Encodes data/X_train_update.csv → text_features_clip.npy
-                         (idempotent — validates cache params before skipping)
-GET    /status           → {"status": "idle|encoding|done|error", "message": "..."}
-DELETE /cache            Invalidate cache — forces re-encode on next POST /encode
-GET    /health           → includes cache_valid, normalize_embeddings, batch_size
-```
-
-### minilm-encoder — Bulk MiniLM Encoding
-
-```
-POST /encode             Encodes data/X_train_update.csv → text_features_minilm.npy
-GET  /status             → {"status": "idle|encoding|done|error", "message": "..."}
-GET  /health
 ```
 
 ### predict-api — Inference
 
 ```
-POST /predict-text        {"description": "leather handbag", "model": "cv"}
-                          model: "cv" (default) | "clip" | "minilm"
-POST /predict-image       {"image_base64": "<base64 JPEG>"}
-POST /predict-multimodal  {"description": "...", "image_base64": "...", "model": "cv"}
-POST /reload-artifacts    reload all models + PCA + vectorizer from disk
-GET  /health              → includes cv_model_loaded, clip_model_loaded, minilm_model_loaded
+POST /predict-text        {"description":"...", "model":"cv|clip|minilm|mpnet"}
+POST /predict-image       {"image_base64":"<base64>"}
+POST /predict-multimodal  {"description":"...", "image_base64":"...", "model":"cv|clip|minilm|mpnet"}
+                          CV encoder: OCR runs on image at inference time (Tesseract)
+                          Returns mode: multimodal | text_only_fallback | image_only_fallback
+POST /predict-ensemble    {"description":"...", "image_base64":"..."}
+                          Weighted average of all 4 models + per-model breakdown
+POST /gradcam             {"image_base64":"...", "model":"clip", "target_class":null}
+                          Returns heatmap as base64 JPEG
+POST /drift-trigger-report  Force Evidently report from current buffer (admin)
+GET  /drift-status        Buffer size, reports on disk, reference status
+POST /reload-artifacts    Reload all models from disk (called after training)
+GET  /health
 GET  /metrics
 ```
 
-Each prediction endpoint returns:
+Each prediction returns:
 ```json
 {
-  "pred_class": 40,
-  "label": "40",
-  "category": "Movies & DVDs",
-  "probs": [[0.02, 0.85, ...]],
-  "mode": "text_only | image_only | multimodal",
-  "encoder": "cv | clip | minilm"
+  "pred_class": 10, "label": "10", "category": "Books",
+  "probs": [[...27 values...]], "mode": "multimodal", "encoder": "clip"
 }
 ```
 
-All three models (`model_cv`, `model_clip`, `model_minilm`) are loaded simultaneously at startup if available.  
-predict-api uses `LD_PRELOAD=jemalloc` so TF and sentence-transformers/transformers can coexist.
+Ensemble additionally returns:
+```json
+{
+  "breakdown": {
+    "cv":     {"category": "Books", "confidence": 0.56, "weight": 0.24},
+    "clip":   {"category": "Toys",  "confidence": 0.32, "weight": 0.26},
+    "minilm": {"category": "Books", "confidence": 0.81, "weight": 0.24},
+    "mpnet":  {"category": "Books", "confidence": 0.71, "weight": 0.25}
+  }
+}
+```
 
 ---
 
 ## Monitoring & Drift Detection
 
-Grafana is auto-provisioned with the **Rakuten Drift Dashboard** at `http://localhost:3000`.
+Grafana auto-provisioned at `http://localhost:3000`.
 
-### Prometheus metrics collected
+### Prometheus metrics
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `prediction_confidence` | Histogram | Max softmax probability per prediction |
-| `prediction_entropy` | Histogram | Shannon entropy (high = uncertain = possible drift) |
-| `prediction_class_total` | Counter | Predictions per class label (distribution drift) |
-| `feature_text_input_mean` | Gauge | Mean of text feature vector (last prediction) |
-| `feature_image_input_mean` | Gauge | Mean of image feature vector (last prediction) |
-| `model_final_val_accuracy{encoder="cv\|clip\|minilm"}` | Gauge | Val accuracy after last training run |
-| `model_final_val_loss{encoder="cv\|clip\|minilm"}` | Gauge | Val loss after last training run |
-| `training_dataset_size` | Gauge | Number of samples used in the last training run |
+| Metric | Description |
+|--------|-------------|
+| `model_final_val_accuracy{encoder="cv\|clip\|minilm\|mpnet"}` | Val accuracy after training |
+| `model_final_val_macro_f1` / `model_final_val_top3_accuracy` | New metrics since DAG v7 |
+| `prediction_confidence` | Max softmax probability per request |
+| `prediction_entropy` | Shannon entropy (high = uncertain = possible drift) |
+| `prediction_class_total` | Predictions per class (distribution drift) |
+| `predict_request_latency_seconds` | P95 latency histogram |
 
-### Alert rules (`monitoring/alert-rules.yml`)
+### Evidently drift reports
 
-- `CVModelValAccuracyLow` / `CLIPModelValAccuracyLow` / `MiniLMModelValAccuracyLow` — val accuracy below 0.70
-- `CLIPEncoderDown` / `MiniLMEncoderDown` — encoder service unreachable > 3 min
-- `PredictionConfidenceDrift` — P50 confidence drops below 0.40 for 15 min
-- `PredictionEntropyHigh` — P90 entropy exceeds 2.5 nats
-- `ClassDistributionSkewed` — single class exceeds 80% of recent predictions
-- `PredictionLatencyHigh` — P95 latency above 5 s
-- `DiskSpaceLow` — root filesystem below 10% free
+Predict-api buffers up to 2000 multimodal predictions then auto-generates an Evidently HTML report.  
+Reports are saved to `data/artifacts/drift_reports/` (max 10 kept).  
+View and download reports from the **Drift Reports** page in Streamlit.
+
+### Alert thresholds
+
+| Alert | Threshold |
+|-------|-----------|
+| CVModelValAccuracyLow | < 0.72 |
+| CLIPModelValAccuracyLow | < 0.80 |
+| MiniLMModelValAccuracyLow | < 0.70 |
+| mpnetModelValAccuracyLow | < 0.72 |
+| PredictionConfidenceDrift | P50 < 0.40 for 15 min |
+| PredictionLatencyHigh | P95 > 5s |
+| DiskSpaceLow | root filesystem < 10% free |
 
 ---
 
@@ -282,82 +288,60 @@ Grafana is auto-provisioned with the **Rakuten Drift Dashboard** at `http://loca
 
 | Resource | URL |
 |----------|-----|
-| Code repository | https://github.com/zz75da/rakuten_z |
+| Code | https://github.com/zz75da/rakuten_z |
 | DagsHub (data + MLflow) | https://dagshub.com/zz75da/rakuten_z |
 | MLflow experiments | https://dagshub.com/zz75da/rakuten_z/experiments |
 | Model Registry | https://dagshub.com/zz75da/rakuten_z/models |
 
-### MLflow experiments
+### MLflow — what each run logs
 
-Each training run logs:
+**Parameters:** `text_encoder` · `input_dim` · `focal_gamma` · `use_late_fusion` · `use_layer_norm` · `pca_components` · `learning_rate` · `hidden_1/2` · `dropout_1/2` · `l2_reg` · `early_stopping_monitor` · `dataset_rows`
 
-**Parameters** (visible as columns in DagsHub):
+**Metrics per epoch:** `train_loss` · `val_loss` · `train_accuracy` · `val_accuracy` · `val_macro_f1` · `val_top3_accuracy`
 
-| Parameter | Description |
-|-----------|-------------|
-| `text_encoder` | `countvectorizer`, `clip`, or `minilm` |
-| `model_name` | `rakuten_multimodal_cv`, `_clip`, or `_minilm` |
-| `input_dim` | Combined feature vector size (896 for CV/CLIP, 768 for MiniLM) |
-| `preprocess.pca_components` | Image PCA output dim (currently 384) |
-| `preprocess.n_text_pca_components` | CV text PCA dim (512); N/A for CLIP and MiniLM |
-| `dataset_rows` | Training set size |
-| `epochs_max` | Configured max epochs |
-| `model.hidden_1`, `model.hidden_2` | Classifier hidden layer sizes |
-| `model.learning_rate`, `model.l2_reg` | Optimiser settings |
+**Final metrics:** `final_val_accuracy` · `final_val_macro_f1` · `final_val_top3_accuracy`
 
-**Metrics:** `train_loss`, `val_loss`, `train_accuracy`, `val_accuracy` (per epoch) + `final_val_accuracy`
+### MLflow Model Registry (4 models)
 
-**Artefacts:**
+| Model | Encoder | Best val_acc |
+|-------|---------|-------------|
+| `rakuten_multimodal_cv` | TF-IDF + OCR | 0.8008 |
+| `rakuten_multimodal_clip` | CLIP ViT-B/32 | 0.8489 |
+| `rakuten_multimodal_minilm` | MiniLM-L12-v2 | 0.7943 |
+| `rakuten_multimodal_mpnet` | mpnet-base-v2 | 0.8191 |
 
-| File | Encoder |
-|------|---------|
-| `neural_network_model.keras` | CV |
-| `neural_network_model_clip.keras` | CLIP |
-| `neural_network_model_minilm.keras` | MiniLM |
-| `train_history.json` / `_clip.json` / `_minilm.json` | per encoder |
-| `pca_image.pkl` | shared (all encoders) |
-| `pca_text.pkl` | CV only |
-| `text_vectorizer.pkl` | CV only |
-| `label_encoder.pkl` | shared |
+### DVC pipeline stages
 
-### MLflow Model Registry
-
-Three separate registered models:
-
-- **`rakuten_multimodal_cv`** — CountVectorizer + PCA encoder
-- **`rakuten_multimodal_clip`** — CLIP ViT-B/32 text encoder
-- **`rakuten_multimodal_minilm`** — MiniLM multilingual encoder
-
-Each version is tagged with `encoder`, `task`, `dataset`, and `framework`.  
-Run names follow `cv_train_YYYYMMDD_HHMM` / `clip_train_...` / `minilm_train_...`.
+`preprocess_text_cv` → `preprocess_text_clip` → `preprocess_text_minilm` → `preprocess_text_mpnet` → `preprocess_image` → `reduce_features_{cv|clip|minilm|mpnet}` → `train_{cv|clip|minilm|mpnet}` → `predict`
 
 ---
 
 ## Test Suite
 
 ```bash
-# Run against the airflow container (has all dependencies)
-docker exec airflow python -m pytest tests/ -q
+# Unit tests (inside train-api container or CI)
+pytest tests/unit/ train-api/tests/ -v
+
+# Integration tests
+pytest tests/integration/ -v -m integration
+
+# Model quality gate (inside train-api container)
+pytest /app/tests/test_model_quality.py -v
 ```
-
-**Current coverage:** unit tests for all three encoders across artifacts, PCA reducer, model architecture, and training workflow. TF-dependent tests skip cleanly without a real TF runtime.
-
-### Test files
 
 | File | Scope | What it tests |
 |------|-------|---------------|
 | `tests/unit/test_gate_api.py` | Unit | Login, JWT claims, token validation |
-| `tests/unit/test_predict_api.py` | Unit | All predict endpoints, tri-model globals, drift metrics, reload, 503 for unavailable models |
-| `tests/unit/test_train_api.py` | Unit | Async /train, RBAC, job registry, status polling, 409 concurrent-training guard |
-| `tests/unit/test_artifacts.py` | Unit | `save_artifacts()` for CV, CLIP, and MiniLM — file sets, skip/overwrite, round-trip |
-| `tests/unit/test_models.py` | Unit | Keras architecture for all three input dims (896 CV, 896 CLIP, 768 MiniLM) |
-| `tests/unit/test_pca_reducer.py` | Unit | `reduce_features()` shape, dtype, encoder-specific filename, MiniLM/CLIP pass-through |
-| `tests/unit/test_preprocess_text.py` | Unit | Text cleaning + CountVectorizer properties |
-| `tests/unit/test_preprocess_image.py` | Unit | ResNet50 output shape (skipped without TF) |
-| `tests/unit/test_preprocess.py` | Unit | Cross-module smoke tests |
-| `tests/integration/test_api_integration.py` | Integration | JWT login → validate cross-service flow |
-| `tests/integration/test_pipeline.py` | Integration | Text → PCA mini-pipeline, determinism |
-| `tests/integration/test_workflow.py` | Integration | Full async training job lifecycle, subprocess architecture, 409 guard |
+| `tests/unit/test_predict_api.py` | Unit | All predict endpoints, 4-model globals, drift, reload |
+| `tests/unit/test_train_api.py` | Unit | `/train`, RBAC, 409 guard, job registry |
+| `tests/unit/test_artifacts.py` | Unit | `save_artifacts()` — encoder-specific file sets, no cross-corruption |
+| `tests/unit/test_models.py` | Unit | Late fusion architecture for all 4 input dims |
+| `tests/unit/test_pca_reducer.py` | Unit | PCA shapes, versioned filenames, encoder pass-through |
+| `tests/unit/test_preprocess_text.py` | Unit | TF-IDF vectorizer, OCR path, fit_only mode |
+| `tests/unit/test_preprocess_image.py` | Unit | ResNet50 output shape |
+| `tests/integration/test_api_integration.py` | Integration | JWT → validate cross-service flow |
+| `tests/integration/test_workflow.py` | Integration | Full async training job lifecycle |
+| `train-api/tests/test_model_quality.py` | Quality gate | Accuracy floors, macro F1 floor, no class collapse, overfit gap ≤ 0.20 |
 
 ---
 
@@ -366,72 +350,108 @@ docker exec airflow python -m pytest tests/ -q
 ```
 rakuten_mlops_services/
 ├── airflow/
-│   ├── dags/train_dag_v6.py        # DAG v6: CV → CLIP encode → CLIP train → MiniLM encode → MiniLM train
-│   ├── Dockerfile
-│   └── requirements.txt
-├── gate-api/
-│   ├── app.py                      # JWT auth service
-│   ├── Dockerfile
-│   └── requirements.txt
+│   └── dags/train_dag_v6.py        # DAG v7: 4 encoders + quality gate + cleanlab + drift reference
+├── gate-api/app.py                  # JWT auth
 ├── train-api/
-│   ├── app.py                      # async training API (409 guard, job persistence)
+│   ├── app.py                       # /train · /quality-gate · /cleanlab · /drift-rebuild-reference
 │   ├── services/
-│   │   ├── data_loader.py
-│   │   ├── preprocess_text.py
-│   │   ├── preprocess_image.py
-│   │   ├── pca_reducer.py          # IncrementalPCA — CV PCA, MiniLM/CLIP pass-through
-│   │   ├── run_pca.py              # PCA subprocess (writes result to temp JSON)
-│   │   ├── run_full_pipeline.py    # full training subprocess (TF isolated from uvicorn)
-│   │   ├── trainer.py              # MLflow logging, encoder-specific Keras model + filenames
-│   │   └── artifacts.py           # save_artifacts() — CV, CLIP, and MiniLM file sets
-│   ├── Dockerfile                  # tensorflow:2.17.0 + libjemalloc2
-│   └── requirements.txt
-├── clip-encoder/
-│   ├── app.py                      # FastAPI service: atomic CLIP encoding with param-aware cache
-│   ├── Dockerfile                  # python:3.11-slim + CPU-only torch + transformers
-│   └── requirements.txt
-├── minilm-encoder/
-│   ├── app.py                      # FastAPI service: bulk MiniLM encoding to .npy cache
-│   ├── encode.py
-│   ├── Dockerfile                  # python:3.11-slim + CPU-only torch
-│   └── requirements.txt
+│   │   ├── preprocess_text.py       # TF-IDF + SpaCy + real-time OCR merge (fit_only recovery)
+│   │   ├── run_ocr_extraction.py    # One-shot OCR over image_train/ → ocr_text.csv
+│   │   ├── pca_reducer.py           # IncrementalPCA — versioned output (pca_image_{n}.pkl)
+│   │   ├── run_full_pipeline.py     # Full training subprocess (TF isolated, PCA versioned cache)
+│   │   ├── trainer.py               # Late fusion model, focal loss, macro F1 callback, MLflow
+│   │   ├── artifacts.py             # save_artifacts() — encoder-specific, no cross-corruption
+│   │   └── run_cleanlab_audit.py    # Confident learning via SGDClassifier cross-val
+│   └── tests/test_model_quality.py  # Pytest quality gate (accuracy/F1/overfit floors)
+├── clip-encoder/app.py              # Bulk CLIP text encoding → text_features_clip.npy
+├── minilm-encoder/app.py            # Bulk MiniLM + mpnet encoding → text_features_{minilm|mpnet}.npy
 ├── predict-api/
-│   ├── app.py                      # tri-model inference: model_cv + model_clip + model_minilm
-│   ├── Dockerfile                  # python:3.11-slim + libjemalloc2
-│   └── requirements.txt
-├── streamlit/
-│   ├── app_streamlit.py            # demo UI + pipeline presentation + live training curves
-│   └── requirements.txt
+│   ├── app.py                       # 4-model inference · ensemble · GradCAM · OCR · Evidently drift
+│   └── services/drift_monitor.py    # Evidently buffer (2000 cap) + HTML report rotation (10 max)
+├── streamlit/app_streamlit.py       # UI: single/batch predictions · drift reports page · training curves
 ├── monitoring/
-│   ├── prometheus.yml              # scrape config (mounted by Prometheus)
-│   ├── alert-rules.yml             # CV + CLIP + MiniLM accuracy + encoder UP/DOWN alerts
-│   ├── alertmanager.yml.tmpl
-│   └── grafana_dashboards/
-│       └── rakuten_drift_dashboard.json  # encoder dropdown includes cv|clip|minilm
-├── tests/
-│   ├── conftest.py
-│   ├── unit/                       # 9 unit test modules
-│   ├── integration/                # 3 integration test modules
-│   └── requirements-test.txt
-├── dvc.yaml                        # 3 text-encoding + 3 PCA + 3 training + 1 predict stages
-├── docker-compose.yml              # 14 services, static subnet 172.20.0.0/16
-├── params.yaml                     # all tunable hyperparameters incl. clip.* section
-└── pytest.ini
+│   ├── prometheus.yml               # 8 scrape targets
+│   ├── alert-rules.yml              # 4 encoder accuracy + latency + drift + resource alerts
+│   └── grafana_dashboards/rakuten_drift_dashboard.json
+├── tests/                           # unit + integration test suites
+├── .github/workflows/dvc-ci.yml     # CI: tests + DVC remote sync (main + experiment/* branches)
+├── dvc.yaml                         # Pipeline definition (versioned PCA outputs)
+├── docker-compose.yml               # 14 services, subnet 172.20.0.0/16
+└── params.yaml                      # All tunable hyperparameters (focal_gamma, use_late_fusion, etc.)
 ```
 
 ---
 
 ## Environment Variables
 
-Copy `.env.template` to `.env` and fill in:
+Copy `.env.template` to `.env`:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DAGSHUB_USER` | — | DagsHub username (DVC remote + MLflow auth) |
-| `DAGSHUB_TOKEN` | — | DagsHub access token |
-| `MLFLOW_EXPERIMENT_NAME` | `rakuten_z` | MLflow experiment name |
-| `MLFLOW_MODEL_NAME` | `rakuten_multimodal` | Base name — suffixed `_cv`, `_clip`, or `_minilm` at registration |
-| `ARTIFACTS_PATH` | `/app/data/artifacts` | Path to serialised model artefacts (predict-api) |
-| `GATE_API_URL` | `http://gate-api:5000` | Internal gate-api address |
-| `PREDICT_API_URL` | `http://predict-api:5003` | Internal predict-api address |
-| `LD_PRELOAD` | `/usr/lib/x86_64-linux-gnu/libjemalloc.so.2` | jemalloc — prevents TF/glibc heap corruption |
+| Variable | Description |
+|----------|-------------|
+| `DAGSHUB_USER` | DagsHub username (DVC remote S3 + MLflow auth) |
+| `DAGSHUB_TOKEN` | DagsHub access token |
+| `MLFLOW_TRACKING_URI` | `https://dagshub.com/<user>/rakuten_z.mlflow` |
+| `MLFLOW_S3_ENDPOINT_URL` | `https://dagshub.com` |
+| `MLFLOW_EXPERIMENT_NAME` | `rakuten_z` |
+| `MLFLOW_MODEL_NAME` | `rakuten_multimodal` (suffixed `_cv`, `_clip`, `_minilm`, `_mpnet`) |
+| `ARTIFACTS_PATH` | `/app/data/artifacts` (predict-api) |
+| `GATE_API_URL` | `http://gate-api:5000` |
+| `PREDICT_API_URL` | `http://predict-api:5003` |
+| `LD_PRELOAD` | `/usr/local/lib/libjemalloc.so.2` (train-api + predict-api) |
+
+---
+
+## Troubleshooting
+
+### Services won't start
+
+```bash
+docker compose ps                          # check which containers exited
+docker compose logs <service> --tail 50   # check logs
+```
+
+### Airflow → Postgres connection
+
+```bash
+docker exec airflow curl -s http://localhost:8080/health
+docker exec airflow python -c "from airflow.models import DagRun; print('DB OK')"
+```
+
+### Train-api environment variables
+
+```bash
+docker exec train-api bash -c 'echo $MLFLOW_TRACKING_URI && echo $DAGSHUB_USER'
+```
+
+### MLflow can't reach DagsHub
+
+- Verify `DAGSHUB_USER` and `DAGSHUB_TOKEN` in `.env`
+- Check connectivity: `docker exec train-api curl -s https://dagshub.com`
+- Confirm token has write access to the repository
+
+### Models not loading in predict-api
+
+```bash
+docker logs predict-api | grep -E "✓|⚠"    # check which models loaded
+curl http://localhost:5003/health            # confirm healthy
+```
+
+If models fail to load after a training run:
+```bash
+curl -X POST http://localhost:5003/reload-artifacts \
+  -H "Authorization: Bearer <token>"
+```
+
+### DVC out of sync
+
+```bash
+dvc status --cloud    # check which files need pushing
+dvc push              # upload missing files to DagsHub S3
+```
+
+### Quality gate fails after training
+
+```bash
+docker exec train-api pytest /app/tests/test_model_quality.py -v
+```
+Check that all history files (`train_history*.json`) exist in `/app/data/artifacts/`.
