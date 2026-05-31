@@ -69,7 +69,13 @@ def _import(module_name: str, file_path: str):
     return module
 
 
-_TRAIN_SERVICES = os.path.join(PROJECT_ROOT, "train-api", "services")
+# Inside train-api container the services live at /app/services/;
+# on the host they are at <project_root>/train-api/services/
+_TRAIN_SERVICES = (
+    os.path.join(PROJECT_ROOT, "services")
+    if os.path.isdir(os.path.join(PROJECT_ROOT, "services"))
+    else os.path.join(PROJECT_ROOT, "train-api", "services")
+)
 
 
 # ---------------------------------------------------------------------------
