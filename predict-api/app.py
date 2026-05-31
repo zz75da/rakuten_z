@@ -184,20 +184,134 @@ def verify_jwt_token(authorization: str = Header(...)):
 
 # --- Load artifacts ---
 def _fix_lambda_globals(model):
-    """
-    Keras 3 deserialises Lambda closures with wrong global bindings — `tf` becomes
-    a dict rather than the TensorFlow module, causing AttributeError on predict().
-    Walk every Lambda layer and replace any dict-typed `tf` global with the real module.
-    """
     for layer in model.layers:
         fn = getattr(layer, 'function', None)
         if callable(fn) and hasattr(fn, '__globals__'):
             try:
-                globs = fn.__globals__
-                if isinstance(globs.get('tf'), dict):
-                    globs['tf'] = tf
+                if isinstance(fn.__globals__.get('tf'), dict):
+                    fn.__globals__['tf'] = tf
             except Exception:
                 pass
+    return model
+
+
+def _load_late_fusion_model(keras_path: str):
+    """
+    Load a late-fusion model by rebuilding its architecture from config params
+    and loading only the weights — completely bypasses Keras config deserialisation
+    which is incompatible across Keras minor versions.
+
+    Uses direct TF tensor ops instead of Lambda layers, so there are no
+    Lambda serialisation issues at all.
+    """
+    import zipfile, json, h5py, io
+    from tensorflow.keras import Model, Input
+    from tensorflow.keras.layers import (Dense, Dropout, Concatenate, Multiply,
+                                          Add, Softmax, LayerNormalization)
+    from tensorflow.keras.regularizers import l2 as keras_l2
+
+    # ── Read architecture params from config ──────────────────────────────────
+    with zipfile.ZipFile(keras_path) as zf:
+        config = json.loads(zf.read('config.json'))
+        weights_bytes = zf.read('model.weights.h5')
+
+    def _find_layer(cfg, name):
+        layers = cfg.get('config', {}).get('layers', [])
+        for l in layers:
+            if l.get('config', {}).get('name') == name:
+                return l
+        return None
+
+    def _dense_units(cfg, name):
+        l = _find_layer(cfg, name)
+        return l['config']['units'] if l else None
+
+    def _dropout_rate(cfg, name):
+        l = _find_layer(cfg, name)
+        return l['config']['rate'] if l else 0.0
+
+    def _has_layer(cfg, name):
+        return _find_layer(cfg, name) is not None
+
+    def _l2_val(cfg, name):
+        l = _find_layer(cfg, name)
+        if not l: return 0.0
+        kr = l['config'].get('kernel_regularizer')
+        if kr: return kr.get('config', {}).get('l2', 0.0)
+        return 0.0
+
+    def _output_shape(cfg, name):
+        l = _find_layer(cfg, name)
+        if not l: return None
+        bs = l.get('build_config', {}).get('input_shape')
+        return bs[-1] if bs else None
+
+    input_dim   = config['config']['layers'][0]['config']['batch_input_shape'][-1]
+    text_dim    = _output_shape(config, 'text_split')    or (input_dim - 256)
+    img_dim     = _output_shape(config, 'image_split')   or 256
+    hidden_1    = _dense_units(config, 'text_dense1')    or 512
+    hidden_2    = _dense_units(config, 'image_dense1')   or 256
+    n_classes   = _dense_units(config, 'text_logits')    or 27
+    drop_1      = _dropout_rate(config, 'text_drop1')
+    drop_2      = _dropout_rate(config, 'image_drop1')
+    l2_val      = _l2_val(config, 'text_dense1')
+    use_ln      = _has_layer(config, 'text_ln1')
+    _reg        = keras_l2(l2_val) if l2_val > 0 else None
+
+    # ── Rebuild architecture with direct TF ops (no Lambda) ───────────────────
+    inp = Input(shape=(input_dim,), name='input_1')
+
+    text_inp  = inp[:, :text_dim]
+    image_inp = inp[:, text_dim:]
+
+    t = Dense(hidden_1, activation='relu', kernel_regularizer=_reg, name='text_dense1')(text_inp)
+    if use_ln:
+        t = LayerNormalization(name='text_ln1')(t)
+    t = Dropout(drop_1, name='text_drop1')(t)
+    t_logits = Dense(n_classes, name='text_logits')(t)
+
+    i = Dense(hidden_2, activation='relu', kernel_regularizer=_reg, name='image_dense1')(image_inp)
+    if use_ln:
+        i = LayerNormalization(name='image_ln1')(i)
+    i = Dropout(drop_2, name='image_drop1')(i)
+    i_logits = Dense(n_classes, name='image_logits')(i)
+
+    t_mean = tf.reduce_mean(t_logits, axis=1, keepdims=True)
+    i_mean = tf.reduce_mean(i_logits, axis=1, keepdims=True)
+    branch_summary = Concatenate(name='branch_summary')([t_mean, i_mean])
+    alpha = Dense(1, activation='sigmoid', kernel_initializer='zeros',
+                  name='fusion_alpha')(branch_summary)
+
+    t_probs   = Softmax(name='text_softmax')(t_logits)
+    i_probs   = Softmax(name='image_softmax')(i_logits)
+    alpha_inv = 1.0 - alpha
+    out = Add(name='fused_probs')([
+        Multiply(name='alpha_text') ([alpha,     t_probs]),
+        Multiply(name='alpha_image')([alpha_inv, i_probs]),
+    ])
+
+    model = Model(inp, out)
+
+    # ── Load weights by name ─────────────────────────────────────────────────
+    with h5py.File(io.BytesIO(weights_bytes), 'r') as hf:
+        for layer in model.layers:
+            lname = layer.name
+            # weights stored under '_layer_checkpoint_dependencies/<name>/...'
+            # or directly under 'layers/<name>/vars/'
+            weights = []
+            for key in ['vars', 'cell']:
+                path = None
+                for root in ['', '_layer_checkpoint_dependencies/']:
+                    p = f'{root}{lname}/{key}'
+                    if p in hf:
+                        path = p; break
+                if path:
+                    g = hf[path]
+                    weights = [g[k][:] for k in sorted(g.keys())]
+                    break
+            if weights and len(weights) == len(layer.get_weights()):
+                layer.set_weights(weights)
+
     return model
 
 
@@ -205,12 +319,23 @@ def load_artifacts():
     global model_cv, model_minilm, model_mpnet, model_clip, label_encoder, text_vectorizer, \
            pca_text, pca_image, resnet_model, minilm_encoder, mpnet_encoder, \
            clip_tokenizer, clip_text_model
-    # Late fusion models use Lambda layers — enable unsafe deserialization for our own trusted models
-    try:
-        import keras
-        keras.config.enable_unsafe_deserialization()
-    except Exception:
-        pass
+    def _load_model(keras_path):
+        """Try weights-only loader first (version-safe), fall back to standard load."""
+        try:
+            m = _load_late_fusion_model(keras_path)
+            return m
+        except Exception as e1:
+            print(f"  weights-only load failed ({e1.__class__.__name__}), trying standard load...")
+        try:
+            import keras as _keras
+            _keras.config.enable_unsafe_deserialization()
+        except Exception:
+            pass
+        try:
+            return _fix_lambda_globals(tf.keras.models.load_model(keras_path, compile=False))
+        except Exception as e2:
+            raise RuntimeError(f"Both loaders failed. Last: {e2}") from e2
+
     try:
         # --- Shared artifacts ---
         label_encoder = pickle.load(open(os.path.join(ARTIFACTS_PATH, "label_encoder.pkl"), "rb"))
@@ -221,7 +346,7 @@ def load_artifacts():
             keras_path = os.path.join(ARTIFACTS_PATH, "neural_network_model.keras")
             h5_path = os.path.join(ARTIFACTS_PATH, "neural_network_model.h5")
             model_path = keras_path if os.path.exists(keras_path) else h5_path
-            model_cv = _fix_lambda_globals(tf.keras.models.load_model(model_path, compile=False))
+            model_cv = _load_model(model_path)
             text_vectorizer = pickle.load(open(os.path.join(ARTIFACTS_PATH, "text_vectorizer.pkl"), "rb"))
             pca_text = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_text.pkl"), "rb"))
             print("✓ CV model loaded from disk")
@@ -229,12 +354,11 @@ def load_artifacts():
             print(f"⚠ CV model could not be loaded: {e}")
             model_cv = None
 
-        # --- MiniLM model (optional — only available after a minilm training run) ---
+        # --- MiniLM model ---
         minilm_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_minilm.keras")
         if os.path.exists(minilm_keras):
             try:
-                model_minilm = _fix_lambda_globals(tf.keras.models.load_model(minilm_keras, compile=False))
-                # Load encoder directly — no pkl, model cached by sentence-transformers
+                model_minilm = _load_model(minilm_keras)
                 from sentence_transformers import SentenceTransformer
                 minilm_encoder = SentenceTransformer(_MINILM_MODEL_NAME, device="cpu")
                 print("✓ MiniLM model loaded")
@@ -247,11 +371,11 @@ def load_artifacts():
             model_minilm = None
             minilm_encoder = None
 
-        # --- mpnet model (optional — only available after an mpnet training run) ---
+        # --- mpnet model ---
         mpnet_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_mpnet.keras")
         if os.path.exists(mpnet_keras):
             try:
-                model_mpnet = _fix_lambda_globals(tf.keras.models.load_model(mpnet_keras, compile=False))
+                model_mpnet = _load_model(mpnet_keras)
                 from sentence_transformers import SentenceTransformer
                 mpnet_encoder = SentenceTransformer(_MPNET_MODEL_NAME, device="cpu")
                 print(f"✓ mpnet model loaded ({_MPNET_MODEL_NAME})")
@@ -264,11 +388,11 @@ def load_artifacts():
             model_mpnet  = None
             mpnet_encoder = None
 
-        # --- CLIP model (optional — only available after a clip training run) ---
+        # --- CLIP model ---
         clip_keras = os.path.join(ARTIFACTS_PATH, "neural_network_model_clip.keras")
         if os.path.exists(clip_keras):
             try:
-                model_clip = _fix_lambda_globals(tf.keras.models.load_model(clip_keras, compile=False))
+                model_clip = _load_model(clip_keras)
                 from transformers import CLIPTokenizer, CLIPTextModel
                 clip_tokenizer  = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
                 clip_text_model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32")

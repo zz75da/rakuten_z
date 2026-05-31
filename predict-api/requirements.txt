@@ -32,7 +32,6 @@ prometheus-client==0.20.0
 prometheus-fastapi-instrumentator
 evidently==0.4.33              # drift monitoring — HTML reports, PSI-based detection
 
-# keras version is provided by the tensorflow/tensorflow:2.17.0 base image
 
 # === Text encoders ===
 sentence-transformers>=2.7.0  # MiniLM
