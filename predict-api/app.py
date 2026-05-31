@@ -197,120 +197,113 @@ def _fix_lambda_globals(model):
 
 def _load_late_fusion_model(keras_path: str):
     """
-    Load a late-fusion model by rebuilding its architecture from config params
-    and loading only the weights — completely bypasses Keras config deserialisation
-    which is incompatible across Keras minor versions.
-
-    Uses direct TF tensor ops instead of Lambda layers, so there are no
-    Lambda serialisation issues at all.
+    Load a late-fusion model by rebuilding architecture from config params
+    and loading weights — bypasses Keras config deserialisation entirely.
+    Lambda layers replaced with keras.layers.Lambda using fresh Python closures
+    (no bytecode deserialisation). Weights loaded by sorted h5 key order.
     """
     import zipfile, json, h5py, io
+    import numpy as np
     from tensorflow.keras import Model, Input
     from tensorflow.keras.layers import (Dense, Dropout, Concatenate, Multiply,
-                                          Add, Softmax, LayerNormalization)
+                                          Add, Softmax, LayerNormalization, Lambda)
     from tensorflow.keras.regularizers import l2 as keras_l2
 
-    # ── Read architecture params from config ──────────────────────────────────
     with zipfile.ZipFile(keras_path) as zf:
         config = json.loads(zf.read('config.json'))
         weights_bytes = zf.read('model.weights.h5')
 
-    def _find_layer(cfg, name):
-        layers = cfg.get('config', {}).get('layers', [])
-        for l in layers:
+    def _find(name):
+        for l in config.get('config', {}).get('layers', []):
             if l.get('config', {}).get('name') == name:
                 return l
         return None
 
-    def _dense_units(cfg, name):
-        l = _find_layer(cfg, name)
-        return l['config']['units'] if l else None
-
-    def _dropout_rate(cfg, name):
-        l = _find_layer(cfg, name)
-        return l['config']['rate'] if l else 0.0
-
-    def _has_layer(cfg, name):
-        return _find_layer(cfg, name) is not None
-
-    def _l2_val(cfg, name):
-        l = _find_layer(cfg, name)
+    def _units(name):   l = _find(name); return l['config']['units'] if l else None
+    def _rate(name):    l = _find(name); return l['config']['rate']  if l else 0.0
+    def _has(name):     return _find(name) is not None
+    def _l2(name):
+        l = _find(name)
         if not l: return 0.0
         kr = l['config'].get('kernel_regularizer')
-        if kr: return kr.get('config', {}).get('l2', 0.0)
-        return 0.0
-
-    def _output_shape(cfg, name):
-        l = _find_layer(cfg, name)
+        return kr.get('config', {}).get('l2', 0.0) if kr else 0.0
+    def _in_shape(name):
+        l = _find(name)
         if not l: return None
         bs = l.get('build_config', {}).get('input_shape')
         return bs[-1] if bs else None
 
-    input_dim   = config['config']['layers'][0]['config']['batch_input_shape'][-1]
-    text_dim    = _output_shape(config, 'text_split')    or (input_dim - 256)
-    img_dim     = _output_shape(config, 'image_split')   or 256
-    hidden_1    = _dense_units(config, 'text_dense1')    or 512
-    hidden_2    = _dense_units(config, 'image_dense1')   or 256
-    n_classes   = _dense_units(config, 'text_logits')    or 27
-    drop_1      = _dropout_rate(config, 'text_drop1')
-    drop_2      = _dropout_rate(config, 'image_drop1')
-    l2_val      = _l2_val(config, 'text_dense1')
-    use_ln      = _has_layer(config, 'text_ln1')
-    _reg        = keras_l2(l2_val) if l2_val > 0 else None
+    input_dim = config['config']['layers'][0]['config']['batch_input_shape'][-1]
+    text_dim  = _in_shape('text_dense1') or (input_dim - 256)
+    img_dim   = input_dim - text_dim
+    hidden_1  = _units('text_dense1')  or 512
+    hidden_2  = _units('image_dense1') or 256
+    n_classes = _units('text_logits')  or 27
+    drop_1    = _rate('text_drop1')
+    drop_2    = _rate('image_drop1')
+    l2_val    = _l2('text_dense1')
+    use_ln    = _has('text_ln1')
+    _reg      = keras_l2(l2_val) if l2_val > 0 else None
 
-    # ── Rebuild architecture with direct TF ops (no Lambda) ───────────────────
-    inp = Input(shape=(input_dim,), name='input_1')
-
-    text_inp  = inp[:, :text_dim]
-    image_inp = inp[:, text_dim:]
+    # Build with Lambda layers using fresh Python closures — no bytecode deserialization
+    _td = int(text_dim)
+    inp      = Input(shape=(input_dim,), name='input_1')
+    text_inp  = Lambda(lambda x, d=_td: x[:, :d],  output_shape=(text_dim,),  name='text_split')(inp)
+    image_inp = Lambda(lambda x, d=_td: x[:, d:],  output_shape=(img_dim,),   name='image_split')(inp)
 
     t = Dense(hidden_1, activation='relu', kernel_regularizer=_reg, name='text_dense1')(text_inp)
-    if use_ln:
-        t = LayerNormalization(name='text_ln1')(t)
+    if use_ln: t = LayerNormalization(name='text_ln1')(t)
     t = Dropout(drop_1, name='text_drop1')(t)
     t_logits = Dense(n_classes, name='text_logits')(t)
 
     i = Dense(hidden_2, activation='relu', kernel_regularizer=_reg, name='image_dense1')(image_inp)
-    if use_ln:
-        i = LayerNormalization(name='image_ln1')(i)
+    if use_ln: i = LayerNormalization(name='image_ln1')(i)
     i = Dropout(drop_2, name='image_drop1')(i)
     i_logits = Dense(n_classes, name='image_logits')(i)
 
-    t_mean = tf.reduce_mean(t_logits, axis=1, keepdims=True)
-    i_mean = tf.reduce_mean(i_logits, axis=1, keepdims=True)
-    branch_summary = Concatenate(name='branch_summary')([t_mean, i_mean])
-    alpha = Dense(1, activation='sigmoid', kernel_initializer='zeros',
-                  name='fusion_alpha')(branch_summary)
+    t_mean = Lambda(lambda x: tf.reduce_mean(x, axis=1, keepdims=True), output_shape=(1,), name='t_mean')(t_logits)
+    i_mean = Lambda(lambda x: tf.reduce_mean(x, axis=1, keepdims=True), output_shape=(1,), name='i_mean')(i_logits)
+    branch  = Concatenate(name='branch_summary')([t_mean, i_mean])
+    alpha   = Dense(1, activation='sigmoid', kernel_initializer='zeros', name='fusion_alpha')(branch)
 
     t_probs   = Softmax(name='text_softmax')(t_logits)
     i_probs   = Softmax(name='image_softmax')(i_logits)
-    alpha_inv = 1.0 - alpha
+    alpha_inv = Lambda(lambda x: 1.0 - x, output_shape=(1,), name='alpha_inv')(alpha)
     out = Add(name='fused_probs')([
         Multiply(name='alpha_text') ([alpha,     t_probs]),
         Multiply(name='alpha_image')([alpha_inv, i_probs]),
     ])
-
     model = Model(inp, out)
 
-    # ── Load weights by name ─────────────────────────────────────────────────
+    # Map h5 generic key (dense, dense_1...) → original layer name via config order.
+    # h5 assigns generic names by TYPE in creation order: first Dense→'dense', etc.
     with h5py.File(io.BytesIO(weights_bytes), 'r') as hf:
+        h5_by_key = {}
+        if 'layers' in hf:
+            for lkey in hf['layers']:
+                grp = hf[f'layers/{lkey}']
+                if 'vars' in grp:
+                    h5_by_key[lkey] = [grp[f'vars/{vk}'][:] for vk in sorted(grp['vars'].keys())]
+
+        type_counters = {}
+        name_to_h5key = {}
+        for l in config.get('config', {}).get('layers', []):
+            cls   = l.get('class_name', '')
+            lname = l.get('config', {}).get('name', '')
+            if cls == 'Dense':                 prefix = 'dense'
+            elif cls == 'LayerNormalization':  prefix = 'layer_normalization'
+            else:                              continue
+            cnt    = type_counters.get(prefix, 0)
+            h5key  = prefix if cnt == 0 else f'{prefix}_{cnt}'
+            type_counters[prefix] = cnt + 1
+            if h5key in h5_by_key:
+                name_to_h5key[lname] = h5key
+
         for layer in model.layers:
-            lname = layer.name
-            # weights stored under '_layer_checkpoint_dependencies/<name>/...'
-            # or directly under 'layers/<name>/vars/'
-            weights = []
-            for key in ['vars', 'cell']:
-                path = None
-                for root in ['', '_layer_checkpoint_dependencies/']:
-                    p = f'{root}{lname}/{key}'
-                    if p in hf:
-                        path = p; break
-                if path:
-                    g = hf[path]
-                    weights = [g[k][:] for k in sorted(g.keys())]
-                    break
-            if weights and len(weights) == len(layer.get_weights()):
-                layer.set_weights(weights)
+            if layer.name in name_to_h5key:
+                w = h5_by_key[name_to_h5key[layer.name]]
+                if len(w) == len(layer.get_weights()):
+                    layer.set_weights(w)
 
     return model
 
