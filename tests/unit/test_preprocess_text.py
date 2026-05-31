@@ -115,22 +115,10 @@ class TestExtractTextFeatures:
         assert isinstance(vectorizer, TfidfVectorizer)
 
     def test_designation_combined_with_description(self, preprocess_text_module):
-        """Both designation and description are used — more text → richer features.
-        Compare single-column vs combined: combined produces >= features."""
-        df_both = pd.DataFrame({
-            "designation": ["gaming laptop computer"],
-            "description": ["high performance"],
-            "imageid":     [1],
-            "productid":   [1],
-        })
-        df_desc_only = pd.DataFrame({
-            "designation": [""],         # empty designation
-            "description": ["high performance"],
-            "imageid":     [1],
-            "productid":   [1],
-        })
-        feat_both, _ = preprocess_text_module.extract_text_features(df_both)
-        feat_desc, _ = preprocess_text_module.extract_text_features(df_desc_only)
-        # both produce valid arrays
-        assert feat_both.shape[0] == 1
-        assert feat_desc.shape[0] == 1
+        """Both designation and description columns are used as input."""
+        # Use enough rows so TF-IDF min_df=2 is satisfied
+        df = _df("gaming laptop computer", "gaming laptop computer",
+                 "high performance", "high performance")
+        features, _ = preprocess_text_module.extract_text_features(df)
+        assert features.shape[0] == 4
+        assert features.shape[1] > 0
