@@ -412,6 +412,24 @@ def load_artifacts():
             )
             print("✓ ResNet50 loaded")
 
+        # ── Warm up all dense-head models to pre-compile tf.function ──────────
+        # Without warmup, the first prediction (especially ensemble) triggers
+        # tf.function retracing for each model → 5–30s latency spike.
+        print("Warming up models...")
+        for _m_name, _m, _dim in [
+            ("CV",     model_cv,     model_cv.input_shape[1]     if model_cv     else None),
+            ("MiniLM", model_minilm, model_minilm.input_shape[1] if model_minilm else None),
+            ("mpnet",  model_mpnet,  model_mpnet.input_shape[1]  if model_mpnet  else None),
+            ("CLIP",   model_clip,   model_clip.input_shape[1]   if model_clip   else None),
+        ]:
+            if _m is not None and _dim is not None:
+                try:
+                    _dummy = np.zeros((1, _dim), dtype=np.float32)
+                    _m.predict(_dummy, verbose=0)
+                    print(f"  {_m_name} warmed up (input_dim={_dim})")
+                except Exception as _e:
+                    print(f"  {_m_name} warmup failed: {_e}")
+
     except Exception as e:
         raise RuntimeError(f"Failed to load artifacts: {e}")
 

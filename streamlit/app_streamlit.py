@@ -92,7 +92,7 @@ def predict_single(description, uploaded_image, token, encoder="cv"):
 
     try:
         with st.spinner("Running prediction..."):
-            resp = requests.post(endpoint, json=payload, headers=headers, timeout=30)
+            resp = requests.post(endpoint, json=payload, headers=headers, timeout=90)
         if resp.status_code == 200:
             result        = resp.json()
             predicted_cat = result.get("category", result["label"])
