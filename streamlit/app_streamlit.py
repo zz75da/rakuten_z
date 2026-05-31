@@ -74,14 +74,17 @@ def predict_single(description, uploaded_image, token, encoder="cv"):
         payload["description"] = description
     if uploaded_image:
         payload["image_base64"] = base64.b64encode(uploaded_image.getvalue()).decode("utf-8")
-    if description:
-        payload["model"] = encoder
 
-    if uploaded_image and description:
+    if encoder == "ensemble":
+        endpoint = f"{PREDICT_API_URL}/predict-ensemble"
+        # ensemble always uses multimodal endpoint — model field not needed
+    elif uploaded_image and description:
+        payload["model"] = encoder
         endpoint = f"{PREDICT_API_URL}/predict-multimodal"
     elif uploaded_image:
         endpoint = f"{PREDICT_API_URL}/predict-image"
     else:
+        payload["model"] = encoder
         endpoint = f"{PREDICT_API_URL}/predict-text"
 
     headers  = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -128,6 +131,17 @@ def predict_single(description, uploaded_image, token, encoder="cv"):
                     )
             else:
                 st.success(f"**{predicted_cat}**  —  code `{predicted_code}`  (confidence {confidence})")
+
+            if result.get("encoder") == "ensemble" and "breakdown" in result:
+                with st.expander("Per-model breakdown"):
+                    bd = result["breakdown"]
+                    for enc, info in bd.items():
+                        match_main = info["label"] == predicted_code
+                        icon = "✅" if match_main else "❌"
+                        st.markdown(
+                            f"{icon} **{enc.upper()}**: {info['category']} "
+                            f"(conf: {info['confidence']:.0%}, weight: {info['weight']:.0%})"
+                        )
 
             if "probs" in result:
                 with st.expander("Probabilities per class"):
@@ -664,15 +678,15 @@ def show_prediction_page():
         return f" · {_enc_best_acc[enc]:.1%}" if enc in _enc_best_acc else ""
 
     _encoder_options = {
+        "Ensemble (all 4 models — weighted average)": "ensemble",
         f"TF-IDF + OCR + PCA (512-d){_acc_tag('cv')}":     "cv",
         f"CLIP ViT-B/32 (512-d){_acc_tag('clip')}":         "clip",
         f"MiniLM multilingual (384-d){_acc_tag('minilm')}": "minilm",
         f"mpnet multilingual (768-d){_acc_tag('mpnet')}":   "mpnet",
     }
 
-    # Default to the encoder with highest recorded val_accuracy
-    _best_enc = max(_enc_best_acc, key=_enc_best_acc.get) if _enc_best_acc else "cv"
-    _default_idx = list(_encoder_options.values()).index(_best_enc)
+    # Default to ensemble
+    _default_idx = 0
 
     st.sidebar.subheader("Text encoder")
     encoder_label    = st.sidebar.radio(
@@ -681,10 +695,11 @@ def show_prediction_page():
     selected_encoder = _encoder_options[encoder_label]
 
     _enc_info = {
-        "cv":     "TF-IDF + OCR + spaCy lemmatisation → IncrementalPCA (512-d).",
-        "clip":   "openai/clip-vit-base-patch32 — 512 dims, L2-normalised, English-focused.",
-        "minilm": "paraphrase-multilingual-MiniLM-L12-v2 — 384 dims, multilingual.",
-        "mpnet":  "paraphrase-multilingual-mpnet-base-v2 — 768 dims, multilingual.",
+        "ensemble": "Weighted average of all 4 models. Weights proportional to val accuracy. Most robust — reduces single-model failures.",
+        "cv":       "TF-IDF + OCR + spaCy lemmatisation → IncrementalPCA (512-d).",
+        "clip":     "openai/clip-vit-base-patch32 — 512 dims, English-focused, best visual features.",
+        "minilm":   "paraphrase-multilingual-MiniLM-L12-v2 — 384 dims, multilingual.",
+        "mpnet":    "paraphrase-multilingual-mpnet-base-v2 — 768 dims, multilingual.",
     }
     st.sidebar.info(_enc_info[selected_encoder])
 

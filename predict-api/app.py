@@ -608,6 +608,148 @@ def drift_status(_user: dict = Depends(verify_jwt_token)):
     }
 
 
+# --- Ensemble helpers ---
+_ENCODER_HISTORY_PATHS = {
+    "cv":     "/app/data/artifacts/train_history.json",
+    "clip":   "/app/data/artifacts/train_history_clip.json",
+    "minilm": "/app/data/artifacts/train_history_minilm.json",
+    "mpnet":  "/app/data/artifacts/train_history_mpnet.json",
+}
+
+def _ensemble_weights() -> dict:
+    """Read best val_accuracy per encoder from saved history files.
+    Falls back to equal weights if files are missing."""
+    import json as _json
+    weights = {}
+    for enc, path in _ENCODER_HISTORY_PATHS.items():
+        try:
+            h = _json.load(open(path))
+            acc = h.get("val_accuracy", [])
+            weights[enc] = max(acc) if acc else 1.0
+        except Exception:
+            weights[enc] = 1.0
+    total = sum(weights.values())
+    return {k: v / total for k, v in weights.items()}
+
+
+def _text_features_for(enc: str, description: str, img_bgr=None):
+    """Extract text features for a given encoder. Returns None on failure."""
+    try:
+        if enc == "minilm":
+            if minilm_encoder is None: return None
+            return extract_text_features_minilm(description)
+        elif enc == "mpnet":
+            if mpnet_encoder is None: return None
+            return extract_text_features_mpnet(description)
+        elif enc == "clip":
+            if clip_text_model is None: return None
+            return extract_text_features_clip(description)
+        else:
+            if text_vectorizer is None or pca_text is None: return None
+            return extract_text_features(description, img_bgr=img_bgr)
+    except Exception:
+        return None
+
+
+def _model_for(enc: str):
+    """Return the dense-head model for a given encoder."""
+    return {"cv": model_cv, "clip": model_clip,
+            "minilm": model_minilm, "mpnet": model_mpnet}.get(enc)
+
+
+@app.post("/predict-ensemble")
+def predict_ensemble(req: MultimodalRequest, user: dict = Depends(verify_jwt_token)):
+    """
+    Weighted-average ensemble over all 4 encoders.
+    Weights are proportional to each encoder's best recorded val_accuracy.
+    Returns consensus prediction + per-model breakdown.
+    """
+    if not req.description and not req.image_base64:
+        raise HTTPException(status_code=400, detail="Must provide description or image_base64")
+    if pca_image is None:
+        raise HTTPException(status_code=503, detail="Artifacts not loaded")
+
+    # Decode image once — shared across all encoders
+    _img_bgr = None
+    if req.image_base64:
+        try:
+            _img_bgr = cv2.imdecode(
+                np.frombuffer(base64.b64decode(req.image_base64), np.uint8),
+                cv2.IMREAD_COLOR)
+        except Exception:
+            pass
+
+    # Image features — shared (same ResNet50 + PCA for all encoders)
+    if _img_bgr is not None:
+        try:
+            image_features = extract_image_features(req.image_base64)
+        except Exception:
+            image_features = None
+    else:
+        image_features = None
+
+    weights = _ensemble_weights()
+    enc_order = ["cv", "clip", "minilm", "mpnet"]
+    n_classes = len(label_encoder.classes_) if label_encoder else 27
+
+    weighted_probs = np.zeros(n_classes, dtype=np.float64)
+    total_weight   = 0.0
+    breakdown      = {}
+
+    for enc in enc_order:
+        m = _model_for(enc)
+        if m is None:
+            continue
+        description = req.description or ""
+
+        # Text features
+        tf_ = _text_features_for(enc, description, img_bgr=_img_bgr if enc == "cv" else None)
+        if tf_ is None:
+            continue
+
+        # Image features (zeros if image missing)
+        img_f = image_features if image_features is not None \
+                else np.zeros((1, pca_image.n_components_), dtype=np.float32)
+
+        try:
+            combined = np.hstack([tf_, img_f])
+            probs    = m.predict(combined, verbose=0)[0].astype(np.float64)
+        except Exception:
+            continue
+
+        w = weights.get(enc, 0.25)
+        weighted_probs += w * probs
+        total_weight   += w
+
+        pred_enc = int(np.argmax(probs))
+        breakdown[enc] = {
+            "label":    str(label_encoder.inverse_transform([pred_enc])[0]),
+            "category": CATEGORY_NAMES.get(str(label_encoder.inverse_transform([pred_enc])[0]), "?"),
+            "confidence": round(float(np.max(probs)), 3),
+            "weight":   round(w, 3),
+        }
+
+    if total_weight == 0:
+        raise HTTPException(status_code=503, detail="No encoder models available for ensemble")
+
+    weighted_probs /= total_weight   # renormalise in case some encoders were skipped
+    pred    = int(np.argmax(weighted_probs))
+    label   = str(label_encoder.inverse_transform([pred])[0])
+    category = CATEGORY_NAMES.get(label, label)
+
+    _record_drift_metrics(weighted_probs, label, "/predict-ensemble")
+    REQUEST_COUNT.labels("/predict-ensemble", "POST", "200").inc()
+    return {
+        "pred_class": pred,
+        "label":      label,
+        "category":   category,
+        "probs":      [weighted_probs.tolist()],
+        "mode":       "ensemble",
+        "encoder":    "ensemble",
+        "breakdown":  breakdown,
+    }
+
+
 # --- Endpoints ---
 @app.get("/health")
 def health():
