@@ -88,17 +88,21 @@ def inject_mock_artifacts(mock_model, mock_label_encoder, mock_pca_image,
                           mock_pca_text, mock_vectorizer, mock_minilm_encoder):
     """Inject mock ML objects into predict-api module globals.
 
-    predict-api now has separate model_cv / model_minilm globals (dual-model
-    architecture).  model_minilm and minilm_encoder are set to None by default
-    so CV-only tests don't accidentally resolve the MiniLM branch.
-    resnet_model is mocked so extract_image_features() doesn't hit real ResNet.
+    4-model architecture: model_cv / model_clip / model_minilm / model_mpnet.
+    Non-CV models set to None by default so CV-only tests don't accidentally
+    resolve other branches. resnet_model mocked so ResNet50 isn't invoked.
     """
     mock_resnet = MagicMock()
     mock_resnet.predict.return_value = np.zeros((1, 2048), dtype=np.float32)
 
     predict_app.model_cv        = mock_model
+    predict_app.model_clip      = None
     predict_app.model_minilm    = None
+    predict_app.model_mpnet     = None
     predict_app.minilm_encoder  = None
+    predict_app.mpnet_encoder   = None
+    predict_app.clip_tokenizer  = None
+    predict_app.clip_text_model = None
     predict_app.label_encoder   = mock_label_encoder
     predict_app.pca_image       = mock_pca_image
     predict_app.pca_text        = mock_pca_text
@@ -162,6 +166,18 @@ class TestPredictText:
         # model_minilm is None (set by inject_mock_artifacts) → 503
         resp = client.post("/predict-text",
                            json={"description": "shoes", "model": "minilm"})
+        assert resp.status_code == 503
+
+    def test_mpnet_unavailable_returns_503(self, client):
+        # model_mpnet is None (set by inject_mock_artifacts) → 503
+        resp = client.post("/predict-text",
+                           json={"description": "shoes", "model": "mpnet"})
+        assert resp.status_code == 503
+
+    def test_clip_unavailable_returns_503(self, client):
+        # model_clip is None (set by inject_mock_artifacts) → 503
+        resp = client.post("/predict-text",
+                           json={"description": "shoes", "model": "clip"})
         assert resp.status_code == 503
 
     def test_probs_sum_to_one(self, client):
@@ -247,7 +263,7 @@ class TestReloadArtifacts:
         assert "cv_model_loaded" in data
         assert "minilm_model_loaded" in data
         assert "pca_image_components" in data
-        assert data["pca_image_components"] == 300
+        assert data["pca_image_components"] == 256   # current pca_components in params.yaml
 
     def test_reload_failure_returns_500(self, client):
         with patch.object(predict_app, "load_artifacts", side_effect=RuntimeError("disk error")):

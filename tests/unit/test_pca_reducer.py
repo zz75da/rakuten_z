@@ -7,7 +7,7 @@ Purpose : Verify that reduce_features() produces a valid combined feature
 
 Covered :
   TestReduceFeatures
-    - Output files (X_reduced.npy, pca_image.pkl, pca_text.pkl) are created
+    - Output files (X_reduced_{enc}_{n}.npy, pca_image_{n}.pkl, pca_text_{n}.pkl) are created
     - X_reduced shape matches expected (n_samples, target_dim)
     - Saved PCA objects are valid sklearn IncrementalPCA instances
     - n_components_img is capped when n_samples < requested components
@@ -83,12 +83,42 @@ class TestReduceFeatures:
         assert X.dtype == np.float32
 
     def test_encoder_specific_filename(self, temp_dir, pca_reducer_module):
-        """X_reduced is named X_reduced_{text_encoder}.npy, not X_reduced.npy."""
-        (x_path, _, _), save_dir = self._run(temp_dir, pca_reducer_module)
-        import pathlib
-        assert pathlib.Path(x_path).name == "X_reduced_countvectorizer.npy"
+        """X_reduced is named X_reduced_{encoder}_{n_components_img}.npy (versioned)."""
+        (x_path, img_path, _), save_dir = self._run(
+            temp_dir, pca_reducer_module, n_img_comp=3)
+        name = pathlib.Path(x_path).name
+        # versioned format: X_reduced_countvectorizer_3.npy
+        assert name == "X_reduced_countvectorizer_3.npy", f"Unexpected filename: {name}"
+        assert pathlib.Path(img_path).name == "pca_image_3.pkl"
         assert not (save_dir / "X_reduced.npy").exists(), \
-            "Legacy X_reduced.npy must not be written — encoder-specific naming required"
+            "Legacy unversioned X_reduced.npy must not be written"
+
+    def test_mpnet_pass_through_skips_text_pca(self, temp_dir, pca_reducer_module):
+        """mpnet: 768-d text features pass through unchanged, pca_text_path is None."""
+        text_path  = temp_dir / "text_mpnet.npy"
+        image_path = temp_dir / "image_mpnet.npy"
+        save_dir   = temp_dir / "out_mpnet"
+        save_dir.mkdir(exist_ok=True)
+        n, text_dim, img_dim = 20, 768, 12
+
+        np.save(text_path,  np.random.rand(n, text_dim).astype(np.float32))
+        np.save(image_path, np.random.rand(n, img_dim).astype(np.float32))
+
+        x_path, img_path, txt_path = pca_reducer_module.reduce_features(
+            text_features_path=str(text_path),
+            image_features_path=str(image_path),
+            n_components_img=3,
+            save_dir=str(save_dir),
+            initial_batch_size=10,
+            text_encoder="mpnet",
+        )
+
+        assert txt_path is None, "pca_text_path must be None for mpnet"
+        X = np.load(x_path)
+        assert X.shape == (n, text_dim + 3)   # 768 + 3 = 771
+        assert X.dtype == np.float32
+        # versioned filename
+        assert pathlib.Path(x_path).name == "X_reduced_mpnet_3.npy"
 
     def test_minilm_pass_through_skips_text_pca(self, temp_dir, pca_reducer_module):
         """MiniLM: text features pass through unchanged, pca_text_path is None."""
