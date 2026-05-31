@@ -734,6 +734,91 @@ def show_prediction_page():
             st.warning("Please upload at least one image.")
 
 
+def show_drift_reports():
+    """Drift monitoring tab — shows Evidently HTML reports and buffer status."""
+    st.markdown("### Evidently AI — Input Drift Reports")
+
+    _drift_dir = Path("/app/data/artifacts/drift_reports")
+    _ref_path  = Path("/app/data/artifacts/drift_reference.csv")
+
+    # ── Status row ────────────────────────────────────────────────────────────
+    s1, s2, s3 = st.columns(3)
+    reports = sorted(_drift_dir.glob("drift_*.html"), key=lambda p: p.stat().st_mtime) \
+              if _drift_dir.exists() else []
+    ref_ok  = _ref_path.exists() and _ref_path.stat().st_size > 1000
+    s1.metric("Reports on disk",    len(reports),          help="Max 10 kept, oldest auto-deleted")
+    s2.metric("Reference built",    "Yes" if ref_ok else "No",
+              help="5k stratified sample from training data")
+    s3.metric("Buffer capacity",    "2 000 predictions",
+              help="Report auto-generated when buffer fills; trigger manually below")
+
+    st.divider()
+
+    # ── Manual trigger ────────────────────────────────────────────────────────
+    if "user_token" in st.session_state:
+        col_btn, col_info = st.columns([1, 3])
+        with col_btn:
+            if st.button("⚡ Trigger Report Now", help="Generates report from current prediction buffer"):
+                try:
+                    resp = requests.post(
+                        f"{PREDICT_API_URL}/drift-trigger-report",
+                        headers={"Authorization": f"Bearer {st.session_state['user_token']}"},
+                        timeout=10,
+                    )
+                    if resp.ok:
+                        st.success("Report generation triggered — refresh in ~30 s")
+                    else:
+                        st.warning(f"Trigger returned {resp.status_code}")
+                except Exception as e:
+                    st.error(f"Could not reach predict-api: {e}")
+        with col_info:
+            st.caption(
+                "Reports are auto-generated when 2 000 multimodal predictions accumulate. "
+                "The button triggers generation immediately regardless of buffer size."
+            )
+    else:
+        st.info("Log in on the Predictions page to trigger reports manually.")
+
+    st.divider()
+
+    # ── Report list + inline viewer ───────────────────────────────────────────
+    if not reports:
+        st.info(
+            "No drift reports yet. Make multimodal predictions via the Prediction page "
+            "or click **Trigger Report Now** above after logging in."
+        )
+        return
+
+    st.markdown(f"**{len(reports)} report(s) available** (newest first):")
+
+    for rpt in reversed(reports):
+        ts_str = rpt.stem.replace("drift_", "")
+        try:
+            from datetime import datetime
+            ts = datetime.strptime(ts_str, "%Y%m%dT%H%M%S").strftime("%Y-%m-%d %H:%M:%S UTC")
+        except Exception:
+            ts = ts_str
+        size_kb = round(rpt.stat().st_size / 1024)
+
+        with st.expander(f"📊  {ts}  ({size_kb} KB)", expanded=(rpt == reports[-1])):
+            col_dl, col_view = st.columns([1, 3])
+            with col_dl:
+                with open(rpt, "rb") as f:
+                    st.download_button(
+                        label="⬇ Download HTML",
+                        data=f,
+                        file_name=rpt.name,
+                        mime="text/html",
+                        key=f"dl_{rpt.name}",
+                    )
+            with col_view:
+                st.caption(f"Path on host: `data/artifacts/drift_reports/{rpt.name}`")
+
+            # Render report inline as an iframe
+            html_content = rpt.read_text(encoding="utf-8", errors="replace")
+            st.components.v1.html(html_content, height=600, scrolling=True)
+
+
 def show_docker_workflow():
     st.title("Infrastructure & Monitoring")
 
@@ -832,7 +917,12 @@ code, .stCode { font-size: 0.85rem !important; }
 """, unsafe_allow_html=True)
 
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("", ["Project Overview", "Predictions", "Infrastructure & Monitoring"])
+page = st.sidebar.radio("", [
+    "Project Overview",
+    "Predictions",
+    "Infrastructure & Monitoring",
+    "Drift Reports",
+])
 
 if page == "Project Overview":
     show_presentation_page()
@@ -840,3 +930,5 @@ elif page == "Predictions":
     show_prediction_page()
 elif page == "Infrastructure & Monitoring":
     show_docker_workflow()
+elif page == "Drift Reports":
+    show_drift_reports()
