@@ -300,8 +300,9 @@ def show_presentation_page():
                 _hh  = json.loads(_hp.read_text())
                 _vas = _hh.get("val_accuracy", [])
                 if _vas:
-                    _best = f"{max(_vas):.1%}"
-                    _ep   = str(len(_vas))
+                    _best_val = max(_vas)
+                    _best     = f"{_best_val:.1%}"
+                    _ep       = str(_vas.index(_best_val) + 1)
                     if _enc == "cv":
                         _cv_acc_str,    _cv_epoch_str    = _best, _ep
                     elif _enc == "clip":
