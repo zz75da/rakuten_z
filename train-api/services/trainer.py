@@ -64,7 +64,7 @@ def save_training_history(history, artifacts_dir=ARTIFACTS_DIR, text_encoder="co
     elif text_encoder == "clip":
         filename = "train_history_clip.json"
     else:
-        filename = "train_history.json"
+        filename = "train_history_countvectorizer.json"
     path = os.path.join(artifacts_dir, filename)
     with open(path, "w") as f:
         json.dump({k: [float(v) for v in vals] for k, vals in history.history.items()}, f, indent=2)

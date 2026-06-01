@@ -32,7 +32,7 @@ _TOP3_FLOOR      = 0.88
 
 
 def _load_history(encoder: str) -> dict:
-    suffix = "" if encoder == "cv" else f"_{encoder}"
+    suffix = f"_{encoder if encoder != 'cv' else 'countvectorizer'}"
     path = os.path.join(_ARTIFACTS, f"train_history{suffix}.json")
     if not os.path.exists(path):
         pytest.skip(f"No history file for {encoder} — not yet trained")
