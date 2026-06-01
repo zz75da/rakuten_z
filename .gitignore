@@ -87,3 +87,6 @@ monitoring/alertmanager.yml
 # Auto-generated
 .pytest_cache/
 streamlit/batch_predictions_streamed.jsonl
+
+airflow.cfg
+airflow/airflow.cfg
