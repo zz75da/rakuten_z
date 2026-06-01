@@ -609,9 +609,15 @@ def drift_trigger_report(user: dict = Depends(verify_jwt_token)):
     """Force a drift report from the current prediction buffer. Admin only."""
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
-    n = buffer_size()
-    trigger_report()
-    return {"status": "report_triggered", "buffer_size_at_trigger": n}
+    result = trigger_report()
+    if not result["enough"]:
+        return {
+            "status": "skipped",
+            "reason": f"Buffer has {result['buffer_size']} rows — need at least {result['min_required']} for Evidently. Make more predictions then trigger again.",
+            "buffer_size": result["buffer_size"],
+            "min_required": result["min_required"],
+        }
+    return {"status": "report_triggered", "buffer_size_at_trigger": result["buffer_size"]}
 
 
 @app.get("/drift-status")
@@ -766,6 +772,10 @@ def predict_ensemble(req: MultimodalRequest, user: dict = Depends(verify_jwt_tok
 
     _record_drift_metrics(weighted_probs, label, "/predict-ensemble")
     REQUEST_COUNT.labels("/predict-ensemble", "POST", "200").inc()
+    try:
+        record_prediction({"designation": (req.description or "")[:500], "prdtypecode": label})
+    except Exception:
+        pass
     return {
         "pred_class": pred,
         "label":      label,
@@ -834,6 +844,10 @@ def predict_text(req: TextRequest, user: dict = Depends(verify_jwt_token)):
     _record_drift_metrics(probs[0], label, "/predict-text")
     FEATURE_TEXT_MEAN.set(float(np.mean(text_features)))
     REQUEST_COUNT.labels("/predict-text", "POST", "200").inc()
+    try:
+        record_prediction({"designation": (req.description or "")[:500], "prdtypecode": label})
+    except Exception:
+        pass
     return {
         "pred_class": pred, "label": label, "category": category,
         "probs": probs.tolist(), "mode": "text_only", "encoder": req.model,
@@ -930,15 +944,11 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
     FEATURE_TEXT_MEAN.set(float(np.mean(text_features)))
     FEATURE_IMAGE_MEAN.set(float(np.mean(image_features)))
     REQUEST_COUNT.labels("/predict-multimodal", "POST", "200").inc()
-    # Record lightweight summary stats for drift monitoring (no raw high-dim vectors)
+    # Record for drift monitoring — columns match drift_reference.csv (designation, prdtypecode)
     try:
         record_prediction({
+            "designation": (req.description or "")[:500],
             "prdtypecode": label,
-            "confidence":  round(confidence, 4),
-            "text_norm":   round(float(np.linalg.norm(text_features)), 4),
-            "image_norm":  round(float(np.linalg.norm(image_features)), 4),
-            "encoder":     req.model,
-            "mode":        mode,
         })
     except Exception:
         pass

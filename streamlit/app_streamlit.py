@@ -844,15 +844,19 @@ def show_drift_reports():
                         timeout=10,
                     )
                     if resp.ok:
-                        st.success("Report generation triggered — refresh in ~30 s")
+                        data = resp.json()
+                        if data.get("status") == "skipped":
+                            st.warning(data.get("reason", "Not enough predictions in buffer."))
+                        else:
+                            st.success(f"Report generation triggered — refresh in ~30 s  (buffer: {data.get('buffer_size_at_trigger', '?')} rows)")
                     else:
                         st.warning(f"Trigger returned {resp.status_code}")
                 except Exception as e:
                     st.error(f"Could not reach predict-api: {e}")
         with col_info:
             st.caption(
-                "Reports are auto-generated when 2 000 multimodal predictions accumulate. "
-                "The button triggers generation immediately regardless of buffer size."
+                "Reports are auto-generated when 2 000 predictions accumulate. "
+                "Manual trigger requires at least 30 predictions in the buffer."
             )
     else:
         st.info("Log in on the Predictions page to trigger reports manually.")

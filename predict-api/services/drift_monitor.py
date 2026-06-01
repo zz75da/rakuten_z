@@ -30,6 +30,7 @@ REPORT_DIR = ARTIFACTS / "drift_reports"
 REF_PATH   = ARTIFACTS / "drift_reference.csv"   # built by train-api POST /drift-rebuild-reference
 
 MAX_BUFFER  = 2000   # max live prediction rows before computing a report
+MIN_BUFFER  = 30     # minimum rows needed for Evidently statistical tests
 MAX_REPORTS = 10     # max report files kept on disk
 
 
@@ -103,6 +104,17 @@ def _generate_report():
 
         rows = _buffer.drain()
         if not rows:
+            log.info("Drift report skipped — buffer is empty")
+            return
+        if len(rows) < MIN_BUFFER:
+            log.warning(
+                f"Drift report skipped — only {len(rows)} rows in buffer "
+                f"(minimum {MIN_BUFFER} required for meaningful statistics). "
+                f"Make more predictions then trigger again."
+            )
+            # Put rows back so they aren't lost
+            for r in rows:
+                _buffer.append(r)
             return
 
         # Build current dataset from buffer rows
@@ -148,9 +160,11 @@ def _generate_report():
         _report_lock.release()
 
 
-def trigger_report():
-    """Force a report generation regardless of buffer size (e.g., scheduled trigger)."""
+def trigger_report() -> dict:
+    """Force a report generation. Returns buffer state before triggering."""
+    n = len(_buffer)
     threading.Thread(target=_generate_report, daemon=True).start()
+    return {"buffer_size": n, "min_required": MIN_BUFFER, "enough": n >= MIN_BUFFER}
 
 
 def buffer_size() -> int:
