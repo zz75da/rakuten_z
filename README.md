@@ -258,7 +258,8 @@ Grafana auto-provisioned at `http://localhost:3000`.
 | Metric | Description |
 |--------|-------------|
 | `model_final_val_accuracy{encoder="cv\|clip\|minilm\|mpnet"}` | Val accuracy after training |
-| `model_final_val_macro_f1` / `model_final_val_top3_accuracy` | New metrics since DAG v7 |
+| `model_final_val_macro_f1{encoder="cv\|clip\|minilm\|mpnet"}` | Macro-averaged F1 across all 27 classes after training — penalises minority-class failures equally regardless of class size |
+| `model_final_val_top3_accuracy{encoder="cv\|clip\|minilm\|mpnet"}` | Fraction of samples where the true class appears in the model's top-3 predictions — useful for ranking/re-ranking use cases |
 | `prediction_confidence` | Max softmax probability per request |
 | `prediction_entropy` | Shannon entropy (high = uncertain = possible drift) |
 | `prediction_class_total` | Predictions per class (distribution drift) |
