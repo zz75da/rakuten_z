@@ -79,7 +79,10 @@ def evaluate_model(model, X_val, y_val_encoded, label_encoder):
     Returns plain-Python dict (no numpy types) ready for JSON serialisation.
     """
     from sklearn.metrics import f1_score
-    probs = model.predict(X_val, verbose=0)
+    import tensorflow as _tf_eval
+    X_val_t = _tf_eval.constant(X_val, dtype=_tf_eval.float32)
+    probs = model(X_val_t, training=False).numpy()
+    del X_val_t
     y_pred = np.argmax(probs, axis=1)
     acc = accuracy_score(y_val_encoded, y_pred)
     report = classification_report(y_val_encoded, y_pred, output_dict=True)
@@ -208,6 +211,13 @@ def build_and_train_model(
 
     # Deferred TF imports (CPU image: no BFCAllocator, safe after any numpy work)
     import tensorflow as tf
+    # On-demand memory growth: TF allocates only what it needs instead of
+    # preallocating a large pool. Reduces peak RAM on memory-constrained laptops.
+    try:
+        for _dev in tf.config.list_physical_devices("CPU"):
+            tf.config.experimental.set_memory_growth(_dev, True)
+    except Exception:
+        pass
     from tensorflow.keras import Model, Input
     from tensorflow.keras.layers import Dense, Dropout
     from tensorflow.keras.optimizers import Adam
@@ -361,22 +371,21 @@ def build_and_train_model(
         # Macro F1 callback — sklearn-based, runs one extra predict on val set per epoch.
         # Must appear BEFORE EarlyStopping in callbacks list so logs['val_macro_f1'] is set first.
         class _MacroF1Callback(tf.keras.callbacks.Callback):
-            def __init__(self, X_v, y_v):
+            def __init__(self, X_v, y_v, freq=2):
                 super().__init__()
-                self._X_v = tf.constant(X_v, dtype=tf.float32)  # convert once to tf.Tensor
+                self._X_v = tf.constant(X_v, dtype=tf.float32)
                 self._y_v = y_v
+                self._freq = freq          # compute every N epochs (halves forward-pass count)
+                self._last_f1 = 0.0        # carry last value on skipped epochs for EarlyStopping
 
             def on_epoch_end(self, epoch, logs=None):
                 from sklearn.metrics import f1_score as _f1
-                # Direct eager call instead of model.predict() — avoids tf.function
-                # retracing on every epoch which causes memory accumulation and OOM.
-                # model.predict() recreates the predict_function each call; direct
-                # __call__ with training=False reuses the already-traced forward pass.
-                probs = self.model(self._X_v, training=False).numpy()
-                y_pred = np.argmax(probs, axis=1)
-                f1 = float(_f1(self._y_v, y_pred, average="macro", zero_division=0))
+                if epoch % self._freq == 0:
+                    probs = self.model(self._X_v, training=False).numpy()
+                    y_pred = np.argmax(probs, axis=1)
+                    self._last_f1 = float(_f1(self._y_v, y_pred, average="macro", zero_division=0))
                 if logs is not None:
-                    logs["val_macro_f1"] = f1
+                    logs["val_macro_f1"] = self._last_f1
 
         model = Model(inp, out)
         model.compile(
@@ -528,7 +537,10 @@ def build_and_train_model(
 
         try:
             n_sample = min(64, len(X_train))
-            sig = infer_signature(X_train[:n_sample], model.predict(X_train[:n_sample], verbose=0))
+            _sig_input = X_train[:n_sample]
+            _sig_output = model(tf.constant(_sig_input, dtype=tf.float32), training=False).numpy()
+            sig = infer_signature(_sig_input, _sig_output)
+            del _sig_input, _sig_output
             mlflow.tensorflow.log_model(model, artifact_path="model", signature=sig)
         except Exception as e:
             print(f"Warning: mlflow.tensorflow.log_model failed: {e}")
@@ -536,6 +548,10 @@ def build_and_train_model(
         # Evaluate on held-out val set (X already freed; X_val still in scope)
         eval_results = evaluate_model(model, X_val, y_val, label_encoder)
         run_id = run.info.run_id
+
+        # Free training arrays now that evaluation is done
+        del X_train, X_val
+        gc.collect()
 
     # Register model in MLflow Model Registry
     _DESCRIPTIONS = {
