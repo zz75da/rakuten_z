@@ -363,11 +363,16 @@ def build_and_train_model(
         class _MacroF1Callback(tf.keras.callbacks.Callback):
             def __init__(self, X_v, y_v):
                 super().__init__()
-                self._X_v = X_v
+                self._X_v = tf.constant(X_v, dtype=tf.float32)  # convert once to tf.Tensor
                 self._y_v = y_v
+
             def on_epoch_end(self, epoch, logs=None):
                 from sklearn.metrics import f1_score as _f1
-                probs = self.model.predict(self._X_v, verbose=0)
+                # Direct eager call instead of model.predict() — avoids tf.function
+                # retracing on every epoch which causes memory accumulation and OOM.
+                # model.predict() recreates the predict_function each call; direct
+                # __call__ with training=False reuses the already-traced forward pass.
+                probs = self.model(self._X_v, training=False).numpy()
                 y_pred = np.argmax(probs, axis=1)
                 f1 = float(_f1(self._y_v, y_pred, average="macro", zero_division=0))
                 if logs is not None:
