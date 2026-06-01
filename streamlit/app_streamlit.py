@@ -290,7 +290,7 @@ def show_presentation_page():
     _cv_acc_str = _clip_acc_str = _ml_acc_str = _mpnet_acc_str = "—"
     _cv_epoch_str = _clip_epoch_str = _ml_epoch_str = _mpnet_epoch_str = "—"
     for _hp, _enc in [
-        (Path("/app/data/artifacts/train_history.json"),        "cv"),
+        (Path("/app/data/artifacts/train_history_countvectorizer.json"),        "cv"),
         (Path("/app/data/artifacts/train_history_clip.json"),   "clip"),
         (Path("/app/data/artifacts/train_history_minilm.json"), "minilm"),
         (Path("/app/data/artifacts/train_history_mpnet.json"),  "mpnet"),
@@ -427,7 +427,7 @@ def show_presentation_page():
         st.markdown("#### Training curves")
         _artifacts_base = Path("/app/data/artifacts")
         _hist_configs = [
-            ("TF-IDF + OCR + PCA",              _artifacts_base / "train_history.json",        "#e94560"),
+            ("TF-IDF + OCR + PCA",              _artifacts_base / "train_history_countvectorizer.json",        "#e94560"),
             ("CLIP ViT-B/32",                   _artifacts_base / "train_history_clip.json",   "#7c3aed"),
             ("MiniLM (paraphrase-multilingual)", _artifacts_base / "train_history_minilm.json", "#a8b2d8"),
             ("mpnet (paraphrase-multilingual)",  _artifacts_base / "train_history_mpnet.json",  "#f59e0b"),
@@ -736,7 +736,7 @@ def show_prediction_page():
 
     # Read best val_accuracy for each encoder from training history
     _enc_history_paths = {
-        "cv":     Path("/app/data/artifacts/train_history.json"),
+        "cv":     Path("/app/data/artifacts/train_history_countvectorizer.json"),
         "clip":   Path("/app/data/artifacts/train_history_clip.json"),
         "minilm": Path("/app/data/artifacts/train_history_minilm.json"),
         "mpnet":  Path("/app/data/artifacts/train_history_mpnet.json"),
