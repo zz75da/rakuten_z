@@ -140,7 +140,6 @@ services:
       - ./airflow/init_airflow.sh:/opt/airflow/init_airflow.sh:ro
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/tmp/airflow/logs
-      - ./airflow/airflow.cfg:/opt/airflow/airflow.cfg
       - ./params.yaml:/app/params.yaml
       - ./data:/opt/airflow/data
       - ./data/X_train_update.csv:/app/data/X_train_update.csv:ro,delegated
