@@ -954,22 +954,31 @@ def show_docker_workflow():
 
     st.markdown("### Configured alerts")
     alerts = [
+        # Model quality
         ("CVModelValAccuracyLow",     "warning",  "CV (TF-IDF+OCR) val_accuracy < 0.72"),
-        ("CLIPModelValAccuracyLow",   "warning",  "CLIP val_accuracy < 0.70"),
+        ("CLIPModelValAccuracyLow",   "warning",  "CLIP val_accuracy < 0.80"),
         ("MiniLMModelValAccuracyLow", "warning",  "MiniLM val_accuracy < 0.70"),
         ("mpnetModelValAccuracyLow",  "warning",  "mpnet val_accuracy < 0.72"),
+        # Drift & prediction quality
         ("PredictionConfidenceDrift", "warning",  "P50 confidence < 0.40 for 15 min"),
         ("PredictionEntropyHigh",     "warning",  "P90 entropy > 2.5 nats for 15 min"),
-        ("ClassDistributionSkewed",   "warning",  "One class > 80% of predictions"),
-        ("HighPredictionErrorRate",   "critical", "5xx error rate > 10%"),
-        ("PredictionLatencyHigh",     "warning",  "P95 latency > 5 s"),
+        ("ClassDistributionSkewed",   "warning",  "One class > 80% of predictions for 20 min"),
+        ("HighPredictionErrorRate",   "critical", "5xx error rate > 10% for 5 min"),
+        ("PredictionLatencyHigh",     "warning",  "P95 latency > 5 s for 10 min"),
+        # Service availability
         ("PredictAPIDown",            "critical", "predict-api unreachable > 3 min"),
         ("TrainAPIDown",              "critical", "train-api unreachable > 3 min"),
+        ("GateAPIDown",               "critical", "gate-api (auth) unreachable > 2 min"),
+        ("PostgresqlDown",            "critical", "PostgreSQL unreachable > 2 min"),
         ("MiniLMEncoderDown",         "warning",  "minilm-encoder unreachable > 3 min"),
         ("CLIPEncoderDown",           "warning",  "clip-encoder unreachable > 3 min"),
-        ("GateAPIDown",               "critical", "gate-api (auth) unreachable > 2 min"),
-        ("DiskSpaceLow",              "critical", "Root filesystem < 10% free"),
+        # Airflow
+        ("AirflowSchedulerDown",      "critical", "Airflow scheduler heartbeat absent > 5 min"),
+        ("AirflowDagFailed",          "warning",  "One or more DAG runs failed"),
+        # Resources
+        ("DiskSpaceLow",              "critical", "Root filesystem < 10% free for 10 min"),
         ("HighMemoryUsage",           "warning",  "System memory > 90% for 10 min"),
+        ("HighCPUUsage",              "warning",  "CPU usage > 80% for 10 min"),
     ]
     for name, severity, desc in alerts:
         color = "#dc3545" if severity == "critical" else "#ffc107"
