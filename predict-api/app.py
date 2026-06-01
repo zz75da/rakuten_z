@@ -773,7 +773,7 @@ def predict_ensemble(req: MultimodalRequest, user: dict = Depends(verify_jwt_tok
     _record_drift_metrics(weighted_probs, label, "/predict-ensemble")
     REQUEST_COUNT.labels("/predict-ensemble", "POST", "200").inc()
     try:
-        record_prediction({"designation": (req.description or "")[:500], "prdtypecode": label})
+        record_prediction({"designation": (req.description or "")[:500], "prdtypecode": int(label)})
     except Exception:
         pass
     return {
@@ -845,7 +845,7 @@ def predict_text(req: TextRequest, user: dict = Depends(verify_jwt_token)):
     FEATURE_TEXT_MEAN.set(float(np.mean(text_features)))
     REQUEST_COUNT.labels("/predict-text", "POST", "200").inc()
     try:
-        record_prediction({"designation": (req.description or "")[:500], "prdtypecode": label})
+        record_prediction({"designation": (req.description or "")[:500], "prdtypecode": int(label)})
     except Exception:
         pass
     return {
@@ -948,7 +948,7 @@ def predict_multimodal(req: MultimodalRequest, user: dict = Depends(verify_jwt_t
     try:
         record_prediction({
             "designation": (req.description or "")[:500],
-            "prdtypecode": label,
+            "prdtypecode": int(label),
         })
     except Exception:
         pass

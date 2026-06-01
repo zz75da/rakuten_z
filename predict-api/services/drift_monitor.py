@@ -127,6 +127,13 @@ def _generate_report():
             log.warning("No shared columns between reference and current — skipping report")
             return
 
+        # Align dtypes: current must match reference to avoid Evidently type errors
+        for col in shared_cols:
+            try:
+                current_df[col] = current_df[col].astype(reference_df[col].dtype)
+            except (ValueError, TypeError):
+                pass
+
         try:
             from evidently import ColumnMapping
             from evidently.report import Report
