@@ -30,8 +30,8 @@ stages:
       nfiles: 84916
     - path: train-api/services/preprocess_image.py
       hash: md5
-      md5: f2e8daaba6b41f75613f8e68b5daba08
-      size: 3452
+      md5: 168073554ff1f8e156c746774c6127a8
+      size: 3544
       isexec: true
     outs:
     - path: data/feature_cache/image_features.npy
@@ -165,13 +165,13 @@ stages:
       isexec: true
     - path: minilm-encoder/app.py
       hash: md5
-      md5: f09f5fbd20588a35dfef3a939706954e
-      size: 13339
+      md5: 8b95c1cd26e4b254cbe1209924458dd2
+      size: 13684
       isexec: true
     - path: minilm-encoder/encode.py
       hash: md5
-      md5: 29df270ffbea7cc4687548838990c54d
-      size: 2272
+      md5: d500858cd93c901880e68e373a625370
+      size: 2343
       isexec: true
     outs:
     - path: data/feature_cache/text_features_minilm.npy
@@ -183,8 +183,8 @@ stages:
     deps:
     - path: clip-encoder/app.py
       hash: md5
-      md5: 6939f328bb38dcd33638c3daf935999b
-      size: 14353
+      md5: 46d1ff587166b5fa6aecbaa3714bcc5f
+      size: 14746
       isexec: true
     - path: data/X_train_update.csv
       hash: md5
@@ -216,8 +216,8 @@ stages:
       isexec: true
     - path: train-api/services/run_pca.py
       hash: md5
-      md5: d6a3325586e432c2fa11242ed54fffc5
-      size: 997
+      md5: 9b4ff8653d27904bea908ad8bc49cac2
+      size: 1027
       isexec: true
     outs:
     - path: data/artifacts/pca_image_256.pkl
@@ -253,8 +253,8 @@ stages:
       isexec: true
     - path: train-api/services/run_pca.py
       hash: md5
-      md5: d6a3325586e432c2fa11242ed54fffc5
-      size: 997
+      md5: 9b4ff8653d27904bea908ad8bc49cac2
+      size: 1027
       isexec: true
   reduce_features_clip:
     cmd: python train-api/services/run_pca.py 
@@ -281,8 +281,8 @@ stages:
       isexec: true
     - path: train-api/services/run_pca.py
       hash: md5
-      md5: d6a3325586e432c2fa11242ed54fffc5
-      size: 997
+      md5: 9b4ff8653d27904bea908ad8bc49cac2
+      size: 1027
       isexec: true
   train_cv:
     cmd: python train-api/services/run_full_pipeline.py cv_dvc countvectorizer 
@@ -475,13 +475,13 @@ stages:
       isexec: true
     - path: minilm-encoder/app.py
       hash: md5
-      md5: f09f5fbd20588a35dfef3a939706954e
-      size: 13339
+      md5: 8b95c1cd26e4b254cbe1209924458dd2
+      size: 13684
       isexec: true
     - path: minilm-encoder/encode.py
       hash: md5
-      md5: 29df270ffbea7cc4687548838990c54d
-      size: 2272
+      md5: d500858cd93c901880e68e373a625370
+      size: 2343
       isexec: true
     outs:
     - path: data/feature_cache/text_features_mpnet.npy
@@ -513,8 +513,8 @@ stages:
       isexec: true
     - path: train-api/services/run_pca.py
       hash: md5
-      md5: d6a3325586e432c2fa11242ed54fffc5
-      size: 997
+      md5: 9b4ff8653d27904bea908ad8bc49cac2
+      size: 1027
       isexec: true
   train_mpnet:
     cmd: python train-api/services/run_full_pipeline.py mpnet_dvc mpnet 10 32 

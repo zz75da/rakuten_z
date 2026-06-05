@@ -331,9 +331,302 @@ def show_presentation_page():
                 delta_color="off", help="mpnet 768-dim — 84 916 samples, macro F1 early stopping")
     st.divider()
 
-    tab_ml, tab_ops, tab_stack, tab_services = st.tabs([
-        "ML Pipeline", "MLOps Architecture", "Tech Stack", "Service Status"
+    tab_summary, tab_ml, tab_ops, tab_stack, tab_services = st.tabs([
+        "Summary", "ML Pipeline", "MLOps Architecture", "Tech Stack", "Service Status"
     ])
+
+    # ── Tab 0 : Summary ──────────────────────────────────────────────────────
+    with tab_summary:
+        st.markdown(
+            "Présentation de la pipeline complète sous forme de schémas et de tableaux "
+            "pour en comprendre le flux global en un coup d'œil."
+        )
+
+        with st.expander("1 — Vue d'ensemble du système (14 services)", expanded=True):
+            st.code("""\
+── Architecture 14 services ──
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        COUCHE INTERFACE                                 │
+│   ┌─────────────────────┐          ┌──────────────────────────────┐     │
+│   │  Streamlit :8501    │          │  Airflow :8080               │     │
+│   │  - Prédictions      │          │  - DAG v7 (30 tâches)        │     │
+│   │  - Monitoring       │          │  - Orchestration pipeline    │     │
+│   │  - Drift Reports    │          │  - Déclenchement entraîn.    │     │
+│   └──────────┬──────────┘          └──────────────┬───────────────┘     │
+└──────────────│────────────────────────────────────│─────────────────────┘
+               │ REST API                           │ HTTP calls
+┌──────────────▼─────────────────────────────────────▼────────────────────┐
+│                        COUCHE API                                        │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌───────────────────────┐  │
+│  │  gate-api :5004  │  │ train-api :5002  │  │  predict-api :5003    │  │
+│  │  Auth JWT        │  │ POST /train      │  │  /predict-ensemble    │  │
+│  │  Validation tok. │  │ POST /cleanlab   │  │  /predict-multimodal  │  │
+│  │  HS256           │  │ POST /quality-g. │  │  /gradcam             │  │
+│  └──────────────────┘  └────────┬─────────┘  └──────────┬────────────┘  │
+└───────────────────────────────── │ ──────────────────────│ ─────────────┘
+                                   │ subprocess            │ load artifacts
+┌──────────────────────────────────▼──────────────────────▼───────────────┐
+│                    COUCHE ENCODAGE / MODÈLES                             │
+│  ┌──────────────────┐     ┌─────────────────────────────────────────┐   │
+│  │ minilm-enc :5005 │     │         MODÈLES EN MÉMOIRE               │   │
+│  │ MiniLM 384-d     │     │  model_cv   model_clip  model_minilm     │   │
+│  │ mpnet  768-d     │     │  model_mpnet  ResNet50  label_encoder    │   │
+│  └──────────────────┘     │  pca_image_256  pca_text  vectorizer     │   │
+│  ┌──────────────────┐     └─────────────────────────────────────────┘   │
+│  │ clip-enc  :5006  │                                                    │
+│  │ CLIP ViT-B/32    │                                                    │
+│  │ 512-d L2-norm    │                                                    │
+│  └──────────────────┘                                                    │
+└──────────────────────────────────────────────────────────────────────────┘
+                                   │ métriques
+┌──────────────────────────────────▼───────────────────────────────────────┐
+│                    COUCHE INFRASTRUCTURE                                  │
+│  ┌───────────────┐  ┌──────────────┐  ┌────────────┐  ┌──────────────┐  │
+│  │ PostgreSQL    │  │ Prometheus   │  │  Grafana   │  │  Pushgateway │  │
+│  │ (Airflow DB)  │  │  :9090       │  │  :3000     │  │  :9091       │  │
+│  └───────────────┘  └──────────────┘  └────────────┘  └──────────────┘  │
+│  ┌───────────────┐  ┌──────────────┐  ┌────────────────────────────────┐ │
+│  │ MinIO :9002   │  │ Alertmanager │  │ DagsHub (MLflow + DVC S3)      │ │
+│  │ (S3 local)    │  │  :9093       │  │ (externe — dagshub.com)        │ │
+│  └───────────────┘  └──────────────┘  └────────────────────────────────┘ │
+└───────────────────────────────────────────────────────────────────────────┘""",
+                language="")
+
+        with st.expander("2 — Flux de données : de la donnée brute au modèle"):
+            st.code("""\
+DONNÉES BRUTES                      FEATURES EXTRAITES
+   ┌─────────────────┐
+   │  X_train.csv    │───► designation + description
+   │  84 916 lignes  │                     │
+   │  27 classes     │                     ▼
+   └─────────────────┘          ┌─────────────────────────────────────┐
+                                │         preprocess_text.py          │
+   ┌─────────────────┐          │  clean + normalise + concatène      │
+   │  images/        │          │  designation + description + OCR    │
+   │  84 916 JPEG    │          └────────────┬────────────────────────┘
+   └─────────────────┘                       │
+           │                                 │ texte_nettoyé
+           │ PIL + Tesseract OCR              │
+           ▼                     ┌───────────┴──────────────────────────┐
+   ocr_texts.csv                 │   4 VOIES D'ENCODAGE TEXTE            │
+   (texte extrait des images)    │                                       │
+           │                     │  [1] TF-IDF → 512-d PCA   → 512-d   │
+           └────► concaténé ────►│  [2] CLIP encode          → 512-d   │
+                 avec texte      │  [3] MiniLM encode        → 384-d   │
+                                 │  [4] mpnet encode         → 768-d   │
+                                 └───────────┬──────────────────────────┘
+                                             │
+   ┌─────────────────┐                       │   text_features_{enc}.npy
+   │  images/        │          ┌────────────▼────────────────────────┐
+   │  84 916 JPEG    │──────────│  preprocess_image.py                │
+   └─────────────────┘          │  ResNet50(include_top=False)        │
+                                │  84 916 × 2048-d                   │
+                                │  → IncrementalPCA → 256-d           │
+                                └────────────┬────────────────────────┘
+                                             │ image_features.npy (256-d)
+                                             ▼
+                               ┌─────────────────────────────────────┐
+                               │   CONCATÉNATION PAR ENCODEUR         │
+                               │  = text_features + image_features    │
+                               │  → [768 / 640 / 896 / 1024] -d      │
+                               └─────────────┬───────────────────────┘
+                                             ▼
+                               ┌─────────────────────────────────────┐
+                               │   trainer.py → fusion tardive (α)   │
+                               │   → model_{enc}.keras               │
+                               └─────────────────────────────────────┘""",
+                language="")
+
+        with st.expander("3 — Architecture du modèle de fusion tardive"):
+            st.code("""\
+ENTRÉE TEXTE (512-d)          ENTRÉE IMAGE (256-d)
+       │                               │
+       ▼                               ▼
+  Dense(512, relu)             Dense(256, relu)
+  LayerNorm                    LayerNorm
+  Dropout(0.3)                 Dropout(0.3)
+       │                               │
+       └──────────┬────────────────────┘
+                  │ concat([text_logits_mean, img_logits_mean])
+                  ▼
+       ┌──────────────────────────┐
+       │   Dense(1) + sigmoid     │  ← α appris automatiquement
+       │   α ∈ [0.0 , 1.0]        │
+       └──────────┬───────────────┘
+                  │
+       ┌──────────┴────────────────────────────────────┐
+       │                                               │
+       ▼                                               ▼
+  Dense(27) → Softmax                       Dense(27) → Softmax
+  text_logits                               img_logits
+       │                                               │
+       └──────────────────┬────────────────────────────┘
+                          ▼
+          pred = α × text_proba + (1-α) × img_proba
+          argmax → catégorie prédite (27 classes)
+
+  Optimizer : Adam (lr=0.0002)   Loss : Focal Loss (γ variable)
+  EarlyStopping (patience=10)    ReduceLROnPlateau (factor=0.5)
+  MacroF1Callback (freq=2)       Epochs max : 60""",
+                language="")
+
+        with st.expander("4 — DAG Airflow v7 — Flux des 30 tâches"):
+            st.code("""\
+┌────────────────────────────────────────────────────────────────────────┐
+│  PHASE 1 — VÉRIFICATION (parallèle, ~2 min)                           │
+│                                                                        │
+│  check_training_data ─┐                                                │
+│  wait_for_gate_api ───┤                                                │
+│  wait_for_train_api ──┼── ALL_SUCCESS ──► dataset_stats ──► get_token │
+│  wait_for_predict_api─┤                                                │
+│  wait_for_minilm_enc ─┤                                                │
+│  wait_for_clip_enc ───┘                                                │
+└────────────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  PHASE 2 — ENTRAÎNEMENT 4 ENCODEURS (~3-5h avec caches)               │
+│                                                                        │
+│  ┌─ ENCODEUR CV ───────────────────────────────────────────────────┐  │
+│  │  trigger_cv_training ──► wait_for_cv_training                   │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+│  ┌─ ENCODEUR CLIP ─────────────────────────────────────────────────┐  │
+│  │  trigger_clip_encoding ──► wait_for_clip_encoding               │  │
+│  │       ▼                                                          │  │
+│  │  trigger_clip_training ──► wait_for_clip_training               │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+│  ┌─ ENCODEURS MINILM + MPNET ──────────────────────────────────────┐  │
+│  │  trigger_minilm_encoding ──► wait_for_minilm_encoding           │  │
+│  │       ▼                              ▼                           │  │
+│  │  trigger_minilm_training    trigger_mpnet_training               │  │
+│  │       ▼                              ▼                           │  │
+│  │  wait_for_minilm_training   wait_for_mpnet_training              │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  PHASE 3 — QUALITÉ & DÉPLOIEMENT (~20 min)                            │
+│                                                                        │
+│  check_regression ──► push_feature_cache ──► get_model_version        │
+│                                                  │                     │
+│                                           push_metrics                 │
+│  evaluate_model ──► verify_mlflow_registration                        │
+│                           │                                            │
+│              rebuild_drift_reference ──► quality_gate (66 tests)      │
+│                           │                                            │
+│              cleanlab_audit ──► success_message ──► write_run_summary │
+└────────────────────────────────────────────────────────────────────────┘""",
+                language="")
+
+        with st.expander("5 — Flux d'inférence /predict-ensemble"):
+            st.code("""\
+Utilisateur (Streamlit)
+      │ POST /predict-ensemble  { designation, image_b64 }
+      ▼
+  predict-api/app.py
+      │
+      ├─► VALIDATION TOKEN ──► gate-api:5004/validate-token ──► 200/401
+      │
+      ├─► EXTRACTION FEATURES TEXTE (4 encodeurs)
+      │   ├─► [CV]     TF-IDF.transform(text+ocr) → PCA → 512-d
+      │   ├─► [CLIP]   clip.encode_text(text) → L2-norm → 512-d
+      │   ├─► [MiniLM] sentence_transformer.encode(text) → 384-d
+      │   └─► [mpnet]  sentence_transformer.encode(text) → 768-d
+      │
+      ├─► EXTRACTION FEATURES IMAGE (commune aux 4)
+      │   resnet50.predict(img) → 2048-d → PCA → 256-d
+      │
+      ├─► INFÉRENCE 4 MODÈLES
+      │   ├─► model_cv([512-d, 256-d])     → proba(27 classes)
+      │   ├─► model_clip([512-d, 256-d])   → proba(27 classes)
+      │   ├─► model_minilm([384-d, 256-d]) → proba(27 classes)
+      │   └─► model_mpnet([768-d, 256-d])  → proba(27 classes)
+      │
+      ├─► ENSEMBLE : moyenne pondérée (poids ∝ val_accuracy)
+      │   pred = w_clip·p_clip + w_mpnet·p_mpnet + w_cv·p_cv + w_minilm·p_minilm
+      │   argmax → label_encoder.inverse_transform → catégorie
+      │
+      ├─► DRIFT MONITORING (non-bloquant, thread daemon)
+      │   drift_monitor.record_prediction(designation, pred_class)
+      │
+      └─► RÉPONSE JSON
+          { prediction, confidence, top3, breakdown: {cv, clip, minilm, mpnet} }""",
+                language="")
+
+        with st.expander("6 — Cycle de vie MLOps complet"):
+            st.code("""\
+┌──────────────┐    ┌────────────────┐    ┌──────────────────────┐
+│ 1. DONNÉES   │    │ 2. FEATURES    │    │ 3. ENTRAÎNEMENT      │
+│              │    │                │    │                      │
+│ X_train.csv  │───►│ preprocess_    │───►│ trainer.py           │
+│ Y_train.csv  │    │ text/image.py  │    │ Focal Loss           │
+│ images/      │    │ OCR Tesseract  │    │ Fusion tardive α     │
+│              │    │ CLIP/MiniLM/   │    │ EarlyStopping        │
+│ DVC track    │    │ mpnet encode   │    │ MacroF1Callback      │
+│ DagsHub S3   │    │ IncrementalPCA │    │ MLflow log           │
+└──────────────┘    └────────────────┘    └──────────┬───────────┘
+                                                      │
+┌──────────────┐    ┌────────────────┐    ┌──────────▼───────────┐
+│ 6. MONITORING│    │ 5. DÉPLOIEMENT │    │ 4. ÉVALUATION        │
+│              │    │                │    │                      │
+│ Prometheus   │    │ predict-api    │    │ quality_gate         │
+│ Grafana      │◄───│ :5003          │◄───│ pytest (66 tests)    │
+│ Alertmanager │    │ 4 modèles RAM  │    │ Planchers acc/F1     │
+│ Evidently AI │    │ Warmup TF      │    │ Cleanlab audit       │
+│ buffer 2000  │    │ Fallback modal │    │ Regression gate      │
+└──────────────┘    └────────────────┘    └──────────────────────┘
+
+─────────── ORCHESTRATION : Airflow DAG v7 (30 tâches) ───────────
+─────────── VERSIONING    : DVC + Git + MLflow ───────────────────
+─────────── INFRA         : Docker Compose 14 services ───────────""",
+                language="")
+
+        st.markdown("#### 7 — Tableau de synthèse technique")
+        import pandas as _pd_sum
+        _sum_data = {
+            "Technologie": [
+                "TF-IDF + Tesseract OCR", "CLIP ViT-B/32 (LAION)", "MiniLM-L12-v2",
+                "mpnet-base-v2", "ResNet50 (ImageNet)", "IncrementalPCA",
+                "Focal Loss γ", "Fusion tardive (α)", "FastAPI + uvicorn",
+                "TensorFlow 2.17", "Keras 3.4.1", "sentence-transformers",
+                "Docker Compose", "Airflow 2.8.1", "MLflow + DagsHub",
+                "DVC + DagsHub S3", "Prometheus + Grafana", "Evidently AI",
+                "Cleanlab", "jemalloc", "GitHub Actions", "Streamlit",
+            ],
+            "Rôle": [
+                "Encodeur texte CV + OCR image", "Encodeur multimodal texte-image",
+                "Encodeur texte multilingue rapide", "Encodeur texte multilingue performant",
+                "Extraction features visuelles", "Réduction dim. image mémoire-safe",
+                "Loss robuste au déséquilibre classes", "Combinaison image+texte apprise",
+                "Serveur API REST async", "Entraînement + inférence modèles",
+                "API haut niveau Keras", "MiniLM + mpnet hors TF",
+                "Orchestration 14 services", "Orchestration DAG 30 tâches",
+                "Tracking expériences + registre", "Versioning données et modèles",
+                "Monitoring métriques temps réel", "Détection dérive distributions",
+                "Audit qualité étiquettes", "Anti-fragmentation mémoire",
+                "CI/CD automatique", "Interface utilisateur",
+            ],
+            "Chiffre clé": [
+                "vocab ~50k, PCA 512-d", "512-d L2-norm, 85,12% acc",
+                "384-d, 79,26% acc", "768-d, 81,41% acc",
+                "2048-d → PCA 256-d", "2048→256 en batches 512",
+                "CV:2.5 / CLIP:1.5 / MiniLM-mpnet:2.0", "α = sigmoid(Dense(1))",
+                "2 workers, timeout 90s", "eager mode pour callbacks",
+                "patch load_context.py", "paraphrase-multilingual-*",
+                "subnet 172.20.0.0/16", "LocalExecutor, PostgreSQL",
+                "4 modèles enregistrés", "text_features.npy 3.2 Go",
+                "16 règles d'alerte", "buffer 2000, ref 5000 strat.",
+                "8.6% erreurs, 7325/84916", "LD_PRELOAD dans Dockerfile",
+                "66 tests, ~3 min", "3 pages, timeout 90s",
+            ],
+        }
+        st.dataframe(
+            _pd_sum.DataFrame(_sum_data),
+            use_container_width=True,
+            hide_index=True,
+        )
 
     # ── Tab 1 : ML Pipeline ───────────────────────────────────────────────────
     with tab_ml:
@@ -798,8 +1091,11 @@ def show_prediction_page():
             if descriptions_file:
                 df_desc = pd.read_csv(descriptions_file, encoding="utf-8-sig",
                                       encoding_errors="replace")
-                if "description" in df_desc.columns:
-                    descriptions = df_desc["description"].tolist()
+                desc_col = next((c for c in df_desc.columns
+                                 if c.lower().strip() in ("description", "descriptions",
+                                                          "designation", "designations")), None)
+                if desc_col:
+                    descriptions = df_desc[desc_col].fillna("").tolist()
             for idx, file in enumerate(uploaded_files):
                 batch_items.append({
                     "description":  descriptions[idx] if idx < len(descriptions) else "",

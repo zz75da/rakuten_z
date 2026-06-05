@@ -127,23 +127,40 @@ def _generate_report():
             log.warning("No shared columns between reference and current — skipping report")
             return
 
-        # Align dtypes: current must match reference to avoid Evidently type errors
-        for col in shared_cols:
-            try:
-                current_df[col] = current_df[col].astype(reference_df[col].dtype)
-            except (ValueError, TypeError):
-                pass
+        # Cast prdtypecode to str so Evidently treats it as categorical (not continuous
+        # numerical — int64 with sparse values like 10,40,1280,2583 renders as empty histogram).
+        for df in (current_df, reference_df):
+            if "prdtypecode" in df.columns:
+                df["prdtypecode"] = df["prdtypecode"].astype(str)
+
+        # Add derived text features so Evidently shows meaningful distributions for
+        # designation instead of "count 1 everywhere" (unique strings → useless categorical).
+        for df in (current_df, reference_df):
+            if "designation" in df.columns:
+                df["designation_word_count"] = df["designation"].fillna("").str.split().str.len()
+                df["designation_char_count"] = df["designation"].fillna("").str.len()
+
+        num_cols  = [c for c in ["designation_word_count", "designation_char_count"] if c in current_df.columns]
+        cat_cols  = [c for c in ["prdtypecode"] if c in shared_cols]
+        text_cols = [c for c in ["designation"] if c in shared_cols]
+
+        all_cols = text_cols + cat_cols + num_cols
 
         try:
             from evidently import ColumnMapping
             from evidently.report import Report
             from evidently.metric_preset import DataDriftPreset
 
-            column_mapping = ColumnMapping(target="prdtypecode" if "prdtypecode" in shared_cols else None)
+            column_mapping = ColumnMapping(
+                target=None,
+                numerical_features=num_cols,
+                categorical_features=cat_cols,
+                text_features=text_cols,
+            )
             report = Report(metrics=[DataDriftPreset()])
             report.run(
-                reference_data=reference_df[shared_cols],
-                current_data=current_df[shared_cols],
+                reference_data=reference_df[all_cols],
+                current_data=current_df[all_cols],
                 column_mapping=column_mapping,
             )
 
