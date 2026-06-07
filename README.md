@@ -97,9 +97,20 @@ Registered as **`rakuten_multimodal_mpnet`** · focal γ=2.0 · best val_acc 0.8
 │  drift ref     │                │  ├── POST /cleanlab      (confident learning)  │
 └────────────────┘                │  └── POST /drift-rebuild-reference             │
        │                          └───────────────┬────────────────────────────────┘
+       ├─ also: POST /login {"admin","admin_pass"} ──► gate-api :5000
+       │        (get_auth_token / _fresh_token — Airflow always authenticates
+       │         itself as the hardcoded "admin" user, independent of whichever
+       │         user is logged into Streamlit; the returned Bearer token is
+       │         cached in XCom for every task in the DAG run)
+       │
        ├── POST /encode ──────►  clip-encoder :5007  (CLIP ViT-B/32)
        │                         minilm-encoder :5004  (MiniLM + mpnet)
+       │                                       │
        │                                       │ POST /reload-artifacts
+       │                                       │ (sent by train-api's
+       │                                       │  run_full_pipeline.py once
+       │                                       │  training finishes — not
+       │                                       │  by the encoders themselves)
        │                                       ▼
        │                         ┌──────────────────────────────┐
        │                         │  predict-api  :5003          │
@@ -117,6 +128,8 @@ Registered as **`rakuten_multimodal_mpnet`** · focal γ=2.0 · best val_acc 0.8
 │  Alertmanager(:9093) ──► confidence / accuracy / UP/DOWN / memory alerts │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
+
+> Ports shown above are the **internal** container-network addresses used for service-to-service calls (e.g. `http://gate-api:5000`, `http://clip-encoder:5007`, `http://minilm-encoder:5004`). Several services are remapped to different **external** host ports — see [Services](#services) (gate-api → `5004`, minilm-encoder → `5005`, clip-encoder → `5006`).
 
 ---
 
