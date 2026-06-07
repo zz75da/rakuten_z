@@ -1,11 +1,14 @@
 # Rakuten MLOps Platform
 
 [![CI with DVC + Tests](https://github.com/zz75da/rakuten_z/actions/workflows/dvc-ci.yml/badge.svg?branch=main)](https://github.com/zz75da/rakuten_z/actions/workflows/dvc-ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+**Author:** [zz75da](https://github.com/zz75da)
 
 End-to-end MLOps platform for **multimodal product classification** (text + image → 27 Rakuten categories, ~85k products).  
 Built with FastAPI microservices, Apache Airflow DAG v7, MLflow / DagsHub, and a full Prometheus / Grafana monitoring stack.
 
-**Current best accuracy:** CLIP 84.9% · mpnet 81.9% · CV 80.1% · MiniLM 79.4% · Ensemble (weighted avg) robust to single-model failures.
+**Current best accuracy:** CLIP 84.9% · mpnet 81.9% · CV 80.3% · MiniLM 79.9% · Ensemble (weighted avg) robust to single-model failures.
 
 ---
 
@@ -47,28 +50,28 @@ Fusion:        α = Dense(1, sigmoid)(mean(text_logits) ⊕ mean(image_logits))
 ```
 designation + description + Tesseract OCR ──► SpaCy lemmatise ──► TfidfVectorizer(10k, sublinear_tf) ──► PCA(512)
 ```
-Registered as **`rakuten_multimodal_cv`** · focal γ=2.5 · best val_acc 0.8008
+Registered as **`rakuten_multimodal_cv`** · focal γ=2.5 · best val_acc 0.8028
 
 ### Encoder B — CLIP ViT-B/32
 
 ```
 Text ──► openai/clip-vit-base-patch32 (L2-normalised, 512-d)
 ```
-Registered as **`rakuten_multimodal_clip`** · focal γ=1.5 · best val_acc 0.8489 (highest single model)
+Registered as **`rakuten_multimodal_clip`** · focal γ=1.5 · best val_acc 0.8494 (highest single model)
 
 ### Encoder C — MiniLM (multilingual)
 
 ```
 Text ──► paraphrase-multilingual-MiniLM-L12-v2 (384-d)
 ```
-Registered as **`rakuten_multimodal_minilm`** · focal γ=2.0 · best val_acc 0.7943
+Registered as **`rakuten_multimodal_minilm`** · focal γ=2.0 · best val_acc 0.7987
 
 ### Encoder D — mpnet (multilingual)
 
 ```
 Text ──► paraphrase-multilingual-mpnet-base-v2 (768-d)
 ```
-Registered as **`rakuten_multimodal_mpnet`** · focal γ=2.0 · best val_acc 0.8191
+Registered as **`rakuten_multimodal_mpnet`** · focal γ=2.0 · best val_acc 0.8194
 
 ### Ensemble
 
@@ -109,7 +112,7 @@ Registered as **`rakuten_multimodal_mpnet`** · focal γ=2.0 · best val_acc 0.8
        │                                         │
        └──────────────────────────────────────── ▼ ──────────────────────────────────
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  Prometheus (:9090)  ◄── scrapes 8 targets (all FastAPI apps)            │
+│  Prometheus (:9090)  ◄── scrapes 8 targets (5 FastAPI apps + infra)      │
 │  Grafana    (:3000)  ──► drift dashboard, val_acc × 4 encoders, latency  │
 │  Alertmanager(:9093) ──► confidence / accuracy / UP/DOWN / memory alerts │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -202,7 +205,8 @@ POST /train              {"epochs":60, "batch_size":128, "text_encoder":"countve
                          → 202 {"job_id":"...", "status":"running"}  |  409 if busy
 GET  /train/status/{id}  → {"status":"success|running|failed", "step":"...", "final_metrics":{...}}
 POST /quality-gate       Runs pytest quality assertions — returns pass/fail + output
-POST /cleanlab           Confident learning label audit using CLIP model → CSV report
+POST /cleanlab           {"encoder": "clip|countvectorizer|minilm|mpnet"}  (default: clip — best accuracy)
+                         Confident learning label audit via SGDClassifier cross-val → cleanlab_report_<encoder>.csv
 POST /drift-rebuild-reference  Builds 5k stratified reference for Evidently
 GET  /health
 GET  /metrics
@@ -273,15 +277,43 @@ View and download reports from the **Drift Reports** page in Streamlit.
 
 ### Alert thresholds
 
+20 rules total in `monitoring/alert-rules.yml`, grouped below.
+
+**Service health** (fires after the listed duration of `up == 0` / heartbeat loss)
+
+| Alert | Condition |
+|-------|-----------|
+| TrainAPIDown / PredictAPIDown / MiniLMEncoderDown / CLIPEncoderDown | service down ≥ 3 min |
+| GateAPIDown / PostgresqlDown | service down ≥ 2 min |
+| AirflowSchedulerDown | scheduler heartbeat stalled ≥ 5 min |
+| AirflowDagFailed | a DAG run reports failure ≥ 2 min |
+
+**Model quality** (`model_final_val_accuracy{encoder=...}` after each training run)
+
 | Alert | Threshold |
 |-------|-----------|
 | CVModelValAccuracyLow | < 0.72 |
 | CLIPModelValAccuracyLow | < 0.80 |
 | MiniLMModelValAccuracyLow | < 0.70 |
 | mpnetModelValAccuracyLow | < 0.72 |
-| PredictionConfidenceDrift | P50 < 0.40 for 15 min |
-| PredictionLatencyHigh | P95 > 5s |
+
+**Prediction / drift**
+
+| Alert | Threshold |
+|-------|-----------|
+| PredictionConfidenceDrift | P50 confidence < 0.40 (15 min window) |
+| PredictionEntropyHigh | P90 entropy > 2.5 (15 min window) |
+| ClassDistributionSkewed | one predicted class > 80% of traffic (30 min window, ≥ 20 min) |
+| HighPredictionErrorRate | 5xx ratio > 10% of requests (5 min window) |
+| PredictionLatencyHigh | P95 latency > 5s |
+
+**Resources**
+
+| Alert | Threshold |
+|-------|-----------|
 | DiskSpaceLow | root filesystem < 10% free |
+| HighMemoryUsage | memory used > 90% (10 min) |
+| HighCPUUsage | CPU busy > 80% (10 min) |
 
 ---
 
@@ -306,10 +338,10 @@ View and download reports from the **Drift Reports** page in Streamlit.
 
 | Model | Encoder | Best val_acc |
 |-------|---------|-------------|
-| `rakuten_multimodal_cv` | TF-IDF + OCR | 0.8008 |
-| `rakuten_multimodal_clip` | CLIP ViT-B/32 | 0.8489 |
-| `rakuten_multimodal_minilm` | MiniLM-L12-v2 | 0.7943 |
-| `rakuten_multimodal_mpnet` | mpnet-base-v2 | 0.8191 |
+| `rakuten_multimodal_cv` | TF-IDF + OCR | 0.8028 |
+| `rakuten_multimodal_clip` | CLIP ViT-B/32 | 0.8494 |
+| `rakuten_multimodal_minilm` | MiniLM-L12-v2 | 0.7987 |
+| `rakuten_multimodal_mpnet` | mpnet-base-v2 | 0.8194 |
 
 ### DVC pipeline stages
 
@@ -398,7 +430,7 @@ Copy `.env.template` to `.env`:
 | `ARTIFACTS_PATH` | `/app/data/artifacts` (predict-api) |
 | `GATE_API_URL` | `http://gate-api:5000` |
 | `PREDICT_API_URL` | `http://predict-api:5003` |
-| `LD_PRELOAD` | `/usr/local/lib/libjemalloc.so.2` (train-api + predict-api) |
+| `LD_PRELOAD` | jemalloc, to curb glibc malloc fragmentation on long training/inference runs — train-api: `/usr/lib/x86_64-linux-gnu/libjemalloc.so.2`, predict-api: `/usr/local/lib/libjemalloc.so.2` |
 
 ---
 
@@ -456,3 +488,11 @@ dvc push              # upload missing files to DagsHub S3
 docker exec train-api pytest /app/tests/test_model_quality.py -v
 ```
 Check that all history files (`train_history*.json`) exist in `/app/data/artifacts/`.
+
+---
+
+## Author & License
+
+**Author:** [zz75da](https://github.com/zz75da)
+
+Licensed under the [MIT License](LICENSE) — Copyright © 2026 zz75da.
