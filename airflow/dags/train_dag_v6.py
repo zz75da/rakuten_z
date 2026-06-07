@@ -681,11 +681,19 @@ def write_run_summary(**context):
             f"    mlflow_run   : {result.get('mlflow_run_id', 'N/A')}",
         ]
 
+    # dag_run.state is still "running" when this (last) task executes — Airflow
+    # only marks the DAG success AFTER all tasks finish, including this one.
+    # Derive state from whether the four training results are present.
+    all_trained = all([cv_result, clip_result, ml_result, mpnet_result])
+    derived_state = "success" if all_trained else "partial_failure"
+    from datetime import datetime, timezone
+    end_ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
     block_lines = [
         f"RUN  : {dag_run.run_id}",
-        f"State: {dag_run.state}",
+        f"State: {derived_state}",
         f"Start: {dag_run.start_date}",
-        f"End  : {dag_run.end_date}",
+        f"End  : {end_ts}",
         f"MReg : {model_version}",
         "",
     ] + _model_lines("CV  (countvectorizer)", cv_result) \
