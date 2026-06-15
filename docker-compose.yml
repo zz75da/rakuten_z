@@ -120,7 +120,7 @@ services:
       AIRFLOW__WEBSERVER__WORKER_TIMEOUT: "120"
       # E5-small CPU encoding takes ~1h with max_seq_length=128 — 4h gives comfortable buffer
       ENCODING_MAX_WAIT_SECONDS: "86400"
-      SECRET_KEY: default_secret
+      SECRET_KEY: ${JWT_SECRET_KEY}
       _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-http
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
       DAGSHUB_CLIENT_TOKENS_CACHE: /opt/airflow/.dagshub_tokens
@@ -189,9 +189,9 @@ services:
     ports:
       - "5004:5000"
     environment:
-      SECRET_KEY: default_secret
-      ADMIN_PASSWORD: admin_pass
-      USER_PASSWORD: user_pass
+      SECRET_KEY: ${JWT_SECRET_KEY}
+      ADMIN_PASSWORD: ${GATE_API_ADMIN_PASSWORD}
+      USER_PASSWORD: ${GATE_API_USER_PASSWORD}
       DAGSHUB_CLIENT_TOKENS_CACHE: /root/.dagshub_tokens
     volumes:
       - ./params.yaml:/app/params.yaml
@@ -219,7 +219,7 @@ services:
     environment:
       # Service config
       GATE_API_URL: http://gate-api:5000
-      SECRET_KEY: default_secret
+      SECRET_KEY: ${JWT_SECRET_KEY}
       USE_DEV_IMAGES: "false"
       PCA_COMPONENTS: 300
       FEATURE_BATCH_SIZE: 500
@@ -303,7 +303,7 @@ services:
       - "5003:5003"
     environment:
       PORT: 5003
-      SECRET_KEY: default_secret
+      SECRET_KEY: ${JWT_SECRET_KEY}
       DAGSHUB_CLIENT_TOKENS_CACHE: /root/.dagshub_tokens
       # MLflow model config
       MLFLOW_MODEL_NAME: rakuten_multimodal

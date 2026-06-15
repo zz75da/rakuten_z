@@ -24,8 +24,13 @@
 #   - ALGORITHM = "HS256"
 #   - TOKEN_EXPIRE_MINUTES (env TOKEN_EXPIRE_MINUTES, def. 180)
 #   - USERS_DB : utilisateurs "admin"/"user" avec mots de passe
-#     definis via ADMIN_PASSWORD / USER_PASSWORD (def.
-#     admin_pass / user_pass)
+#     definis via ADMIN_PASSWORD / USER_PASSWORD
+#
+# En docker-compose, SECRET_KEY / ADMIN_PASSWORD / USER_PASSWORD
+# proviennent de .env (JWT_SECRET_KEY, GATE_API_ADMIN_PASSWORD,
+# GATE_API_USER_PASSWORD - non commite). Les valeurs "default_secret"
+# / "admin_pass" / "user_pass" ci-dessous ne sont que des valeurs
+# de repli pour les tests/dev hors docker.
 #
 # Dependances externes : fastapi, pydantic, prometheus_fastapi_instrumentator,
 # pyjwt
@@ -52,7 +57,8 @@ ALGORITHM = "HS256"
 TOKEN_EXPIRE_MINUTES = int(os.getenv("TOKEN_EXPIRE_MINUTES", "180"))
 
 # --- Users Config via environment variables ---
-# Default credentials if env vars not set
+# Fallback credentials for tests/dev when env vars are not set
+# (docker-compose supplies real values via .env, see RESUME DU MODULE)
 DEFAULT_ADMIN_PASS = "admin_pass"
 DEFAULT_USER_PASS = "user_pass"
 
