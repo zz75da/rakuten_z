@@ -29,6 +29,11 @@ tmp/
 !dvc.yaml
 !dvc.lock
 
+# DVC repeatedly appends /config.local, /tmp, /cache to this file on every
+# `dvc data status` run (e.g. VS Code DVC extension polling) — generic
+# boilerplate, regenerated locally, not worth tracking.
+.dvc/.gitignore
+
 # === Large data & artifacts (handled by DVC, not Git) ===
 # Use data/** (not data/) so git can traverse the directory and find .dvc pointer files
 data/**
