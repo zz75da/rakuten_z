@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: predict-api-config
+  namespace: rakuten-mlops
+data:
+  PORT: "5003"
+  DAGSHUB_CLIENT_TOKENS_CACHE: "/root/.dagshub_tokens"
+  MLFLOW_MODEL_NAME: "rakuten_multimodal"
+  MLFLOW_MODEL_STAGE: "Production"
+  MLFLOW_EXPERIMENT_NAME: "rakuten_z"
+  AWS_DEFAULT_REGION: "us-east-1"
+  ARTIFACTS_PATH: "/app/data/artifacts"
+  LD_PRELOAD: "/usr/local/lib/libjemalloc.so.2"
+  MINILM_MODEL: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+  MPNET_MODEL: "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+  CLIP_MODEL: "laion/CLIP-ViT-B-32-laion2B-s34B-b79K"
+  SKIP_DVC_PULL: "0"

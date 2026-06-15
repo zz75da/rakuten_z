@@ -24,6 +24,7 @@ Built with FastAPI microservices, Apache Airflow DAG v7, MLflow / DagsHub, and a
 - [Test Suite](#test-suite)
 - [Repository Structure](#repository-structure)
 - [Environment Variables](#environment-variables)
+- [Scalability & Kubernetes (proof of concept)](#scalability--kubernetes-proof-of-concept)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -444,6 +445,30 @@ Copy `.env.template` to `.env`:
 | `GATE_API_URL` | `http://gate-api:5000` |
 | `PREDICT_API_URL` | `http://predict-api:5003` |
 | `LD_PRELOAD` | jemalloc, to curb glibc malloc fragmentation on long training/inference runs — train-api: `/usr/lib/x86_64-linux-gnu/libjemalloc.so.2`, predict-api: `/usr/local/lib/libjemalloc.so.2` |
+
+---
+
+## Scalability & Kubernetes (proof of concept)
+
+The docker-compose stack runs as single-instance services. To validate that
+`predict-api` (the most request-heavy service) can scale horizontally, the
+[`k8s/`](k8s/) directory provides a Deployment + Service + HPA, tested on
+Docker Desktop's local Kubernetes cluster:
+
+- **Deployment**: reuses the existing `rakuten_mlops_services-predict-api:latest`
+  image, resource requests/limits (2Gi/250m → 4Gi/1.5 CPU), startup/readiness/
+  liveness probes on `/health`
+- **HPA**: CPU-based, 1-2 replicas, 70% target (requires `metrics-server`)
+- **Validated locally**: both replicas reach `1/1 Ready` with all 4 models
+  (CV/CLIP/MiniLM/mpnet) loaded, `/health` responds via the ClusterIP service,
+  and the HPA correctly reports `cpu: 1%/70%` and rescales the Deployment
+  (`SuccessfulRescale` events observed for both scale-up and scale-down)
+
+This is a local PoC: it uses `hostPath` volumes for `params.yaml`,
+`data/artifacts` and `data/hf_cache`, and the local Docker image cache
+(no registry push). A production setup would replace these with PVCs /
+an init container pulling artifacts from MLflow, and push the image to a
+registry. See [`k8s/README.md`](k8s/README.md) for deploy/teardown commands.
 
 ---
 
