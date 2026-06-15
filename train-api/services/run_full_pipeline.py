@@ -7,6 +7,44 @@ exposed to TF's allocator hooks.  Writes job status to /app/data/jobs/<job_id>.j
 Usage (called by app.py via subprocess.run):
     python services/run_full_pipeline.py <job_id> <text_encoder> <epochs> <batch_size> <use_dev_images> <use_cache>
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : script sequentiel (pas un module importable) execute en
+# subprocess par train-api/app.py - enchaine chargement des
+# donnees, extraction/cache des features texte et image, PCA
+# (en sous-processus separe via run_pca.py), entrainement
+# (trainer.build_and_train_model), sauvegarde des artefacts et
+# notification de predict-api pour recharger les modeles.
+#
+# Fonctions principales :
+#   - _write(status) : ecrit JOB_DIR/<job_id>.json (etat du job)
+#   - _write_step(step, extra=None) : met a jour le statut "running"
+#     avec l'etape courante (loading_data, text_features,
+#     image_features, pca/pca_cached, training, ...)
+#   - _read_pipeline_params() : lit params.yaml (pca_components,
+#     n_text_pca_components, cv_max_features), valeurs par defaut
+#     sinon
+#   - _text_cache_valid() / _write_text_meta() : verifie/ecrit le
+#     cache text_features.npy + text_vectorizer.pkl (invalide si
+#     vocab ou usage OCR a change)
+#   - _make_pca_fingerprint() / _pca_cache_valid() /
+#     _write_pca_fingerprint() : verifie un fingerprint JSON
+#     (encodeur + parametres PCA + tailles fichiers) pour eviter
+#     de relancer la PCA (jusqu'a 6h) si rien n'a change
+#
+# Variables / constantes importantes :
+#   - job_id, text_encoder, epochs, batch_size, use_dev_images,
+#     use_cache, git_commit_sha : argv (1-7)
+#   - JOB_DIR = /app/data/jobs
+#   - TEXT_CACHE/IMAGE_CACHE/_ARTIFACTS et chemins
+#     X_reduced_<encoder>_<pca_components>.npy, pca_image_*.pkl,
+#     pca_text_*.pkl, pca_fingerprint_*.json
+#
+# Dependances externes : numpy, requests, pyyaml, scikit-learn
+# (TfidfVectorizer), services.data_loader/preprocess_text/
+# preprocess_image/trainer/artifacts
+# ============================================================
 import sys
 import os
 import json

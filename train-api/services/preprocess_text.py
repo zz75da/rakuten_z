@@ -1,3 +1,40 @@
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : nettoyage du texte (designation + description + OCR),
+# lemmatisation spaCy (FR/EN) et vectorisation TF-IDF pour
+# l'encodeur "countvectorizer". predict-api reutilise _fix_mojibake
+# / _clean_text / _lemmatize pour appliquer le meme pretraitement
+# en inference.
+#
+# Fonctions principales :
+#   - log_memory(prefix="") : logge RAM utilisee/disponible
+#   - track_time(func) : decorateur qui logge la duree d'execution
+#   - _fix_mojibake(text) -> str : repare les sequences UTF-8
+#     mal decodees en Latin-1 (Â©, Ã©, etc.)
+#   - _clean_text(text) -> str : applique _ENCODING_FIXES,
+#     _fix_mojibake, html.unescape, supprime les balises HTML et
+#     normalise les espaces
+#   - _build_combined_text(data) -> list[str] : concatene
+#     designation + description (nettoyes) + texte OCR (si
+#     OCR_CACHE existe, merge sur imageid/productid)
+#   - extract_text_features(data, max_features=10000,
+#     fit_only=False) -> (text_features|None, vectorizer) :
+#     lemmatise (spaCy, retire stopwords FR/EN + ponctuation,
+#     garde mots/nombres > 1 caractere), TfidfVectorizer
+#     (ngram 1-2, sublinear_tf, min_df=2) ; fit_only=True evite la
+#     matrice dense (3.4 Go) en ne retournant que le vectorizer
+#
+# Variables / constantes importantes :
+#   - TEXT_FEATURES_FILE, TEXT_VECTORIZER_FILE, OCR_CACHE
+#   - BATCH_SIZE = 5000, N_CORES (env SPACY_N_PROCESS, def. 1)
+#   - nlp : modele spaCy fr_core_news_sm (fallback en_core_web_sm)
+#   - _EXTRA_STOPS : stopwords FR/EN supplementaires
+#   - _ENCODING_FIXES : table de correction mojibake (ordre important)
+#
+# Dependances externes : numpy, pandas, psutil, spacy,
+# scikit-learn (TfidfVectorizer)
+# ============================================================
 import html as _html
 import logging
 import os
@@ -70,10 +107,51 @@ for w in _EXTRA_STOPS:
     nlp.vocab[w].is_stop = True
 
 
+# Pre-existing mojibake in the source CSV: multi-byte UTF-8 sequences that were
+# corrupted before the CSV was written and cannot be repaired by re-encoding.
+# Each tuple is (corrupted_string, correct_character).
+# Order is significant: â¿¿ must precede ¿¿ (¿¿ is a suffix of â¿¿).
+_ENCODING_FIXES: tuple[tuple[str, str], ...] = (
+    ("â¿¿", "’"),  # â¿¿  →  '  (right single quote / apostrophe)
+    ("à¢",  "â"),       # à¢   →  â
+    ("àª",  "ê"),       # àª   →  ê
+    ("à¿",  "ô"),       # à¿   →  ô
+    ("¿¿",  "é"),       # ¿¿   →  é  (most frequent: 4 019 occurrences)
+)
+
+
+def _fix_mojibake(text: str) -> str:
+    """Repair UTF-8-as-Latin-1 mojibake: Â·→·, Â°→°, Ã©→é, etc."""
+    chars = list(text); result = []; i = 0; n = len(chars)
+    while i < n:
+        cp0 = ord(chars[i])
+        if 0xE0 <= cp0 <= 0xEF and i + 2 < n:
+            cp1, cp2 = ord(chars[i + 1]), ord(chars[i + 2])
+            if 0x80 <= cp1 <= 0xBF and 0x80 <= cp2 <= 0xBF:
+                try:
+                    result.append(bytes([cp0, cp1, cp2]).decode("utf-8"))
+                    i += 3; continue
+                except UnicodeDecodeError:
+                    pass
+        if 0xC2 <= cp0 <= 0xDF and i + 1 < n:
+            cp1 = ord(chars[i + 1])
+            if 0x80 <= cp1 <= 0xBF:
+                try:
+                    result.append(bytes([cp0, cp1]).decode("utf-8"))
+                    i += 2; continue
+                except UnicodeDecodeError:
+                    pass
+        result.append(chars[i]); i += 1
+    return "".join(result)
+
+
 def _clean_text(text) -> str:
-    """HTML-unescape, strip tags, normalise whitespace."""
+    """Repair source encoding, HTML-unescape, strip tags, normalise whitespace."""
     if not isinstance(text, str) or not text.strip():
         return ""
+    for corrupted, correct in _ENCODING_FIXES:
+        text = text.replace(corrupted, correct)
+    text = _fix_mojibake(text)
     text = _html.unescape(text)
     text = _re.sub(r"<[^>]+>", " ", text)
     return " ".join(text.split())

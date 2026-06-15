@@ -15,6 +15,36 @@ Output:
 Memory budget: ~500 MB peak (X_reduced ~290 MB + model ~50 MB + pred_probs ~9 MB)
 Disk budget  : ~2 MB per report CSV
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : audit qualite des labels (confident learning) sur le
+# jeu d'entrainement complet, appele par train-api POST /cleanlab
+# (et par le DAG apres entrainement).
+#
+# Fonctions principales :
+#   - run_audit(encoder="clip", batch_size=512) -> (out_path,
+#     n_issues, n_samples) : charge X_reduced_<encoder>_256.npy
+#     (fallback vers chemin non versionne) + label_encoder.pkl,
+#     merge X/Y train CSV, standardise les features, entraine un
+#     SGDClassifier (log loss) calibre par CalibratedClassifierCV
+#     en cross_val_predict (3-fold) pour obtenir des pred_probs
+#     hors-echantillon, puis cleanlab.filter.find_label_issues
+#     (self_confidence, prune_by_noise_rate) ; sauvegarde
+#     cleanlab_report_<encoder>.csv (id, designation, true/predicted
+#     class, confidence) et logge le top 10 des classes les plus
+#     impactees
+#
+# Variables / constantes importantes :
+#   - ARTIFACTS, FEAT_CACHE, DATA_PATH
+#   - _ENCODER_X_PATHS / _ENCODER_X_FALLBACK : chemins X_reduced
+#     versionnes / legacy par encodeur (clip, minilm, mpnet,
+#     countvectorizer)
+#
+# Dependances externes : numpy, pandas, scikit-learn
+# (cross_val_predict, StandardScaler, SGDClassifier,
+# CalibratedClassifierCV), cleanlab
+# ============================================================
 import os
 import sys
 import gc

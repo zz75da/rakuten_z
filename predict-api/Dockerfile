@@ -18,6 +18,11 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+# spaCy models for CV/TF-IDF text preprocessing — must match train-api's
+# preprocess_text.py (fr_core_news_sm primary, en_core_web_sm fallback)
+RUN python -m spacy download fr_core_news_sm && \
+    python -m spacy download en_core_web_sm
+
 COPY . .
 
 EXPOSE 5003

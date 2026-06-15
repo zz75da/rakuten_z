@@ -21,6 +21,40 @@ Covered :
 
 Dependencies : scikit-learn, numpy; TensorFlow optional (tests skipped if absent)
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests unitaires des briques ML (vectorisation,
+# encodage des labels, dimensions des architectures Keras
+# par encodeur) sans dependre des services en cours
+# d'execution.
+#
+# Fonctions principales :
+#   - TestTfidfVectorizer : forme bornee par max_features,
+#     vocabulaire, valeurs non negatives, effet de
+#     sublinear_tf sur les termes frequents
+#   - TestLabelEncoder : round-trip encode/decode, encodage
+#     deterministe pour une meme classe
+#   - TestModelArchitecture(+MiniLM/Clip/Mpnet) : construction
+#     d'un modele Keras Dense simple pour chaque dimension
+#     d'entree (input_shape/output_shape corrects, softmax
+#     somme a 1) — marquees @requires_tf
+#   - TestFeatureConcatenation(+MiniLM/Clip/Mpnet) : np.hstack
+#     texte+image produit la bonne dimension par encodeur et
+#     preserve les tranches texte/image (y compris
+#     substitution par des zeros)
+#
+# Variables / constantes importantes :
+#   - _IMAGE_DIM=256, _TEXT_PCA=512, _MINILM_DIM=384,
+#     _MPNET_DIM=768, _CLIP_DIM=512
+#   - _CV_INPUT=768, _CLIP_INPUT=768, _MINILM_INPUT=640,
+#     _MPNET_INPUT=1024 (dimensions d'entree late-fusion par
+#     encodeur, alignees sur params.yaml)
+#   - _TF_AVAILABLE / requires_tf : skip si TensorFlow absent
+#
+# Dependances externes : pytest, numpy, scikit-learn
+# (TfidfVectorizer, LabelEncoder), tensorflow (optionnel)
+# ============================================================
 import pytest
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer

@@ -17,6 +17,51 @@ Endpoints:
   POST /encode   — start encoding (idempotent: skips models whose cache is already valid)
   GET  /status   — poll encoding progress
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : microservice FastAPI qui encode le texte (designation +
+# description) de X_train_update.csv avec DEUX modeles
+# sentence-transformers (MiniLM puis mpnet), charges et
+# decharges sequentiellement pour limiter le pic RAM, et ecrit
+# deux caches .npy distincts consommes par train-api.
+#
+# Fonctions principales :
+#   - _load_params() -> dict : lit params.yaml (normalize_embeddings
+#     par modele : minilm.normalize_embeddings, mpnet.normalize_embeddings)
+#   - _cache_valid(output_path, model_name, min_bytes, meta_path) -> bool :
+#     verifie taille min. + sidecar .meta (nom de modele) avant
+#     de considerer un cache reutilisable
+#   - _minilm_cache_valid() / _mpnet_cache_valid() / _all_caches_valid()
+#   - _write_meta(output_path, meta_path, model_name, n_samples, shape)
+#   - _encode_one_model(model_name, output_path, meta_path, texts,
+#     normalize, label) -> float : charge un SentenceTransformer
+#     (max_seq_length=128, device CPU), encode par batches, ecrit
+#     le .npy de maniere atomique, decharge le modele (gc.collect),
+#     retourne la taille du fichier en MB
+#   - _encode_worker() : thread de fond - charge/nettoie le CSV
+#     (HTML -> texte), encode MiniLM puis mpnet (en sautant les
+#     modeles dont le cache est deja valide), met a jour _state
+#   - GET /health : etat + validite/taille des deux caches
+#   - POST /encode : demarre l'encodage des deux modeles (idempotent)
+#   - GET /status : etat d'avancement (par modele)
+#
+# Variables / constantes importantes :
+#   - MINILM_MODEL (env MINILM_MODEL, def. paraphrase-multilingual-MiniLM-L12-v2)
+#   - MPNET_MODEL (env MPNET_MODEL, def. paraphrase-multilingual-mpnet-base-v2)
+#   - CSV_PATH (env TRAIN_CSV_X_PATH) : CSV source
+#   - MINILM_OUTPUT / MPNET_OUTPUT (env MINILM_CACHE_PATH /
+#     MPNET_CACHE_PATH) : caches .npy (384-d et 768-d)
+#   - BATCH_SIZE (env MINILM_BATCH_SIZE, def. 32)
+#   - MINILM_NORMALIZE / MPNET_NORMALIZE (params.yaml, def. False
+#     pour les deux : embeddings bruts conserves pour la tete dense)
+#   - _MIN_MINILM_BYTES / _MIN_MPNET_BYTES : tailles min. de cache valide
+#   - _state / _lock : etat partage (status global + minilm/mpnet)
+#     protege par threading.Lock
+#
+# Dependances externes : fastapi, prometheus_client, numpy, pandas,
+# sentence-transformers, pyyaml
+# ============================================================
 import gc
 import json
 import logging

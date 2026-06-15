@@ -1,4 +1,35 @@
 # gate-api/app.py
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : microservice FastAPI d'authentification centralise
+# (JWT) utilise par Airflow (DAG train_dag_v7), train-api et
+# predict-api pour proteger leurs endpoints sensibles.
+#
+# Fonctions principales :
+#   - verify_token(authorization) -> dict : dependance FastAPI
+#     qui decode/valide un JWT "Bearer <token>" (HS256)
+#   - POST /login : verifie username/password contre USERS_DB et
+#     retourne un JWT signe (role + expiration)
+#   - GET / : info basique sur l'API (version, endpoints)
+#   - GET /health : etat du service + nb d'utilisateurs configures
+#   - POST /validate-token : valide un JWT et renvoie son contenu
+#     (username, role, expiration) - utilise par les autres services
+#   - GET /user-info : retourne les infos de l'utilisateur courant
+#     (protege par verify_token)
+#
+# Variables / constantes importantes :
+#   - SECRET_KEY (env SECRET_KEY, sinon genere aleatoirement -
+#     avertissement si non defini)
+#   - ALGORITHM = "HS256"
+#   - TOKEN_EXPIRE_MINUTES (env TOKEN_EXPIRE_MINUTES, def. 180)
+#   - USERS_DB : utilisateurs "admin"/"user" avec mots de passe
+#     definis via ADMIN_PASSWORD / USER_PASSWORD (def.
+#     admin_pass / user_pass)
+#
+# Dependances externes : fastapi, pydantic, prometheus_fastapi_instrumentator,
+# pyjwt
+# ============================================================
 
 from fastapi import FastAPI, HTTPException, Header, Depends
 from pydantic import BaseModel

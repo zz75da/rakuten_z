@@ -1,3 +1,69 @@
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : construction, entrainement et enregistrement MLflow du
+# modele de classification multimodale (texte + image). Appele
+# par run_full_pipeline.py via build_and_train_model(...).
+#
+# Fonctions principales :
+#   - _load_params() -> dict : charge params.yaml (params/dvc)
+#   - _to_python_native(obj) : convertit recursivement les types
+#     numpy en types Python natifs (pour serialisation JSON)
+#   - save_training_history(history, artifacts_dir=ARTIFACTS_DIR,
+#     text_encoder="countvectorizer") -> str : ecrit
+#     train_history_<encoder>.json (loss/accuracy par epoque)
+#   - evaluate_model(model, X_val, y_val_encoded, label_encoder)
+#     -> dict : accuracy, classification_report, macro F1,
+#     top-3 accuracy, f1 par classe ; logge ces metriques sur
+#     MLflow et retourne le tout via _to_python_native
+#   - _log_datasets(train_data, x_csv_path, y_csv_path, X_reduced)
+#     : mlflow.log_input pour les datasets rakuten_train et
+#     X_reduced_features
+#   - _init_mlflow() -> str (tracking_uri) : configure
+#     DagsHub (token/credentials) et MLflow (tracking_uri,
+#     credentials S3 pour les artefacts, set_experiment)
+#   - build_and_train_model(X, y, epochs=10, batch_size=32,
+#     run_name="training_run", pca_models=None, train_data=None,
+#     x_csv_path=None, y_csv_path=None,
+#     text_encoder="countvectorizer", use_dev_images=False,
+#     git_commit_sha="") -> (model, label_encoder, history,
+#     model_path, run_id, model_version, eval_results) :
+#       * lit les hyperparametres dans params.yaml avec override
+#         par encodeur (model_<encoder>) : HIDDEN_1/2, DROPOUT_1/2,
+#         L2_REG, LEARNING_RATE, ES_PATIENCE, LR_PATIENCE/FACTOR/MIN,
+#         FOCAL_GAMMA, USE_LATE_FUSION, USE_LAYER_NORM, VAL_SPLIT
+#       * split stratifie train/val, libere X (gc.collect)
+#       * architecture "late fusion" (si USE_LATE_FUSION et PCA
+#         image dispo) : separation texte/image via Lambda, deux
+#         tours Dense (text_logits / image_logits), fusion par
+#         gating sigmoide (fusion_alpha) combinant les softmax des
+#         deux branches ; sinon architecture early-fusion classique
+#       * perte = focal loss (_focal_loss_fn, gamma=FOCAL_GAMMA),
+#         class_weight="balanced"
+#       * callbacks : _MacroF1Callback (calcule val_macro_f1, doit
+#         etre avant EarlyStopping), EarlyStopping
+#         (monitor=val_macro_f1), ReduceLROnPlateau (val_loss)
+#       * model.fit(...), logge hyperparametres + metriques par
+#         epoque sur MLflow, sauvegarde model .keras +
+#         label_encoder.pkl + historique, log_artifact MLflow,
+#         log_model PCA (image/texte), mlflow.tensorflow.log_model
+#         avec signature inferee, evaluate_model sur le val set
+#       * enregistre/maj le modele dans le MLflow Model Registry
+#         (nom encoder-specifique <MLFLOW_MODEL_NAME>_<minilm|mpnet|
+#         clip|cv>, description, tags, transition vers "Staging")
+#
+# Variables / constantes importantes :
+#   - ARTIFACTS_DIR = "/app/data/artifacts"
+#   - _PARAMS = _load_params() : contenu de params.yaml
+#   - MLFLOW_EXPERIMENT, MLFLOW_MODEL_NAME
+#   - variables d'env DagsHub (token, repo, user) lues par
+#     _init_mlflow()
+#
+# Dependances externes : numpy, pandas, mlflow (+ mlflow.sklearn,
+# mlflow.tensorflow), pyyaml, scikit-learn (train_test_split,
+# LabelEncoder, metrics, class_weight), tensorflow/keras
+# (import differe), python-dotenv
+# ============================================================
 import os
 import gc
 import pickle
@@ -568,7 +634,7 @@ def build_and_train_model(
         ),
         "clip": (
             "Rakuten multimodal product classifier — CLIP ViT-B/32 text encoder. "
-            "Text: openai/clip-vit-base-patch32 CLIPTextModel (512-dim, L2-normalised). "
+            "Text: laion/CLIP-ViT-B-32-laion2B-s34B-b79K CLIPTextModel (512-dim, raw/non-normalised). "
             "Image: ResNet50 → IncrementalPCA(384). Dense 512→256→Dropout→27 classes."
         ),
         "countvectorizer": (

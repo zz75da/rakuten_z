@@ -322,9 +322,10 @@ services:
       #MLFLOW_TRACKING_PASSWORD: ${DAGSHUB_TOKEN}
       ARTIFACTS_PATH: /app/data/artifacts
       LD_PRELOAD: "/usr/local/lib/libjemalloc.so.2"
-      # Encoder model names — must match what minilm-encoder used during encoding
+      # Encoder model names — must match what minilm-encoder / clip-encoder used during encoding
       MINILM_MODEL: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
       MPNET_MODEL:  sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+      CLIP_MODEL:   laion/CLIP-ViT-B-32-laion2B-s34B-b79K
       # Optimization for large dataset
       SKIP_DVC_PULL: "0"
     volumes:

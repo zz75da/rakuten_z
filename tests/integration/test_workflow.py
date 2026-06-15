@@ -27,6 +27,35 @@ Note    : All patch() calls use patch.object(train_app_mod, ...) to avoid
 
 Dependencies : train-api/app.py (TF/MLflow/services stubbed), FastAPI TestClient
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests d'integration du cycle de vie asynchrone d'un job
+# d'entrainement via train-api/app.py (TF/MLflow/services
+# stubbes en sys.modules avant import).
+#
+# Fonctions principales :
+#   - admin_override (fixture autouse) : court-circuite
+#     verify_jwt_token (role="admin") et nettoie les jobs
+#     "running" residuels avant chaque test
+#   - client (fixture) : TestClient(app)
+#   - TestAsyncTrainingWorkflow : POST /train renvoie 202 +
+#     job_id en <5s (non bloquant), job enregistre "running" dans
+#     _training_jobs, GET /train/status/{id} (200, statut valide,
+#     404 si inconnu), entrees "success"/"failed" exposent
+#     final_metrics/mlflow_run_id/error, 2e POST /train pendant un
+#     job en cours -> 409
+#   - TestRunTrainingPipelineFunction : _run_training_pipeline()
+#     met _training_jobs[id]["status"] a "success" (subprocess
+#     rc=0 + fichier job JSON pre-ecrit) ou "failed" (rc=1, avec
+#     message d'erreur)
+#
+# Variables / constantes importantes :
+#   - PROJECT_ROOT, train_app_mod (module train-api/app.py),
+#     app, verify_jwt_token, _training_jobs
+#
+# Dependances externes : pytest, numpy, fastapi.testclient
+# ============================================================
 import sys, os
 import time
 import uuid

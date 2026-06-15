@@ -1,3 +1,25 @@
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : sauvegarde sur disque des artefacts produits par
+# trainer.py (modele Keras, vectorizer/PCA, label encoder), un
+# jeu de fichiers different selon l'encodeur texte.
+#
+# Fonctions principales :
+#   - track_time(func) : decorateur qui logge le temps d'execution
+#   - save_artifacts(model, vectorizer, pca_models, label_encoder,
+#     skip_existing=True, text_encoder="countvectorizer") :
+#     ecrit dans ARTIFACTS_PATH le modele .keras + label_encoder.pkl
+#     + pca_image.pkl, et selon text_encoder ("countvectorizer",
+#     "minilm", "mpnet", "clip") ajoute text_vectorizer.pkl /
+#     pca_text.pkl (countvectorizer uniquement) ; ignore les
+#     fichiers existants si skip_existing=True
+#
+# Variables / constantes importantes :
+#   - ARTIFACTS_PATH = /app/data/artifacts
+#
+# Dependances externes : pickle (stdlib)
+# ============================================================
 import pickle
 import os
 from time import time

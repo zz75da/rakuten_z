@@ -42,7 +42,7 @@ stages:
       - data/feature_cache/text_features_mpnet.npy
 
   preprocess_text_clip:
-    desc: "CLIP ViT-B/32 text encoder (openai/clip-vit-base-patch32) → text_features_clip.npy (512-d)"
+    desc: "CLIP ViT-B/32 text encoder (laion/CLIP-ViT-B-32-laion2B-s34B-b79K) → text_features_clip.npy (512-d)"
     cmd: python clip-encoder/app.py
     deps:
       - data/X_train_update.csv
@@ -139,7 +139,7 @@ stages:
     outs:
       - data/artifacts/neural_network_model.keras
       - data/artifacts/label_encoder.pkl
-      - data/artifacts/train_history.json
+      - data/artifacts/train_history_countvectorizer.json
     # metrics logged to MLflow/DagsHub directly — no local JSON files produced
 
   train_minilm:

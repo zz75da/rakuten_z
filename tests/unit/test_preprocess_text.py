@@ -26,6 +26,30 @@ Dependencies : train-api/services/preprocess_text.py, spacy (en_core_web_sm),
 Note: extract_text_features() calls _build_combined_text() which requires
       both "designation" and "description" columns in the DataFrame.
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests unitaires de _clean_text et extract_text_features
+# (fixture conftest preprocess_text_module).
+#
+# Fonctions principales :
+#   - _df(*descriptions, designation="product") -> DataFrame :
+#     DataFrame minimal (designation/description/imageid/
+#     productid)
+#   - TestPreprocessText : _clean_text -> chaine vide pour
+#     entree vide, contenu conserve, balises HTML supprimees,
+#     entites HTML decodees, espaces normalises
+#   - TestExtractTextFeatures : nombre de lignes = taille du
+#     DataFrame, colonnes bornees par max_features, vectorizer
+#     fitted (vocabulary_) et de type TfidfVectorizer, valeurs
+#     numeriques non negatives, meme texte -> lignes identiques,
+#     round-trip np.save/np.load, designation+description
+#     combines en entree
+#
+# Dependances externes : pytest, numpy, pandas, scikit-learn
+# (TfidfVectorizer) ; fixtures conftest preprocess_text_module,
+# temp_dir
+# ============================================================
 import pandas as pd
 import numpy as np
 import pytest

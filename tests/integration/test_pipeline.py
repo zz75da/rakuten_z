@@ -22,6 +22,27 @@ Key invariants checked :
 Dependencies : train-api/services/preprocess_text.py + pca_reducer.py (no TF)
                conftest fixtures: preprocess_text_module, pca_reducer_module
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : test d'integration du sous-pipeline features texte ->
+# PCA, avec de vraies fonctions sklearn/numpy sur donnees
+# synthetiques (sans TF, sans Docker).
+#
+# Fonctions principales (classe TestTextToPCAMiniPipeline) :
+#   - test_full_text_pipeline : extract_text_features() ->
+#     reduce_features() produit X_reduced.npy (float32, sans NaN)
+#     + pca_image.pkl/pca_text.pkl valides
+#   - test_pca_objects_can_transform_new_samples : les objets
+#     PCA sauvegardes peuvent transformer de nouveaux echantillons
+#     (simule le rechargement par predict-api)
+#   - test_deterministic_output_same_seed : meme entree ->
+#     X_reduced identique sur deux executions (IncrementalPCA
+#     deterministe)
+#
+# Dependances externes : pytest, numpy, pandas ; fixtures
+# conftest preprocess_text_module / pca_reducer_module
+# ============================================================
 import pytest
 import numpy as np
 import pandas as pd

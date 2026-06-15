@@ -11,6 +11,56 @@ import requests
 import os
 from pathlib import Path
 
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : DAG Airflow principal (dag_id rakuten_multimodal_pipeline_v8,
+# ~31 taches) - orchestre l'entrainement des 4 encodeurs (CV/TF-IDF,
+# CLIP, MiniLM, mpnet), l'evaluation, le quality gate, l'audit
+# Cleanlab, le registre MLflow, le monitoring de drift et le
+# logging des runs.
+#
+# Fonctions principales :
+#   - _fresh_token() / _auth_headers(token) : recupere un JWT via
+#     gate-api POST /login et construit le header Authorization
+#   - get_auth_token / check_dataset_stats : verifications initiales
+#     (taille du dataset >= _MIN_DATASET_ROWS)
+#   - _trigger_training_job(job_var_key, text_encoder, context) :
+#     POST /train sur train-api, stocke le job_id dans une Variable
+#   - trigger_cv_training / trigger_clip_encoding / trigger_clip_training /
+#     trigger_minilm_encoding / trigger_minilm_training /
+#     trigger_mpnet_training : declenchent encodages et entrainements
+#     par encodeur via _trigger_training_job ou les services d'encodage
+#   - TrainingCompleteSensor / ClipEncodingSensor / MiniLMEncodingSensor :
+#     sensors personnalises qui pollent train-api/encodeurs jusqu'a
+#     completion (timeout TRAINING_MAX_WAIT / ENCODING_MAX_WAIT)
+#   - get_model_version / push_training_metrics / push_feature_cache /
+#     evaluate_from_result : recupere version MLflow, pousse les
+#     metriques (Pushgateway), pousse les caches de features (DVC)
+#   - run_quality_gate / rebuild_drift_reference / run_cleanlab_audit :
+#     lancent pytest (quality gate), reconstruisent
+#     drift_reference.csv, lancent l'audit Cleanlab
+#   - write_run_summary : ecrit un resume du run dans dag_runs.log
+#     (conserve les _MAX_RUNS derniers runs)
+#   - check_regression_gate : compare val_accuracy du run aux
+#     meilleurs scores stockes (_*_BEST_VAL_ACC_VAR), avertit/bloque
+#     selon _REGRESSION_WARN_PCT / _REGRESSION_FAIL_PCT
+#   - _dag_failure_callback : log les echecs de taches dans dag_runs.log
+#
+# Variables / constantes importantes :
+#   - TRAIN_API / GATE_API / MINILM_ENCODER / CLIP_ENCODER : URLs services
+#   - TRAINING_MAX_WAIT / ENCODING_MAX_WAIT : timeouts des sensors
+#   - _CV_JOB_ID_VAR / _CLIP_JOB_ID_VAR / _MINILM_JOB_ID_VAR /
+#     _MPNET_JOB_ID_VAR : Variables Airflow stockant les job_id
+#   - _MIN_DATASET_ROWS = 80_000 : seuil minimal de lignes du CSV
+#   - _*_BEST_VAL_ACC_VAR / _REGRESSION_WARN_PCT / _REGRESSION_FAIL_PCT :
+#     gate de regression par encodeur
+#   - _RUN_LOG / _RUN_SEP / _MAX_RUNS : fichier et format du journal des runs
+#
+# Dependances externes : apache-airflow (DAG, Variable, BashOperator,
+# HttpSensor, PythonOperator, BaseSensorOperator, TriggerRule), requests
+# ============================================================
+
 default_args = {
     "owner": "airflow",
     "depends_on_past": False,
@@ -765,8 +815,11 @@ def check_regression_gate(**context):
             )
 
         new_best = max(current_best, stored_best)
-        Variable.set(var_key, str(new_best))
-        print(f"{encoder}: best-ever updated → {new_best:.4f}")
+        if new_best > stored_best:
+            Variable.set(var_key, str(new_best))
+            print(f"{encoder}: best-ever updated → {new_best:.4f}")
+        else:
+            print(f"{encoder}: best-ever unchanged ({stored_best:.4f})")
 
     all_regressed = (
         len(regressions) >= 2
@@ -801,7 +854,7 @@ def _dag_failure_callback(context):
 
 # --- DAG Definition ---
 with DAG(
-    dag_id="rakuten_multimodal_pipeline_v7",
+    dag_id="rakuten_multimodal_pipeline_v8",
     default_args=default_args,
     description="4-encoder pipeline: late fusion, focal loss, cleanlab audit, quality gate, drift monitoring",
     schedule_interval=None,
@@ -928,13 +981,13 @@ with DAG(
 
     # ── 3. MiniLM encoding (model unloads when done, frees RAM for training) ──
     start_encoding = PythonOperator(
-        task_id="trigger_minilm_encoding",
+        task_id="trigger_minilm_mpnet_encoding",
         python_callable=trigger_minilm_encoding,
         provide_context=True,
     )
 
     wait_for_encoding = MiniLMEncodingSensor(
-        task_id="wait_for_minilm_encoding",
+        task_id="wait_for_minilm_mpnet_encoding",
         mode="reschedule",
         poke_interval=300,
         timeout=ENCODING_MAX_WAIT,

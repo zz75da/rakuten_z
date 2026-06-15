@@ -19,6 +19,31 @@ Covered :
 
 Dependencies : conftest fixtures preprocess_text_module, preprocess_image_module
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests de fumee (smoke tests) verifiant l'API publique
+# des modules de pretraitement texte/image. Couverture
+# approfondie dans test_preprocess_text.py et
+# test_preprocess_image.py.
+#
+# Fonctions principales :
+#   - _smoke_df(*descriptions) -> DataFrame : DataFrame minimal
+#     (designation/description/imageid/productid) pour
+#     preprocess_text
+#   - TestTextPreprocessingSmoke : preprocess_text_module expose
+#     _clean_text et extract_text_features ; _clean_text renvoie
+#     une str ; extract_text_features renvoie un tuple
+#     (matrice ndarray, vectorizer)
+#   - TestImagePreprocessingSmoke (skip si TF absent) :
+#     preprocess_image_module expose extract_image_features ;
+#     des chemins d'image inexistants ne levent pas d'exception
+#     non geree
+#
+# Dependances externes : pytest, numpy, pandas ; fixtures
+# conftest preprocess_text_module, preprocess_image_module,
+# temp_dir
+# ============================================================
 import pytest
 import numpy as np
 import pandas as pd
