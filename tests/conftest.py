@@ -32,6 +32,40 @@ Design notes :
   - sys.path is extended once at module level to expose gate-api, train-api,
     and predict-api directories to all test files.
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : configuration pytest partagee (fixtures + plugin de
+# logs) pour l'ensemble de la suite de tests (unit/ et
+# integration/).
+#
+# Fonctions principales :
+#   - _import(module_name, file_path) -> module : charge un
+#     module train-api/services/*.py sans __init__.py
+#     (importlib.util)
+#   - fixtures (session) : artifacts_module, pca_reducer_module,
+#     preprocess_text_module, preprocess_image_module (skip si TF
+#     absent/mocke), temp_dir, valid_admin_token/valid_user_token
+#     (JWT HS256 via _make_token), sample_image_b64 (JPEG 32x32
+#     via Pillow)
+#   - fixtures (mocks ML) : mock_model, mock_label_encoder,
+#     mock_pca_image, mock_pca_text, mock_vectorizer,
+#     mock_minilm_encoder
+#   - hooks pytest : pytest_configure, pytest_collection_finish,
+#     _log_fixture_setup (autouse), pytest_runtest_logreport,
+#     pytest_sessionfinish -> ecrivent/rotent
+#     tests/logs/{unit,integration,conftest}.log (_rotate_log,
+#     max _MAX_RUNS=3 runs conserves)
+#
+# Variables / constantes importantes :
+#   - PROJECT_ROOT, LOGS_DIR, _TRAIN_SERVICES (chemin
+#     train-api/services, host vs conteneur)
+#   - TEST_SECRET/TEST_ALGORITHM (JWT de test)
+#   - _MAX_RUNS=3, _RUN_SEPARATOR
+#
+# Dependances externes : pytest, numpy, pyjwt, Pillow (pour
+# sample_image_b64)
+# ============================================================
 import sys
 import os
 import io

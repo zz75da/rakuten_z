@@ -17,6 +17,35 @@ Output:
 After completion the script deletes the stale text-feature cache so the next
 pipeline run regenerates text_features.npy with OCR text included.
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : script CLI one-shot qui extrait le texte des images
+# produits via Tesseract OCR et alimente ocr_text.csv (utilise
+# ensuite par preprocess_text._build_combined_text).
+#
+# Fonctions principales :
+#   - _preprocess_for_ocr(img_bgr) -> ndarray : niveaux de gris,
+#     upscale si min(h,w) < 300px, nettete (kernel de convolution)
+#   - _ocr_image(image_path) -> str : pytesseract
+#     image_to_string (lang="fra+eng", --psm 11 --oem 1), texte
+#     nettoye ou "" en cas d'erreur
+#   - run_ocr(use_dev=False, resume=True) : liste les images
+#     presentes sur disque (image_sample en dev, image_train sinon),
+#     reprend depuis OCR_CACHE si resume=True, ecrit ocr_text.csv en
+#     append avec checkpoints (flush tous les FLUSH_N, sidecar de
+#     progression toutes les 500 images), puis supprime les caches
+#     texte obsoletes (_STALE_ON_COMPLETE) pour forcer leur
+#     regeneration avec le texte OCR
+#
+# Variables / constantes importantes :
+#   - DATA_PATH = "/app", OCR_CACHE, PROGRESS_TMP
+#   - _STALE_ON_COMPLETE : caches texte a invalider en fin de run
+#   - FLUSH_N = 50 : frequence de flush disque
+#
+# Dependances externes : opencv-python (cv2), numpy, pandas,
+# pytesseract (import differe)
+# ============================================================
 import os
 import sys
 import csv

@@ -1,3 +1,47 @@
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : microservice FastAPI (port 5002) qui declenche et
+# supervise la pipeline d'entrainement (subprocess isole), expose
+# les metriques Prometheus, le quality gate, l'audit Cleanlab et
+# la reconstruction de la reference de drift. Appele par
+# airflow/dags/train_dag_v7.py.
+#
+# Fonctions principales :
+#   - verify_jwt_token(authorization) : valide le JWT via gate-api
+#     POST /validate-token
+#   - _load_persisted_jobs() / _restore_metrics_from_jobs() : au
+#     demarrage, recharge l'etat des jobs depuis JOB_DIR et
+#     restaure les Gauges Prometheus depuis le dernier job reussi
+#     par encodeur
+#   - _run_training_pipeline(job_id, use_dev_images, epochs,
+#     batch_size, use_cache, text_encoder, git_commit_sha) : lance
+#     services/run_full_pipeline.py dans un subprocess (isole TF
+#     du process uvicorn), met a jour _training_jobs et les Gauges
+#   - POST /train (admin, 202) : cree un job_id, refuse (409) si un
+#     job tourne deja, lance _run_training_pipeline en arriere-plan
+#   - GET /train/status/{job_id} : etat/resultat d'un job
+#   - POST /push-cache : pousse les caches de features vers DVC
+#   - POST /quality-gate (admin) : execute pytest
+#     tests/test_model_quality.py, 422 si echec
+#   - POST /drift-rebuild-reference (admin) : echantillon stratifie
+#     (n_samples) -> drift_reference.csv
+#   - POST /cleanlab (admin) : execute
+#     services/run_cleanlab_audit.py --encoder <enc>
+#   - GET /health
+#
+# Variables / constantes importantes :
+#   - GATE_API_URL, X_CSV, Y_CSV, JOB_DIR
+#   - _training_jobs : registre en memoire des jobs (job_id -> dict)
+#   - Gauges/Counters Prometheus : train_loss_gauge, val_loss_gauge,
+#     train_acc_gauge, val_acc_gauge, epochs_counter,
+#     last_run_epochs_gauge, dataset_size_gauge, num_classes_gauge,
+#     final_accuracy_gauge, final_val_accuracy_gauge,
+#     final_loss_gauge, final_val_loss_gauge (labels par "encoder")
+#
+# Dependances externes : fastapi, pydantic, prometheus_client,
+# prometheus_fastapi_instrumentator, httpx, utils.logger
+# ============================================================
 from fastapi import FastAPI, HTTPException, Header, Depends
 from pydantic import BaseModel
 from prometheus_fastapi_instrumentator import Instrumentator

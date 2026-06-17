@@ -1,4 +1,46 @@
 # streamlit/app_streamlit.py
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : interface utilisateur Streamlit (port 8501) du pipeline
+# Rakuten - authentification, predictions (single + batch
+# streaming), presentation du projet/MLOps, rapports de drift
+# Evidently et etat des services Docker.
+#
+# Fonctions principales :
+#   - _load_test_lookup() / _lookup_expected(filename) : charge
+#     test_data_zz.xlsx (verite terrain) pour comparer la
+#     prediction au prdtypecode attendu
+#   - list_model_versions(model_name) : derniere version MLflow
+#     enregistree pour un modele (cache Streamlit)
+#   - authenticate_user(username, password) : login via gate-api
+#     POST /login, retourne le JWT
+#   - predict_single(description, uploaded_image, token, encoder) :
+#     route vers /predict-ensemble, /predict-multimodal,
+#     /predict-image ou /predict-text selon les entrees et affiche
+#     le resultat (carte couleur attendu vs predit, detail par
+#     modele pour l'ensemble, probabilites)
+#   - predict_batch_stream(batch_items, token, output_file_path, ...) :
+#     streame le NDJSON de /predict-multimodal-batch-stream, ecrit
+#     un .jsonl et affiche un tableau avec miniatures
+#   - show_presentation_page() : page "Project Overview" (schemas
+#     ASCII, courbes d'entrainement, stack technique, etat services)
+#   - show_prediction_page() : page de login + predictions
+#     unitaires/batch
+#   - show_drift_reports() : affiche les rapports HTML Evidently
+#     et permet de declencher /drift-trigger-report
+#   - show_docker_workflow() : page "Infrastructure & Monitoring"
+#     (14 services Docker, metriques Prometheus, alertes configurees)
+#
+# Variables / constantes importantes :
+#   - GATE_API_URL / PREDICT_API_URL : URLs des microservices
+#   - _TEST_DATA_PATH / _TEST_DATA_LOCAL : chemins du fichier de
+#     verite terrain (test_data_zz.xlsx)
+#   - MLFLOW_TRACKING_URI / MODEL_NAME / client : config MLflow
+#   - st.session_state["user_token"] / ["logged_username"] : session
+#
+# Dependances externes : streamlit, requests, pandas, mlflow
+# ============================================================
 import streamlit as st
 import requests
 import json
@@ -644,7 +686,7 @@ Utilisateur (Streamlit)
                 <span style="color:#6d7a9f">&nbsp;&nbsp;IncrementalPCA</span> <code>n_components=512</code><br>
                 <b style="color:#28a745">&nbsp;&nbsp;output: 1 × 512</b><br><br>
                 <span style="color:#7c3aed;font-size:12px;font-weight:600">Encoder B — CLIP ViT-B/32</span><br>
-                <span style="color:#6d7a9f">&nbsp;&nbsp;openai/clip-vit-base-patch32 · L2-normalised</span><br>
+                <span style="color:#6d7a9f">&nbsp;&nbsp;laion/CLIP-ViT-B-32-laion2B-s34B-b79K · raw (non-normalised)</span><br>
                 <b style="color:#28a745">&nbsp;&nbsp;output: 1 × 512</b><br><br>
                 <span style="color:#a8b2d8;font-size:12px;font-weight:600">Encoder C — MiniLM-L12-v2</span><br>
                 <span style="color:#6d7a9f">&nbsp;&nbsp;paraphrase-multilingual-MiniLM-L12-v2</span><br>
@@ -1067,7 +1109,7 @@ def show_prediction_page():
     _enc_info = {
         "ensemble": "Weighted average of all 4 models. Weights proportional to val accuracy. Most robust — reduces single-model failures.",
         "cv":       "TF-IDF + OCR + spaCy lemmatisation → IncrementalPCA (512-d).",
-        "clip":     "openai/clip-vit-base-patch32 — 512 dims, English-focused, best visual features.",
+        "clip":     "laion/CLIP-ViT-B-32-laion2B-s34B-b79K — 512 dims, best visual features.",
         "minilm":   "paraphrase-multilingual-MiniLM-L12-v2 — 384 dims, multilingual.",
         "mpnet":    "paraphrase-multilingual-mpnet-base-v2 — 768 dims, multilingual.",
     }

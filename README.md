@@ -8,7 +8,7 @@
 End-to-end MLOps platform for **multimodal product classification** (text + image → 27 Rakuten categories, ~85k products).  
 Built with FastAPI microservices, Apache Airflow DAG v7, MLflow / DagsHub, and a full Prometheus / Grafana monitoring stack.
 
-**Current best accuracy:** CLIP 84.9% · mpnet 81.9% · CV 80.3% · MiniLM 79.9% · Ensemble (weighted avg) robust to single-model failures.
+**Current best accuracy:** CLIP 84.9% · mpnet 81.9% · CV 80.2% · MiniLM 79.7% · Ensemble (weighted avg) robust to single-model failures.
 
 ---
 
@@ -24,6 +24,7 @@ Built with FastAPI microservices, Apache Airflow DAG v7, MLflow / DagsHub, and a
 - [Test Suite](#test-suite)
 - [Repository Structure](#repository-structure)
 - [Environment Variables](#environment-variables)
+- [Scalability & Kubernetes (proof of concept)](#scalability--kubernetes-proof-of-concept)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -50,21 +51,21 @@ Fusion:        α = Dense(1, sigmoid)(mean(text_logits) ⊕ mean(image_logits))
 ```
 designation + description + Tesseract OCR ──► SpaCy lemmatise ──► TfidfVectorizer(10k, sublinear_tf) ──► PCA(512)
 ```
-Registered as **`rakuten_multimodal_cv`** · focal γ=2.5 · best val_acc 0.8028
+Registered as **`rakuten_multimodal_cv`** · focal γ=2.5 · best val_acc 0.8013
 
 ### Encoder B — CLIP ViT-B/32
 
 ```
-Text ──► openai/clip-vit-base-patch32 (L2-normalised, 512-d)
+Text ──► laion/CLIP-ViT-B-32-laion2B-s34B-b79K (raw embeddings, 512-d)
 ```
-Registered as **`rakuten_multimodal_clip`** · focal γ=1.5 · best val_acc 0.8494 (highest single model)
+Registered as **`rakuten_multimodal_clip`** · focal γ=1.5 · best val_acc 0.8487 (highest single model)
 
 ### Encoder C — MiniLM (multilingual)
 
 ```
 Text ──► paraphrase-multilingual-MiniLM-L12-v2 (384-d)
 ```
-Registered as **`rakuten_multimodal_minilm`** · focal γ=2.0 · best val_acc 0.7987
+Registered as **`rakuten_multimodal_minilm`** · focal γ=2.0 · best val_acc 0.7956
 
 ### Encoder D — mpnet (multilingual)
 
@@ -351,9 +352,9 @@ View and download reports from the **Drift Reports** page in Streamlit.
 
 | Model | Encoder | Best val_acc |
 |-------|---------|-------------|
-| `rakuten_multimodal_cv` | TF-IDF + OCR | 0.8028 |
-| `rakuten_multimodal_clip` | CLIP ViT-B/32 | 0.8494 |
-| `rakuten_multimodal_minilm` | MiniLM-L12-v2 | 0.7987 |
+| `rakuten_multimodal_cv` | TF-IDF + OCR | 0.8013 |
+| `rakuten_multimodal_clip` | CLIP ViT-B/32 | 0.8487 |
+| `rakuten_multimodal_minilm` | MiniLM-L12-v2 | 0.7956 |
 | `rakuten_multimodal_mpnet` | mpnet-base-v2 | 0.8194 |
 
 ### DVC pipeline stages
@@ -443,7 +444,34 @@ Copy `.env.template` to `.env`:
 | `ARTIFACTS_PATH` | `/app/data/artifacts` (predict-api) |
 | `GATE_API_URL` | `http://gate-api:5000` |
 | `PREDICT_API_URL` | `http://predict-api:5003` |
+| `JWT_SECRET_KEY` | Secret for signing JWT tokens (gate-api + all services) |
+| `GATE_API_ADMIN_PASSWORD` | Password for the `admin` user in gate-api |
+| `GATE_API_USER_PASSWORD` | Password for the `user` role in gate-api |
 | `LD_PRELOAD` | jemalloc, to curb glibc malloc fragmentation on long training/inference runs — train-api: `/usr/lib/x86_64-linux-gnu/libjemalloc.so.2`, predict-api: `/usr/local/lib/libjemalloc.so.2` |
+
+---
+
+## Scalability & Kubernetes (proof of concept)
+
+The docker-compose stack runs as single-instance services. To validate that
+`predict-api` (the most request-heavy service) can scale horizontally, the
+[`k8s/`](k8s/) directory provides a Deployment + Service + HPA, tested on
+Docker Desktop's local Kubernetes cluster:
+
+- **Deployment**: reuses the existing `rakuten_mlops_services-predict-api:latest`
+  image, resource requests/limits (2Gi/250m → 4Gi/1.5 CPU), startup/readiness/
+  liveness probes on `/health`
+- **HPA**: CPU-based, 1-2 replicas, 70% target (requires `metrics-server`)
+- **Validated locally**: both replicas reach `1/1 Ready` with all 4 models
+  (CV/CLIP/MiniLM/mpnet) loaded, `/health` responds via the ClusterIP service,
+  and the HPA correctly reports `cpu: 1%/70%` and rescales the Deployment
+  (`SuccessfulRescale` events observed for both scale-up and scale-down)
+
+This is a local PoC: it uses `hostPath` volumes for `params.yaml`,
+`data/artifacts` and `data/hf_cache`, and the local Docker image cache
+(no registry push). A production setup would replace these with PVCs /
+an init container pulling artifacts from MLflow, and push the image to a
+registry. See [`k8s/README.md`](k8s/README.md) for deploy/teardown commands.
 
 ---
 

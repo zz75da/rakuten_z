@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: predict-api
+  namespace: rakuten-mlops
+  labels:
+    app: predict-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: predict-api
+  template:
+    metadata:
+      labels:
+        app: predict-api
+    spec:
+      containers:
+        - name: predict-api
+          image: rakuten_mlops_services-predict-api:latest
+          imagePullPolicy: IfNotPresent
+          command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5003"]
+          ports:
+            - containerPort: 5003
+          envFrom:
+            - secretRef:
+                name: predict-api-secrets
+            - configMapRef:
+                name: predict-api-config
+          env:
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: predict-api-secrets
+                  key: JWT_SECRET_KEY
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "2Gi"
+            limits:
+              cpu: "1500m"
+              memory: "4Gi"
+          volumeMounts:
+            - name: params-yaml
+              mountPath: /app/params.yaml
+              readOnly: true
+            - name: artifacts
+              mountPath: /app/data/artifacts
+            - name: hf-cache
+              mountPath: /root/.cache/huggingface
+          # Model loading at startup (CV/CLIP/MiniLM/mpnet) takes minutes,
+          # mirrors docker-compose healthcheck (15s interval, up to ~10min)
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 5003
+            periodSeconds: 15
+            failureThreshold: 40
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5003
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5003
+            periodSeconds: 30
+            failureThreshold: 3
+      volumes:
+        - name: params-yaml
+          hostPath:
+            path: /run/desktop/mnt/host/c/Users/zobir/DScientest/rakuten_mlops_services/params.yaml
+            type: File
+        - name: artifacts
+          hostPath:
+            path: /run/desktop/mnt/host/c/Users/zobir/DScientest/rakuten_mlops_services/data/artifacts
+            type: Directory
+        - name: hf-cache
+          hostPath:
+            path: /run/desktop/mnt/host/c/Users/zobir/DScientest/rakuten_mlops_services/data/hf_cache
+            type: Directory

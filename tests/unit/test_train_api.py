@@ -29,6 +29,38 @@ Note    : All patch() calls use patch.object(train_app_mod, ...) to avoid
 
 Dependencies : train-api/app.py (TF/MLflow stubbed), FastAPI dependency overrides
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests unitaires de la surface API de train-api/app.py
+# (endpoints, registre des jobs, RBAC) — TF/MLflow et
+# services.preprocess_image/trainer stubbes avant import.
+#
+# Fonctions principales :
+#   - admin_user / regular_user (fixtures) : payloads JWT
+#     simules (role admin/user)
+#   - clear_running_jobs (fixture) : passe les jobs "running" a
+#     "success" avant chaque test (evite le 409)
+#   - admin_client / user_client (fixtures) : TestClient avec
+#     verify_jwt_token surcharge selon le role
+#   - TestHealth : /health -> status="healthy",
+#     service="train-api", active_jobs (int)
+#   - TestTrainEndpoint : POST /train -> 202 + job_id +
+#     status="running" pour admin, 403 pour user, defauts
+#     acceptes (body vide), job ajoute a _training_jobs, 2e
+#     soumission pendant un job en cours -> 409, thread de fond
+#     non bloquant
+#   - TestTrainStatus : GET /train/status/{id} -> 404 si inconnu,
+#     200 + statut valide pour un job en cours, expose
+#     final_metrics/mlflow_run_id pour un job "success" et error
+#     pour un job "failed"
+#
+# Variables / constantes importantes :
+#   - train_app (module train-api/app.py), app,
+#     verify_jwt_token, _training_jobs
+#
+# Dependances externes : pytest, fastapi.testclient
+# ============================================================
 import sys, os
 import pytest
 import threading

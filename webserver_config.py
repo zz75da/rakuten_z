@@ -15,6 +15,27 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : fichier de configuration du webserver Airflow (Flask-
+# AppBuilder), genere par defaut par Airflow et conserve quasi
+# tel quel. Definit le type d'authentification et active la
+# protection CSRF.
+#
+# Fonctions principales : aucune (uniquement des constantes de
+# configuration)
+#
+# Variables / constantes importantes :
+#   - basedir : repertoire de base du projet (os.path.dirname)
+#   - WTF_CSRF_ENABLED / WTF_CSRF_TIME_LIMIT : protection CSRF Flask-WTF
+#   - AUTH_TYPE = AUTH_DB : authentification via la base Airflow
+#     (utilisateurs/roles stockes en DB Postgres)
+#   - Tout le reste (OAuth, LDAP, OpenID, themes) est commente /
+#     non utilise
+#
+# Dependances externes : flask_appbuilder
+# ============================================================
 """Default configuration for the Airflow webserver."""
 
 from __future__ import annotations

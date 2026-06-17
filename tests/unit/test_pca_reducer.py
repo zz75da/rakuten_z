@@ -16,6 +16,37 @@ Covered :
 
 Dependencies : train-api/services/pca_reducer.py, scikit-learn, numpy (no TF)
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests unitaires de reduce_features() (fixture conftest
+# pca_reducer_module) sur des donnees texte/image synthetiques.
+#
+# Fonctions principales :
+#   - TestReduceFeatures._run(temp_dir, pca_reducer_module,
+#     n_samples=20, n_text=15, n_img=12, n_img_comp=3,
+#     target_dim=10) -> ((x_path, img_path, txt_path), save_dir) :
+#     genere des .npy aleatoires et appelle reduce_features
+#   - test_output_files_exist / test_x_reduced_shape_is_correct :
+#     fichiers crees, forme (n_samples, target_dim)
+#   - test_pca_objects_are_valid_sklearn : pca_image/pca_text
+#     pickles exposent n_components_
+#   - test_n_components_img_capped_by_data : n_components_img >
+#     n_features -> plafonne automatiquement
+#   - test_output_is_float32, test_encoder_specific_filename
+#     (nommage versionne X_reduced_<encoder>_<n>.npy, pas de
+#     fichier legacy X_reduced.npy)
+#   - test_mpnet_pass_through_skips_text_pca /
+#     test_minilm_pass_through_skips_text_pca /
+#     test_clip_pass_through_skips_text_pca : pour ces encodeurs,
+#     les features texte passent inchangees (txt_path=None),
+#     X = [text || image_pca]
+#   - test_small_batch_size_still_works : initial_batch_size <
+#     n_components fonctionne malgre tout
+#
+# Dependances externes : pytest, numpy, scikit-learn (pickle
+# IncrementalPCA) ; fixture conftest temp_dir, pca_reducer_module
+# ============================================================
 import numpy as np
 import pickle
 import pathlib

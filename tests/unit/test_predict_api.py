@@ -38,6 +38,45 @@ Note    : All patch() calls use patch.object(predict_app, ...) to avoid
 
 Dependencies : predict-api/app.py (TF/MLflow/cv2 mocked), conftest mock fixtures
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests unitaires de predict-api/app.py — TF/MLflow/cv2
+# stubbes, artefacts ML remplaces par des MagicMock (conftest)
+# injectes via inject_mock_artifacts (autouse).
+#
+# Fonctions principales :
+#   - inject_mock_artifacts (fixture autouse) : place
+#     model_cv=mock_model, model_clip/minilm/mpnet=None,
+#     label_encoder/pca_image/pca_text/text_vectorizer mockes,
+#     resnet_model mocke (predict -> zeros (1,2048))
+#   - client (fixture) : TestClient avec verify_jwt_token
+#     surcharge (role=admin) et load_artifacts patche
+#   - TestHealth : /health -> status="ok"
+#   - TestPredictText : /predict-text 200 (pred_class/label/
+#     probs/encoder, mode="text_only", encoder="cv" par defaut,
+#     probs somme=1), 503 si model_minilm/mpnet/clip absent, 422
+#     si description manquante
+#   - TestPredictImage : /predict-image 200 (mode="image_only")
+#     pour un JPEG base64 valide, 400 si cv2.imdecode renvoie
+#     None, 422 si image_base64 manquant
+#   - TestPredictMultimodal : /predict-multimodal 200 pour
+#     texte+image, texte seul, image seule ; 400 si aucun champ
+#   - TestReloadArtifacts : /reload-artifacts 200
+#     (status="reloaded", *_model_loaded, pca_image_components
+#     == 256), 500 si load_artifacts leve RuntimeError
+#   - TestDriftMetrics : PREDICTION_CONFIDENCE/ENTROPY/
+#     CLASS_COUNT.labels() appeles a chaque prediction
+#
+# Variables / constantes importantes :
+#   - predict_app (module predict-api/app.py), app (FastAPI),
+#     verify_jwt_token
+#
+# Dependances externes : pytest, numpy, fastapi.testclient ;
+# fixtures conftest mock_model, mock_label_encoder,
+# mock_pca_image/text, mock_vectorizer, mock_minilm_encoder,
+# sample_image_b64, valid_admin_token
+# ============================================================
 import sys, os
 import pytest
 import numpy as np

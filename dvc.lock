@@ -143,8 +143,8 @@ stages:
       size: 5026735
     - path: train-api/services/preprocess_text.py
       hash: md5
-      md5: 869d8a6ce5b674bfbe38f64a1da3ce1a
-      size: 7551
+      md5: a8b12fb11419addeb701182fac4a9d1b
+      size: 9346
       isexec: true
     outs:
     - path: data/artifacts/text_vectorizer.pkl
@@ -322,8 +322,8 @@ stages:
       isexec: true
     - path: train-api/services/trainer.py
       hash: md5
-      md5: 9ca6bcca517ffb1665f855e7a615b512
-      size: 28127
+      md5: b42f590163172efa0034e9b04248cc70
+      size: 29805
       isexec: true
     outs:
     - path: data/artifacts/label_encoder.pkl
@@ -333,12 +333,12 @@ stages:
       isexec: true
     - path: data/artifacts/neural_network_model.keras
       hash: md5
-      md5: 97fecd258dc8dfd45646229739fde832
-      size: 4290253
-    - path: data/artifacts/train_history.json
+      md5: d625cc0451e90b6bf409ddcc05cb120a
+      size: 4290254
+    - path: data/artifacts/train_history_countvectorizer.json
       hash: md5
-      md5: 044c0433b57d1ea2cdfd08a55b0cd602
-      size: 7604
+      md5: 6afd818001975aa90116899aa7af518c
+      size: 6239
       isexec: true
   train_minilm:
     cmd: python train-api/services/run_full_pipeline.py minilm_dvc minilm 10 32 
@@ -369,18 +369,18 @@ stages:
       isexec: true
     - path: train-api/services/trainer.py
       hash: md5
-      md5: 9ca6bcca517ffb1665f855e7a615b512
-      size: 28127
+      md5: b42f590163172efa0034e9b04248cc70
+      size: 29805
       isexec: true
     outs:
     - path: data/artifacts/neural_network_model_minilm.keras
       hash: md5
-      md5: bcb05d2a8be5704705f25d586aa00807
-      size: 3503821
+      md5: 19d5d1124f2cb68cb7a57918f1deb517
+      size: 3503822
     - path: data/artifacts/train_history_minilm.json
       hash: md5
-      md5: d9cc7bdd08db733a6a3ba22a398c5ffa
-      size: 8767
+      md5: a013c6a88e97b7eb0227039a69256ba9
+      size: 7779
   train_clip:
     cmd: python train-api/services/run_full_pipeline.py clip_dvc clip 10 32 
       false true
@@ -410,18 +410,18 @@ stages:
       isexec: true
     - path: train-api/services/trainer.py
       hash: md5
-      md5: 9ca6bcca517ffb1665f855e7a615b512
-      size: 28127
+      md5: b42f590163172efa0034e9b04248cc70
+      size: 29805
       isexec: true
     outs:
     - path: data/artifacts/neural_network_model_clip.keras
       hash: md5
-      md5: 165b31b152e52987fcc03169a4ae9fb5
-      size: 4290253
+      md5: 0d473bae75f87981d8fc1c9d1dd10fd2
+      size: 4290254
     - path: data/artifacts/train_history_clip.json
       hash: md5
-      md5: 5886ce2a1f3975147bbdf99959ad3326
-      size: 7616
+      md5: d79243e609946dbfb34ce05308fe1336
+      size: 8971
   predict:
     cmd: uvicorn app:app --host 0.0.0.0 --port 5003
     deps:
@@ -432,20 +432,20 @@ stages:
       isexec: true
     - path: data/artifacts/neural_network_model.keras
       hash: md5
-      md5: 97fecd258dc8dfd45646229739fde832
-      size: 4290253
+      md5: d625cc0451e90b6bf409ddcc05cb120a
+      size: 4290254
     - path: data/artifacts/neural_network_model_clip.keras
       hash: md5
-      md5: 165b31b152e52987fcc03169a4ae9fb5
-      size: 4290253
+      md5: 0d473bae75f87981d8fc1c9d1dd10fd2
+      size: 4290254
     - path: data/artifacts/neural_network_model_minilm.keras
       hash: md5
-      md5: bcb05d2a8be5704705f25d586aa00807
-      size: 3503821
+      md5: 19d5d1124f2cb68cb7a57918f1deb517
+      size: 3503822
     - path: data/artifacts/neural_network_model_mpnet.keras
       hash: md5
-      md5: d98598fde70f1ab9d79aa8d95aacb1d8
-      size: 8314576
+      md5: 660ba78278836dad540b14fe8f0872e3
+      size: 8314575
     - path: data/artifacts/pca_image.pkl
       hash: md5
       md5: 527ad7f3fe9a45e6625e27e47d740ca5
@@ -462,8 +462,8 @@ stages:
       size: 391360
     - path: predict-api/app.py
       hash: md5
-      md5: ea720a72cf5c3a8988ff1642083d05cb
-      size: 36719
+      md5: 175fe56e821de256358c4fcef8e5230c
+      size: 55697
       isexec: true
   preprocess_text_mpnet:
     cmd: python minilm-encoder/encode.py
@@ -545,15 +545,15 @@ stages:
       isexec: true
     - path: train-api/services/trainer.py
       hash: md5
-      md5: 9ca6bcca517ffb1665f855e7a615b512
-      size: 28127
+      md5: b42f590163172efa0034e9b04248cc70
+      size: 29805
       isexec: true
     outs:
     - path: data/artifacts/neural_network_model_mpnet.keras
       hash: md5
-      md5: d98598fde70f1ab9d79aa8d95aacb1d8
-      size: 8314576
+      md5: 660ba78278836dad540b14fe8f0872e3
+      size: 8314575
     - path: data/artifacts/train_history_mpnet.json
       hash: md5
-      md5: 8db5790b37c7679295fb0336e656e213
-      size: 6826
+      md5: 9faef543dceb4aaa01438166323cb209
+      size: 9743

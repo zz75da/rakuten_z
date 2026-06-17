@@ -1,3 +1,27 @@
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : extraction des features image via ResNet50
+# (ImageNet, sans top, global average pooling) pour l'ensemble
+# du dataset d'entrainement, en un seul passage generator/predict.
+#
+# Fonctions principales :
+#   - track_time(func) : decorateur qui logge la duree d'execution
+#   - extract_image_features(df, batch_size=BATCH_SIZE,
+#     save_file=SAVE_FILE) -> str|None : charge ResNet50, construit
+#     un ImageDataGenerator (flow_from_dataframe sur df["image_path"],
+#     224x224), lance un seul predict() sur tout le dataset
+#     (steps = ceil(n/batch_size)), tronque au nombre exact de
+#     lignes et sauvegarde le .npy (float32)
+#
+# Variables / constantes importantes :
+#   - IMAGE_SIZE = (224, 224)
+#   - BATCH_SIZE (env IMAGE_BATCH_SIZE, def. 64)
+#   - SAVE_FILE = data/feature_cache/image_features.npy
+#
+# Dependances externes : numpy, pandas, tensorflow/keras (ResNet50,
+# ImageDataGenerator, preprocess_input)
+# ============================================================
 import math
 import os
 import numpy as np

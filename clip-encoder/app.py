@@ -25,6 +25,52 @@ Error-proofing applied (lessons from MiniLM incidents):
   - Minimum file size check in /status — empty/truncated file ≠ valid
   - HF model persisted via volume mount — no re-download on container rebuild
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : microservice FastAPI independant qui encode le texte
+# (designation + description) de X_train_update.csv avec CLIP
+# ViT-B/32 (texte uniquement) et sauvegarde les embeddings 512-d
+# dans un cache .npy partage (feature_cache), consomme ensuite
+# par train-api pour l'entrainement de l'encodeur CLIP.
+#
+# Fonctions principales :
+#   - _load_params() -> dict : lit params.yaml (normalize_embeddings,
+#     batch_size override pour CLIP)
+#   - _cache_is_valid() -> bool : verifie taille min. du .npy +
+#     coherence du sidecar .meta (modele/normalize) avant de
+#     considerer le cache reutilisable
+#   - _write_cache_meta(n_samples, shape) : ecrit le .meta (modele,
+#     normalize, nb d'echantillons, shape, date)
+#   - _encode_texts(texts, tokenizer, model, batch_size, normalize,
+#     state_ref, lock_ref) -> np.ndarray : encode par batches via
+#     CLIPTextModel (pooler_output), normalisation L2 optionnelle,
+#     logge la progression tous les ~10%
+#   - _encode_worker() : thread de fond - charge le CSV, nettoie
+#     le HTML, charge CLIPTokenizer/CLIPTextModel, encode, ecrit
+#     le .npy de maniere atomique (tmp + os.replace), libere la
+#     memoire (gc.collect) dans un bloc finally
+#   - GET /health : etat + config courante (modele, batch_size,
+#     normalize, validite du cache)
+#   - POST /encode : demarre l'encodage (idempotent, thread-safe,
+#     retourne immediatement si cache valide)
+#   - GET /status : etat d'avancement de l'encodage
+#   - DELETE /cache : invalide le cache (.npy/.meta/.tmp)
+#
+# Variables / constantes importantes :
+#   - HF_MODEL (env CLIP_MODEL, def. laion/CLIP-ViT-B-32-laion2B-s34B-b79K)
+#   - CSV_PATH (env TRAIN_CSV_X_PATH) : CSV source des designations
+#   - OUTPUT_PATH (env CLIP_CACHE_PATH) : .npy de sortie (embeddings 512-d)
+#   - META_PATH = OUTPUT_PATH + ".meta"
+#   - BATCH_SIZE (env CLIP_BATCH_SIZE, ou params.yaml clip.batch_size)
+#   - NORMALIZE_EMBEDDINGS (params.yaml clip.normalize_embeddings)
+#   - _MIN_CACHE_BYTES : taille minimale pour considerer le .npy valide
+#   - _state / _lock : etat partage (idle/encoding/done/error) protege
+#     par threading.Lock
+#
+# Dependances externes : fastapi, prometheus_client, numpy, pandas,
+# torch, transformers (CLIPTokenizer, CLIPTextModel), pyyaml
+# ============================================================
 import gc
 import json
 import logging

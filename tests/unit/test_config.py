@@ -14,6 +14,38 @@ Covered :
 
 Dependencies : PyYAML, pathlib (stdlib only — no heavy ML dependencies)
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests statiques de validation des fichiers de
+# configuration du projet (sans Docker/TF).
+#
+# Fonctions principales :
+#   - _load_yaml(rel_path) -> dict : charge un YAML relatif a
+#     PROJECT_ROOT (skip si absent)
+#   - TestParamsYaml : params.yaml contient les sections
+#     preprocess/train/model, cles requises, plages valides
+#     (pca_components, n_text_pca_components, batch_size,
+#     focal_gamma, learning_rate, use_late_fusion), sections
+#     d'override par encodeur (model_minilm/mpnet/clip/
+#     countvectorizer)
+#   - TestDockerCompose : services requis presents (train-api,
+#     predict-api, gate-api, encodeurs, airflow, streamlit,
+#     monitoring...), ports 5002/5003/8080, volumes
+#     artifacts/params.yaml pour train-api
+#   - TestPrometheusConfig : cibles de scrape requises,
+#     scrape_interval <= 60s
+#   - TestAlertRules : alertes accuracy pour les 4 encodeurs,
+#     alertes service-down, drift, ressources, seuil CLIP=0.80
+#   - TestEnvTemplate : variables requises documentees dans
+#     .env.template, absence de credentials reels
+#
+# Variables / constantes importantes :
+#   - PROJECT_ROOT : racine du repo (3 niveaux au-dessus de ce
+#     fichier)
+#
+# Dependances externes : pytest, pyyaml
+# ============================================================
 import os
 import pathlib
 import pytest

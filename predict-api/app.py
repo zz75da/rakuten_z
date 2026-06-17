@@ -1,7 +1,69 @@
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : API FastAPI de prediction (port 5003). Charge les 4
+# modeles late-fusion entraines (CV/TF-IDF, MiniLM, mpnet, CLIP)
+# + ResNet50 + PCA texte/image, et expose des endpoints de
+# prediction texte/image/multimodal/ensemble, GradCAM et suivi
+# de drift (Evidently via services/drift_monitor).
+#
+# Fonctions principales :
+#   - _fix_mojibake / _clean_text / _lemmatize_text : reproduisent
+#     EXACTEMENT le pipeline de preprocessing texte de
+#     train-api/services/preprocess_text.py (sinon le TF-IDF
+#     recoit un vocabulaire different de l'entrainement)
+#   - _load_late_fusion_model(keras_path) / load_artifacts() :
+#     chargent les 4 modeles .keras (loader "poids seuls" qui
+#     reconstruit l'architecture puis injecte les poids h5,
+#     fallback chargement standard), ResNet50, encodeurs
+#     sentence-transformers/CLIP, et "warmup" (1 predict factice
+#     par modele pour pre-compiler tf.function)
+#   - extract_text_features / _minilm / _mpnet / _clip : vectorisent
+#     le texte selon l'encodeur (TF-IDF+PCA+OCR, ou embeddings
+#     sentence-transformers/CLIP bruts)
+#   - extract_image_features(image_input) : ResNet50 + PCA (2048->384)
+#     a partir d'un base64 ou d'un .npy precompute
+#   - _resolve_model / _model_for / _text_features_for / _ensemble_weights :
+#     selectionnent le modele/encodeur demande et calculent les
+#     poids de l'ensemble (proportionnels au best val_accuracy
+#     par encodeur, lus dans train_history_*.json)
+#   - _get_gradcam_model / _compute_gradcam : GradCAM analytique
+#     (projection des poids du bloc image via la matrice PCA,
+#     car PCA n'est pas differentiable) pour heatmap class-aware
+#   - verify_jwt_token : valide le JWT auprès de gate-api (/validate-token)
+#
+# Endpoints principaux :
+#   GET  /health, POST /reload-artifacts
+#   POST /predict-text, /predict-image, /predict-multimodal,
+#        /predict-ensemble, /predict-multimodal-batch-stream (NDJSON)
+#   POST /gradcam
+#   GET  /drift-status, /drift-rebuild-reference-info,
+#   POST /drift-trigger-report
+#
+# Variables / constantes importantes :
+#   - ARTIFACTS_PATH (env ARTIFACTS_PATH, def. /app/data/artifacts)
+#   - GATE_API_URL (env GATE_API_URL) : verification des tokens JWT
+#   - MLFLOW_* (tracking URI/credentials/model name/stage)
+#   - model_cv/model_minilm/model_mpnet/model_clip, text_vectorizer,
+#     pca_text, pca_image, resnet_model, label_encoder : artefacts
+#     globaux charges au demarrage (startup_event)
+#   - CATEGORY_NAMES : libelles humains des 27 prdtypecode
+#   - Compteurs/histos Prometheus : REQUEST_COUNT, REQUEST_LATENCY,
+#     PREDICTION_CONFIDENCE, PREDICTION_ENTROPY, PREDICTION_CLASS_COUNT,
+#     FEATURE_TEXT_MEAN, FEATURE_IMAGE_MEAN
+#
+# Dependances externes : fastapi, pydantic, prometheus_client,
+# numpy, requests, spacy, tensorflow/keras, opencv-python (cv2),
+# scikit-learn, sentence-transformers, transformers (CLIP), mlflow,
+# services.drift_monitor (interne)
+# ============================================================
 import os
 import pickle
+import html as _html
+import re as _re
 import numpy as np
 import requests
+import spacy
 import tensorflow as tf
 from tensorflow.keras.applications import ResNet50
 from tensorflow.keras.applications.resnet50 import preprocess_input as resnet_preprocess
@@ -21,6 +83,100 @@ from mlflow.tracking import MlflowClient
 
 # --- FastAPI app ---
 app = FastAPI(title="Prediction API", version="1.0")
+
+# === Text cleaning + spaCy lemmatization (mirrors train-api/services/preprocess_text.py) ===
+# The CV/TF-IDF vectorizer's vocabulary was built from mojibake-fixed, HTML-cleaned,
+# lemmatized, stopword-filtered text. Inference must apply the identical pipeline
+# before text_vectorizer.transform(), or most TF-IDF dimensions come back zero.
+try:
+    _nlp = spacy.load("fr_core_news_sm", disable=["parser", "ner"])
+except OSError:
+    try:
+        _nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
+    except OSError:
+        import spacy.cli
+        spacy.cli.download("en_core_web_sm")
+        _nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
+
+# Multilingual stopwords (French + English) — must match preprocess_text.py's _EXTRA_STOPS
+_EXTRA_STOPS = {
+    # French
+    "le","la","les","de","du","des","un","une","en","et","au","aux",
+    "pour","avec","sur","par","ce","se","sa","son","ses","qui","que",
+    "dans","cette","est","sont","plus","mais","ou","ni","car","donc",
+    "or","ne","pas","si","tout","bien","très","même","autre","aussi",
+    "leur","leurs","nous","vous","ils","elles","je","tu","il","elle",
+    "mon","ton","ma","ta","mes","tes","nos","vos","eux",
+    "être","avoir","faire","aller","dire","voir","vouloir","pouvoir",
+    # English
+    "the","a","an","of","in","is","are","was","were","and","or","but",
+    "for","with","on","at","to","from","by","as","into","about","up",
+    "out","after","before","between","through","during","its","it",
+}
+_nlp.Defaults.stop_words.update(_EXTRA_STOPS)
+for _w in _EXTRA_STOPS:
+    _nlp.vocab[_w].is_stop = True
+
+# Pre-existing mojibake in the source CSV — must match preprocess_text.py's _ENCODING_FIXES
+# Order is significant: â¿¿ must precede ¿¿ (¿¿ is a suffix of â¿¿).
+_ENCODING_FIXES: tuple[tuple[str, str], ...] = (
+    ("â¿¿", "’"),
+    ("à¢",  "â"),
+    ("àª",  "ê"),
+    ("à¿",  "ô"),
+    ("¿¿",  "é"),
+)
+
+
+def _fix_mojibake(text: str) -> str:
+    """Repair UTF-8-as-Latin-1 mojibake: Â·→·, Â°→°, Ã©→é, etc."""
+    chars = list(text); result = []; i = 0; n = len(chars)
+    while i < n:
+        cp0 = ord(chars[i])
+        if 0xE0 <= cp0 <= 0xEF and i + 2 < n:
+            cp1, cp2 = ord(chars[i + 1]), ord(chars[i + 2])
+            if 0x80 <= cp1 <= 0xBF and 0x80 <= cp2 <= 0xBF:
+                try:
+                    result.append(bytes([cp0, cp1, cp2]).decode("utf-8"))
+                    i += 3; continue
+                except UnicodeDecodeError:
+                    pass
+        if 0xC2 <= cp0 <= 0xDF and i + 1 < n:
+            cp1 = ord(chars[i + 1])
+            if 0x80 <= cp1 <= 0xBF:
+                try:
+                    result.append(bytes([cp0, cp1]).decode("utf-8"))
+                    i += 2; continue
+                except UnicodeDecodeError:
+                    pass
+        result.append(chars[i]); i += 1
+    return "".join(result)
+
+
+def _clean_text(text) -> str:
+    """Repair source encoding, HTML-unescape, strip tags, normalise whitespace."""
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    for corrupted, correct in _ENCODING_FIXES:
+        text = text.replace(corrupted, correct)
+    text = _fix_mojibake(text)
+    text = _html.unescape(text)
+    text = _re.sub(r"<[^>]+>", " ", text)
+    return " ".join(text.split())
+
+
+def _lemmatize_text(text: str) -> str:
+    """spaCy lemmatization + stopword removal — must match preprocess_text.py's _lemmatize."""
+    doc = _nlp(text)
+    return " ".join(
+        t.lemma_.lower()
+        for t in doc
+        if not t.is_stop
+        and not t.is_punct
+        and not t.is_space
+        and (t.is_alpha or t.like_num)
+        and len(t.text) > 1
+    )
 
 # --- MLflow Configuration ---
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
@@ -100,6 +256,7 @@ _gradcam_model = None   # lazily built from resnet_model on first GradCAM reques
 # Encoder model names — must match what was used during training / encoding
 _MINILM_MODEL_NAME = os.getenv("MINILM_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 _MPNET_MODEL_NAME  = os.getenv("MPNET_MODEL",  "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
+_CLIP_MODEL_NAME   = os.getenv("CLIP_MODEL",   "laion/CLIP-ViT-B-32-laion2B-s34B-b79K")
 
 # --- Human-readable category names for each Rakuten prdtypecode ---
 CATEGORY_NAMES: dict[str, str] = {
@@ -388,8 +545,8 @@ def load_artifacts():
             try:
                 model_clip = _load_model(clip_keras)
                 from transformers import CLIPTokenizer, CLIPTextModel
-                clip_tokenizer  = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
-                clip_text_model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32")
+                clip_tokenizer  = CLIPTokenizer.from_pretrained(_CLIP_MODEL_NAME)
+                clip_text_model = CLIPTextModel.from_pretrained(_CLIP_MODEL_NAME)
                 clip_text_model.eval()
                 print("✓ CLIP model loaded")
             except Exception as e:
@@ -470,16 +627,20 @@ def _ocr_from_image(img_bgr: np.ndarray) -> str:
 def extract_text_features(description: str, img_bgr: np.ndarray = None):
     """
     Vectorise text for the CV/TF-IDF encoder.
+    Replicates training's preprocessing (preprocess_text.py): mojibake/HTML cleanup,
+    then spaCy lemmatization + stopword removal, before TF-IDF transform — the
+    vectorizer's vocabulary was fit on lemmatized tokens, so skipping this step
+    leaves most TF-IDF dimensions at zero.
     If img_bgr is provided (multimodal requests), appends real-time OCR text
     so the model benefits from text embedded in the image — matching training.
     Only applies to CV encoder; CLIP/MiniLM/mpnet ignore img_bgr.
     """
-    text = description or ""
+    text = _clean_text(description or "")
     if img_bgr is not None:
         ocr = _ocr_from_image(img_bgr)
         if ocr:
-            text = f"{text} {ocr}".strip()
-    processed = [" ".join(text.lower().split())]
+            text = f"{text} {_clean_text(ocr)}".strip()
+    processed = [_lemmatize_text(text)]
     bow = text_vectorizer.transform(processed).toarray()
     reduced = pca_text.transform(bow)
     return reduced
@@ -497,13 +658,18 @@ def extract_text_features_mpnet(description: str):
 
 def extract_text_features_clip(description: str):
     import torch
+    # HTML-unescape + tag-strip — matches clip-encoder/app.py's _clean() applied to
+    # designation+description during training. (designation itself isn't available
+    # here: the API only exposes a single `description` field.)
+    text = _clean_text(description or "")
     inputs = clip_tokenizer(
-        [description], padding=True, truncation=True, max_length=77, return_tensors="pt"
+        [text], padding=True, truncation=True, max_length=77, return_tensors="pt"
     )
     with torch.no_grad():
         outputs = clip_text_model(**inputs)
         emb = outputs.pooler_output                              # (1, 512)
-        emb = emb / emb.norm(p=2, dim=-1, keepdim=True)        # L2-normalise
+        # Raw (non-normalised) embeddings — matches clip.normalize_embeddings: false
+        # in params.yaml, used when clip-encoder generated the training features.
     return emb.cpu().numpy().astype(np.float32)
 
 
@@ -637,7 +803,7 @@ def drift_status(_user: dict = Depends(verify_jwt_token)):
 
 # --- Ensemble helpers ---
 _ENCODER_HISTORY_PATHS = {
-    "cv":     "/app/data/artifacts/train_history.json",
+    "cv":     "/app/data/artifacts/train_history_countvectorizer.json",
     "clip":   "/app/data/artifacts/train_history_clip.json",
     "minilm": "/app/data/artifacts/train_history_minilm.json",
     "mpnet":  "/app/data/artifacts/train_history_mpnet.json",

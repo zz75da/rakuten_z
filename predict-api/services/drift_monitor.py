@@ -13,6 +13,41 @@ Design constraints (20 GB disk, memory-limited laptop):
   5. Reference sample path: /app/data/artifacts/drift_reference.csv
      Rebuilt from training features + labels (stratified, 5k rows max).
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : module interne de predict-api qui accumule les
+# predictions en production dans un buffer circulaire et genere
+# en arriere-plan des rapports de drift Evidently (designation +
+# prdtypecode) compares a drift_reference.csv.
+#
+# Fonctions principales :
+#   - record_prediction(features) : ajoute une prediction au
+#     buffer (non bloquant) ; declenche un rapport en arriere-plan
+#     quand le buffer est plein (MAX_BUFFER)
+#   - reference_exists() -> bool : verifie la presence de
+#     drift_reference.csv (construit par train-api)
+#   - _rotate_reports() : ne garde que les MAX_REPORTS derniers
+#     rapports HTML
+#   - _generate_report() : construit le DataFrame courant depuis
+#     le buffer, ajoute des features derivees (longueur/mots de
+#     designation), lance Evidently DataDriftPreset et sauvegarde
+#     le HTML ; ne leve jamais d'exception vers l'appelant
+#   - trigger_report() -> dict : force la generation d'un rapport,
+#     retourne l'etat du buffer avant declenchement
+#   - buffer_size() -> int
+#   - _PredictionBuffer : ring buffer thread-safe (deque + Lock)
+#
+# Variables / constantes importantes :
+#   - ARTIFACTS / REPORT_DIR / REF_PATH : chemins sous
+#     /app/data/artifacts (volume partage avec train-api)
+#   - MAX_BUFFER = 2000 : taille max du buffer avant rapport auto
+#   - MIN_BUFFER = 30 : nb min de lignes pour des stats Evidently utiles
+#   - MAX_REPORTS = 10 : nb max de rapports HTML conserves sur disque
+#
+# Dependances externes : pandas, evidently (ColumnMapping, Report,
+# DataDriftPreset) - import differe et tolerant a l'absence du paquet
+# ============================================================
 import os
 import gc
 import threading

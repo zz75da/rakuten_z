@@ -18,6 +18,27 @@ Note    : All tests are SKIPPED automatically when TensorFlow is not installed
 Dependencies : train-api/services/preprocess_image.py, TensorFlow (optional),
                pandas, numpy, PIL
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests unitaires de extract_image_features() (ResNet50),
+# skip automatique si TensorFlow absent/mocke (fixture conftest
+# preprocess_image_module).
+#
+# Fonctions principales (classe TestExtractImageFeatures) :
+#   - test_missing_images_produce_zero_features : des chemins
+#     d'image inexistants ne levent pas d'exception non geree
+#     (None ou tableau (N, 2048))
+#   - test_output_columns_are_2048 : avec un ResNet50 mocke
+#     (predict -> ones(1,2048)), la sortie a la forme (2, 2048)
+#   - test_feature_dtype_is_float : dtype flottant (compatible
+#     IncrementalPCA)
+#   - test_features_saved_and_loaded : round-trip np.save/np.load
+#     preserve forme et valeurs
+#
+# Dependances externes : pytest, numpy, pandas ; fixtures
+# conftest temp_dir, preprocess_image_module
+# ============================================================
 import pandas as pd
 import numpy as np
 import pytest

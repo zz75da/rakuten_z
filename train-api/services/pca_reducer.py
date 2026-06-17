@@ -1,3 +1,32 @@
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : reduction de dimension memoire-safe (IncrementalPCA par
+# batches) des features image (toujours) et texte (uniquement
+# pour l'encodeur countvectorizer), puis concatenation
+# texte+image en X_reduced.
+#
+# Fonctions principales :
+#   - log_memory_usage(prefix="") : logge RAM utilisee/disponible
+#   - track_time(func) : decorateur qui logge la duree d'execution
+#   - reduce_features(text_features_path, image_features_path,
+#     n_components_img=384, n_components_text=None,
+#     target_dim=5300, save_dir="data", initial_batch_size=1024,
+#     text_encoder="countvectorizer") -> (X_reduced_path,
+#     pca_img_path, pca_text_path) : charge les .npy (mmap),
+#     IncrementalPCA sur les images (toujours), sur le texte
+#     seulement si text_encoder == "countvectorizer" (minilm/clip/
+#     mpnet passent les embeddings tels quels), concatene et
+#     sauvegarde X_reduced_<encoder>_<n_components_img>.npy +
+#     pca_image_<n>.pkl (+ pca_text_<n>.pkl si applicable) ; reduit
+#     dynamiquement le batch_size sur MemoryError
+#
+# Variables / constantes importantes : aucune constante module-level
+# (tout est parametre de reduce_features)
+#
+# Dependances externes : numpy, scikit-learn (IncrementalPCA),
+# psutil, tqdm
+# ============================================================
 import os
 import numpy as np
 import pickle

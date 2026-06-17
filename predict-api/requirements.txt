@@ -19,6 +19,7 @@ scikit-learn==1.6.0
 opencv-python-headless==4.10.0.84
 pillow==10.4.0
 pytesseract==0.3.13
+spacy==3.8.4                   # CV/TF-IDF lemmatization — must match train-api's preprocess_text.py
 
 # === Deep learning (CPU safe) ===
 tensorflow-cpu==2.17.0

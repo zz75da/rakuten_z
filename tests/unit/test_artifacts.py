@@ -13,6 +13,29 @@ Covered :
 
 Dependencies : train-api/services/artifacts.py (no network, no TF runtime)
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests unitaires de save_artifacts() (chargee via la
+# fixture conftest artifacts_module).
+#
+# Fonctions principales :
+#   - _DummyModel.save(path) : modele factice (ecrit un fichier
+#     texte au lieu d'un vrai .keras)
+#   - _make_kwargs(skip_existing=False,
+#     text_encoder="countvectorizer") -> dict : kwargs par defaut
+#     pour save_artifacts (model, vectorizer, pca_models,
+#     label_encoder)
+#   - TestSaveArtifacts : verifie les fichiers crees pour
+#     l'encodeur countvectorizer (set complet), clip et minilm
+#     (pas de vectorizer/pca_text, fichier modele nomme
+#     <...>_clip.keras / <...>_minilm.keras), le comportement
+#     skip_existing=True (preserve un fichier existant) vs False
+#     (l'ecrase), et que les .pkl sont relisibles apres ecriture
+#
+# Dependances externes : pytest, numpy ; fixtures conftest
+# temp_dir, artifacts_module
+# ============================================================
 import os
 import pickle
 import pytest

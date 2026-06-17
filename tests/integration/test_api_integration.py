@@ -25,6 +25,31 @@ Implementation note :
 
 Dependencies : gate-api/app.py (no TF), PyJWT
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests d'integration du flux d'authentification
+# gate-api (login -> JWT -> validate-token), charge directement
+# depuis gate-api/app.py par chemin de fichier.
+#
+# Fonctions principales :
+#   - _find_loaded_module(file_path) -> module|None : recherche
+#     dans sys.modules un module deja charge pour ce fichier
+#   - _load_once(module_name, file_path, extra_syspath=None)
+#     -> module : charge gate-api/app.py une seule fois par
+#     session (evite les doublons de metriques Prometheus)
+#   - TestLoginAndValidate : /login (admin/user) renvoie un
+#     token valide, /validate-token l'accepte (role correct),
+#     un token falsifie est rejete (401)
+#   - TestTrainAPIWithRealToken : le JWT emis par gate-api
+#     contient role="admin"/username="admin" (decode HS256),
+#     et est accepte par /validate-token
+#
+# Variables / constantes importantes :
+#   - PROJECT_ROOT, _gate_mod (module gate-api/app.py charge)
+#
+# Dependances externes : pytest, fastapi.testclient, pyjwt
+# ============================================================
 import sys, os
 import importlib.util
 import pytest

@@ -24,6 +24,32 @@ Covered :
 
 Dependencies : gate-api/app.py, PyJWT (no TF, no MLflow)
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests unitaires de gate-api/app.py (authentification
+# JWT) via FastAPI TestClient, sans dependances externes.
+#
+# Fonctions principales :
+#   - client (fixture, module-scope) : TestClient(app)
+#   - TestHealthAndRoot : /health (status="healthy",
+#     service="gate-api"), / (endpoints ou status)
+#   - TestLogin : /login admin/user -> 200 + token + role
+#     correct, mauvais mot de passe / utilisateur inconnu -> 401,
+#     credentials vides -> 400/401, le token retourne est un JWT
+#     HS256 valide avec username/role/exp/iat
+#   - TestValidateToken._get_token(client, role) -> str : obtient
+#     un token via /login ; verifie que /validate-token accepte
+#     les tokens admin/user valides (200, role correct), rejette
+#     un token invalide (401), un schema non-Bearer (401/422) et
+#     un header manquant (422)
+#
+# Variables / constantes importantes :
+#   - _app_mod (module gate-api/app.py), SECRET (SECRET_KEY,
+#     def. "default_secret"), ALGO = "HS256"
+#
+# Dependances externes : pytest, pyjwt, fastapi.testclient
+# ============================================================
 import sys, os
 import pytest
 import jwt

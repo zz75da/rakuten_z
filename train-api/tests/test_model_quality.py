@@ -14,6 +14,37 @@ Floors (conservative — set well below current best to catch regressions):
     Top3:      all encoders ≥ 0.88
     Per-class: no class may have recall = 0.0 (complete collapse)
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : tests pytest formant la "quality gate" executee apres
+# chaque entrainement (DAG run_quality_gate -> POST /quality-gate
+# -> ce fichier). Bloque la progression du DAG si un encodeur
+# regresse sous ses seuils minimaux.
+#
+# Fonctions principales :
+#   - _load_history(encoder) -> dict : charge
+#     train_history_<encoder|countvectorizer>.json depuis
+#     ARTIFACTS_PATH (skip si absent)
+#   - _best(history, key) -> float : max d'une serie de l'historique
+#   - _load_final_metrics(encoder) -> dict|None : retrouve, parmi
+#     les jobs "success" de /app/data/jobs, le plus recent
+#     correspondant a l'encodeur et retourne son final_metrics
+#   - test_val_accuracy_floor / test_macro_f1_floor /
+#     test_top3_accuracy_floor : verifient les seuils min par
+#     encodeur (_ACC_FLOORS, _MACRO_F1_FLOOR, _TOP3_FLOOR)
+#   - test_no_class_collapse : echoue si une classe a recall=0.0
+#   - test_overfit_gap : echoue si (train_acc - val_acc) > 0.20 a
+#     l'epoque de meilleure val_accuracy
+#
+# Variables / constantes importantes :
+#   - _ARTIFACTS = env ARTIFACTS_PATH (def. "/app/data/artifacts")
+#   - _ACC_FLOORS : seuils d'accuracy par encodeur
+#     (cv=0.72, clip=0.80, minilm=0.70, mpnet=0.72)
+#   - _MACRO_F1_FLOOR=0.65, _TOP3_FLOOR=0.88
+#
+# Dependances externes : pytest
+# ============================================================
 import json
 import os
 import pytest

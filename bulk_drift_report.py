@@ -3,6 +3,39 @@
 Bulk drift report: batch-predicts all X_test rows using the CV (TF-IDF+PCA+Keras) model,
 then generates an Evidently drift report comparing test predictions vs training reference.
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : script autonome (hors API) qui charge le modele
+# late-fusion CV (TF-IDF + PCA + reseau Keras), predit en lot
+# le prdtypecode de tout X_test_update.csv, puis genere un
+# rapport de drift Evidently (texte/categoriel) comparant ces
+# predictions a drift_reference.csv (donnees d'entrainement).
+#
+# Fonctions principales :
+#   - _load_model(keras_path) -> (model, text_dim) : charge le
+#     modele .keras/.h5 ; essaie d'abord un loader "poids
+#     uniquement" (reconstruit l'architecture a la main via le
+#     config.json du zip) car certains modeles late-fusion ne se
+#     desserialisent pas via tf.keras.models.load_model standard
+#     (Lambda non-safe) ; fallback sur le chargement standard.
+#   - main() -> str : pipeline complet (chargement artefacts,
+#     vectorisation TF-IDF + PCA, prediction batch, sauvegarde
+#     bulk_test_predictions.csv, generation et sauvegarde du
+#     rapport HTML Evidently) ; retourne le chemin du rapport.
+#
+# Variables / constantes importantes :
+#   - ARTIFACTS = /app/data/artifacts : dossier des artefacts modele
+#   - REPORT_DIR = ARTIFACTS/drift_reports : sortie des rapports HTML
+#   - REF_PATH = ARTIFACTS/drift_reference.csv : reference d'entrainement
+#   - TEST_PATH = /app/data/X_test_update.csv : donnees a scorer
+#   - text_dim / img_dim : dimensions des features texte (PCA TF-IDF)
+#     et image (PCA, mises a zero ici car pas d'images dans X_test)
+#
+# Dependances externes : numpy, pandas, tensorflow/keras, h5py,
+# scikit-learn (via pickle des objets PCA/vectorizer/label_encoder),
+# evidently (ColumnMapping, Report, DataDriftPreset)
+# ============================================================
 import os, sys, gc
 import numpy as np
 import pandas as pd

@@ -1,3 +1,24 @@
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : charge et fusionne X_train_update.csv / Y_train_CVw08PX.csv,
+# ajoute la colonne image_path et filtre les lignes sans image sur
+# disque, pour alimenter le pipeline d'entrainement.
+#
+# Fonctions principales :
+#   - load_and_merge_data(image_folder=None, use_dev_images=None)
+#     -> pd.DataFrame : merge X/Y sur "Unnamed: 0" (renomme "id"),
+#     resout le dossier d'images (image_sample en DEV, image_train
+#     en FULL) via os.scandir (un seul appel), construit
+#     image_<imageid>_product_<productid>.jpg, droppe les lignes
+#     dont l'image est absente (warning si quelques-unes,
+#     FileNotFoundError si aucune image trouvee)
+#
+# Variables / constantes importantes :
+#   - DATA_PATH = "/app"
+#
+# Dependances externes : pandas, utils.logger
+# ============================================================
 import os
 import pandas as pd
 from utils.logger import get_logger

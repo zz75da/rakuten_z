@@ -8,6 +8,33 @@ data/feature_cache/text_features_minilm.npy.
 Run via:
     docker-compose --profile minilm run --rm minilm-encoder
 """
+# ============================================================
+# RESUME DU MODULE
+# ------------------------------------------------------------
+# Role : script CLI autonome (legacy, hors API FastAPI) qui
+# encode la colonne "description" avec
+# paraphrase-multilingual-MiniLM-L12-v2 et sauvegarde le .npy
+# resultant. Conserve comme alternative en ligne de commande a
+# minilm-encoder/app.py (qui encode designation+description et
+# gere aussi mpnet via /encode).
+#
+# Fonctions principales :
+#   - log_memory(prefix="") : logge le pourcentage RAM utilisee
+#     et la RAM disponible (psutil), pour suivre les pics memoire
+#   - main() : pipeline complet - si OUTPUT_PATH existe deja,
+#     ne refait rien (cache) ; sinon charge le CSV, encode
+#     "description" par batches avec SentenceTransformer (CPU,
+#     normalize_embeddings=False), sauvegarde le .npy (float32)
+#
+# Variables / constantes importantes :
+#   - MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
+#   - CSV_PATH (env TRAIN_CSV_X_PATH) : CSV source
+#   - OUTPUT_PATH (env MINILM_CACHE_PATH) : .npy de sortie (384-d)
+#   - BATCH_SIZE (env MINILM_BATCH_SIZE, def. 256)
+#
+# Dependances externes : numpy, pandas, psutil, tqdm,
+# sentence-transformers
+# ============================================================
 import os
 import numpy as np
 import pandas as pd
