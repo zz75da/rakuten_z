@@ -98,7 +98,7 @@ Registered as **`rakuten_multimodal_mpnet`** · focal γ=2.0 · best val_acc 0.8
 │  drift ref     │                │  ├── POST /cleanlab      (confident learning)  │
 └────────────────┘                │  └── POST /drift-rebuild-reference             │
        │                          └───────────────┬────────────────────────────────┘
-       ├─ also: POST /login {"admin","admin_pass"} ──► gate-api :5000
+       ├─ also: POST /login {"admin","<GATE_API_ADMIN_PASSWORD>"} ──► gate-api :5000
        │        (get_auth_token / _fresh_token — Airflow always authenticates
        │         itself as the hardcoded "admin" user, independent of whichever
        │         user is logged into Streamlit; the returned Bearer token is
@@ -206,7 +206,7 @@ DAG runs all 4 encoders sequentially with cached feature reuse (~3h with warm ca
 ### gate-api — Authentication
 
 ```
-POST /login              {"username": "admin", "password": "admin_pass"}  → {"token": "..."}
+POST /login              {"username": "admin", "password": "<GATE_API_ADMIN_PASSWORD>"}  → {"token": "..."}
 POST /validate-token     Authorization: Bearer <token>
 GET  /health
 ```
