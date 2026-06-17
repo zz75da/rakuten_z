@@ -337,10 +337,17 @@ try:
 
     save_artifacts(model, text_vectorizer, pca_models, label_encoder, skip_existing=False, text_encoder=text_encoder)
 
-    # Notify predict-api to reload artifacts
+    # Notify predict-api to reload artifacts (authenticated — admin JWT required)
     predict_api_url = os.getenv("PREDICT_API_URL", "http://predict-api:5003")
+    gate_api_url    = os.getenv("GATE_API_URL", "http://gate-api:5000")
     try:
-        r = requests.post(f"{predict_api_url}/reload-artifacts", timeout=30)
+        admin_pass = os.getenv("GATE_API_ADMIN_PASSWORD", "admin_pass")
+        tok_resp = requests.post(f"{gate_api_url}/login",
+                                 json={"username": "admin", "password": admin_pass},
+                                 timeout=10)
+        token = tok_resp.json().get("token") if tok_resp.ok else None
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        r = requests.post(f"{predict_api_url}/reload-artifacts", headers=headers, timeout=120)
         if r.ok:
             print(f"predict-api artifacts reloaded successfully")
         else:

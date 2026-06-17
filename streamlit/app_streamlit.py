@@ -46,6 +46,7 @@ import requests
 import json
 import os
 import re
+import html as _html_mod
 import base64
 from pathlib import Path
 import pandas as pd
@@ -57,7 +58,7 @@ PREDICT_API_URL = os.environ.get("PREDICT_API_URL", "http://predict-api:5003")
 
 # --- Test-set ground-truth lookup ---
 _TEST_DATA_PATH  = os.environ.get("TEST_DATA_PATH", "/app/data/test_data_zz.xlsx")
-_TEST_DATA_LOCAL = r"C:\Users\zobir\DScientest\ds_rakuren\test_data_zz.xlsx"
+_TEST_DATA_LOCAL = ""  # set TEST_DATA_PATH env var to override
 
 @st.cache_data(show_spinner=False)
 def _load_test_lookup() -> dict:
@@ -267,11 +268,12 @@ def predict_batch_stream(batch_items, token, output_file_path, chunk_size=50,
 
         # File name
         fname = uploaded_files[idx].name if uploaded_files and idx < len(uploaded_files) else f"item {idx+1}"
-        c_file.markdown(f"<small>{fname}</small>", unsafe_allow_html=True)
+        c_file.markdown(f"<small>{_html_mod.escape(fname)}</small>", unsafe_allow_html=True)
 
         # Description
         desc = batch_items[idx].get("description", "") if idx < len(batch_items) else ""
-        c_desc.markdown(f"<small>{desc[:80]}{'…' if len(desc) > 80 else ''}</small>",
+        safe_desc = _html_mod.escape(desc[:80])
+        c_desc.markdown(f"<small>{safe_desc}{'…' if len(desc) > 80 else ''}</small>",
                         unsafe_allow_html=True)
 
         # Category

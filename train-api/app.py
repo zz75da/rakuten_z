@@ -347,11 +347,13 @@ async def training_status(job_id: str, _user: dict = Depends(verify_jwt_token)):
 
 
 @app.post("/push-cache")
-async def push_cache_endpoint():
+async def push_cache_endpoint(user: dict = Depends(verify_jwt_token)):
     """
     Run `dvc add -f` on all existing .npy feature cache files then `dvc push`.
-    Called automatically by the Airflow DAG after both training runs complete.
+    Called automatically by the Airflow DAG after both training runs complete. Admin only.
     """
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
     cache_dir = "/app/data/feature_cache"
     artifacts_dir = "/app/data/artifacts"
     all_files = [

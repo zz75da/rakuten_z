@@ -101,7 +101,7 @@ _REGRESSION_FAIL_PCT     = 5.0   # block DVC push only if BOTH models drop > 5 %
 def _fresh_token():
     resp = requests.post(
         f"{GATE_API}/login",
-        json={"username": "admin", "password": "admin_pass"},
+        json={"username": "admin", "password": os.environ.get("GATE_API_ADMIN_PASSWORD", "admin_pass")},
         timeout=10,
     )
     if resp.status_code != 200:

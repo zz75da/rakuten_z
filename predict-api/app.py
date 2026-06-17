@@ -59,6 +59,7 @@
 # ============================================================
 import os
 import pickle
+import hashlib
 import html as _html
 import re as _re
 import numpy as np
@@ -487,10 +488,28 @@ def load_artifacts():
         except Exception as e2:
             raise RuntimeError(f"Both loaders failed. Last: {e2}") from e2
 
+    def _safe_pickle_load(path: str):
+        """Load a pickle file, verifying its SHA256 hash. Option A: compute hash on first load if missing."""
+        hash_path = path + ".sha256"
+        with open(path, "rb") as f:
+            data = f.read()
+        current_hash = hashlib.sha256(data).hexdigest()
+        if os.path.exists(hash_path):
+            with open(hash_path) as hf:
+                stored_hash = hf.read().strip()
+            if stored_hash != current_hash:
+                raise RuntimeError(f"SHA256 mismatch for {os.path.basename(path)} — file may be corrupted")
+        else:
+            with open(hash_path, "w") as hf:
+                hf.write(current_hash)
+            print(f"[Artifacts] SHA256 initialised for {os.path.basename(path)}")
+        import io
+        return pickle.loads(data)
+
     try:
         # --- Shared artifacts ---
-        label_encoder = pickle.load(open(os.path.join(ARTIFACTS_PATH, "label_encoder.pkl"), "rb"))
-        pca_image = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_image.pkl"), "rb"))
+        label_encoder = _safe_pickle_load(os.path.join(ARTIFACTS_PATH, "label_encoder.pkl"))
+        pca_image = _safe_pickle_load(os.path.join(ARTIFACTS_PATH, "pca_image.pkl"))
 
         # --- CV model ---
         try:
@@ -498,8 +517,8 @@ def load_artifacts():
             h5_path = os.path.join(ARTIFACTS_PATH, "neural_network_model.h5")
             model_path = keras_path if os.path.exists(keras_path) else h5_path
             model_cv = _load_model(model_path)
-            text_vectorizer = pickle.load(open(os.path.join(ARTIFACTS_PATH, "text_vectorizer.pkl"), "rb"))
-            pca_text = pickle.load(open(os.path.join(ARTIFACTS_PATH, "pca_text.pkl"), "rb"))
+            text_vectorizer = _safe_pickle_load(os.path.join(ARTIFACTS_PATH, "text_vectorizer.pkl"))
+            pca_text = _safe_pickle_load(os.path.join(ARTIFACTS_PATH, "pca_text.pkl"))
             print("✓ CV model loaded from disk")
         except Exception as e:
             print(f"⚠ CV model could not be loaded: {e}")
@@ -966,8 +985,10 @@ def health():
 
 
 @app.post("/reload-artifacts")
-def reload_artifacts_endpoint():
-    """Reload all artifacts from disk — call after a new training run completes."""
+def reload_artifacts_endpoint(user: dict = Depends(verify_jwt_token)):
+    """Reload all artifacts from disk — call after a new training run completes. Admin only."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
     try:
         load_artifacts()
         # Guard: at minimum one model must be loaded

@@ -41,34 +41,41 @@ from pydantic import BaseModel
 from prometheus_fastapi_instrumentator import Instrumentator
 import jwt
 import os
+import sys
 from datetime import datetime, timedelta
 import secrets
+import bcrypt
 
 app = FastAPI(title="Gate API", version="0.1")
 Instrumentator().instrument(app).expose(app)
 
 # --- Security Configuration ---
-SECRET_KEY = os.getenv("SECRET_KEY", "default_secret")
+SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
     SECRET_KEY = secrets.token_urlsafe(32)
-    print(f"WARNING: Using auto-generated SECRET_KEY. Set SECRET_KEY env var in production!")
+    print("WARNING: SECRET_KEY not set — using a random key. Tokens will not survive restarts. Set JWT_SECRET_KEY in .env!", file=sys.stderr)
+elif SECRET_KEY == "default_secret":
+    print("CRITICAL: SECRET_KEY is the insecure default 'default_secret'. Set a strong JWT_SECRET_KEY in .env!", file=sys.stderr)
 
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_MINUTES = int(os.getenv("TOKEN_EXPIRE_MINUTES", "180"))
 
 # --- Users Config via environment variables ---
-# Fallback credentials for tests/dev when env vars are not set
-# (docker-compose supplies real values via .env, see RESUME DU MODULE)
-DEFAULT_ADMIN_PASS = "admin_pass"
-DEFAULT_USER_PASS = "user_pass"
+# Passwords are bcrypt-hashed at startup; plaintext never stored after init.
+# Fallback values are for dev/test only — override via ADMIN_PASSWORD / USER_PASSWORD in .env.
+def _hash(plaintext: str) -> bytes:
+    return bcrypt.hashpw(plaintext.encode(), bcrypt.gensalt())
+
+def _verify(plaintext: str, hashed: bytes) -> bool:
+    return bcrypt.checkpw(plaintext.encode(), hashed)
 
 USERS_DB = {
     "admin": {
-        "password": os.getenv("ADMIN_PASSWORD", DEFAULT_ADMIN_PASS),
+        "password_hash": _hash(os.getenv("ADMIN_PASSWORD", "admin_pass")),
         "role": "admin"
     },
     "user": {
-        "password": os.getenv("USER_PASSWORD", DEFAULT_USER_PASS),
+        "password_hash": _hash(os.getenv("USER_PASSWORD", "user_pass")),
         "role": "user"
     }
 }
@@ -100,7 +107,7 @@ def login(request: LoginRequest):
         raise HTTPException(status_code=400, detail="Username and password required")
     
     user = USERS_DB.get(request.username)
-    if not user or user["password"] != request.password:
+    if not user or not _verify(request.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     expires = datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRE_MINUTES)

@@ -22,6 +22,8 @@
 # ============================================================
 import pickle
 import os
+import hashlib
+import tempfile
 from time import time
 
 # Path to store all artifacts
@@ -94,10 +96,19 @@ def save_artifacts(model, vectorizer, pca_models, label_encoder, skip_existing=T
 
         try:
             if filename.endswith(".keras") or filename.endswith(".h5"):
-                obj.save(path)
+                tmp_path = path + ".tmp"
+                obj.save(tmp_path)
+                os.replace(tmp_path, path)
             else:
-                with open(path, "wb") as f:
-                    pickle.dump(obj, f)
+                with tempfile.NamedTemporaryFile(dir=ARTIFACTS_PATH, suffix=".tmp", delete=False) as tf:
+                    pickle.dump(obj, tf)
+                    tmp_path = tf.name
+                os.replace(tmp_path, path)
+                # Write companion SHA256 so predict-api can verify integrity
+                with open(path, "rb") as f:
+                    digest = hashlib.sha256(f.read()).hexdigest()
+                with open(path + ".sha256", "w") as hf:
+                    hf.write(digest)
             end_artifact_time = time()
             print(f"[Artifacts] Saved {filename} in {end_artifact_time - start_artifact_time:.2f} seconds")
         except Exception as e:
