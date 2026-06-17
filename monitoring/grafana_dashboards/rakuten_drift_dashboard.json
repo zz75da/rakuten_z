@@ -6,7 +6,7 @@
   "version": 2,
   "refresh": "30s",
   "time": {
-    "from": "now-3h",
+    "from": "now-30m",
     "to": "now"
   },
   "templating": {
@@ -58,7 +58,7 @@
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "datasource": {
@@ -102,13 +102,73 @@
       }
     },
     {
+      "id": 54,
+      "type": "stat",
+      "title": "mpnet-base-v2",
+      "gridPos": {
+        "x": 18,
+        "y": 71,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "model_final_val_accuracy{encoder=\"mpnet\"}",
+          "legendFormat": "mpnet"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6
+              },
+              {
+                "color": "yellow",
+                "value": 0.75
+              },
+              {
+                "color": "green",
+                "value": 0.78
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
       "id": 2,
       "type": "stat",
       "title": "Median Confidence (P50)",
       "gridPos": {
-        "x": 4,
+        "x": 3,
         "y": 0,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "datasource": {
@@ -167,9 +227,9 @@
       "title": "CV (TF-IDF+OCR) Final Val Accuracy",
       "description": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
       "gridPos": {
-        "x": 8,
+        "x": 6,
         "y": 0,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "datasource": {
@@ -188,13 +248,13 @@
           "unit": "percentunit",
           "min": 0,
           "max": 1,
-          "noValue": "\u00e2\u20ac\u201d",
+          "noValue": "â€”",
           "mappings": [
             {
               "type": "value",
               "options": {
                 "0": {
-                  "text": "\u2014",
+                  "text": "—",
                   "color": "text"
                 }
               }
@@ -232,7 +292,7 @@
         "colorMode": "background",
         "graphMode": "none",
         "textMode": "auto",
-        "noValue": "\u2014"
+        "noValue": "—"
       }
     },
     {
@@ -241,9 +301,9 @@
       "title": "MiniLM Final Val Accuracy",
       "description": "model_final_val_accuracy{encoder=\"minilm\"}",
       "gridPos": {
-        "x": 12,
+        "x": 9,
         "y": 0,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "datasource": {
@@ -262,13 +322,13 @@
           "unit": "percentunit",
           "min": 0,
           "max": 1,
-          "noValue": "\u00e2\u20ac\u201d",
+          "noValue": "â€”",
           "mappings": [
             {
               "type": "value",
               "options": {
                 "0": {
-                  "text": "\u2014",
+                  "text": "—",
                   "color": "text"
                 }
               }
@@ -306,7 +366,163 @@
         "colorMode": "background",
         "graphMode": "none",
         "textMode": "auto",
-        "noValue": "\u2014"
+        "noValue": "—"
+      }
+    },
+    {
+      "id": 101,
+      "type": "stat",
+      "title": "CLIP ViT-B/32 Final Val Accuracy",
+      "description": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "model_final_val_accuracy{encoder=\"clip\"}",
+          "legendFormat": "CLIP",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "noValue": "â€”",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "—",
+                  "color": "text"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6
+              },
+              {
+                "color": "yellow",
+                "value": 0.75
+              },
+              {
+                "color": "green",
+                "value": 0.85
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "noValue": "—"
+      }
+    },
+    {
+      "id": 102,
+      "type": "stat",
+      "title": "mpnet-base-v2 Final Val Accuracy",
+      "description": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
+      "gridPos": {
+        "x": 15,
+        "y": 0,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "model_final_val_accuracy{encoder=\"mpnet\"}",
+          "legendFormat": "mpnet",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "noValue": "â€”",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "—",
+                  "color": "text"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6
+              },
+              {
+                "color": "yellow",
+                "value": 0.75
+              },
+              {
+                "color": "green",
+                "value": 0.85
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "noValue": "—"
       }
     },
     {
@@ -314,9 +530,9 @@
       "type": "stat",
       "title": "P95 Prediction Latency",
       "gridPos": {
-        "x": 16,
+        "x": 18,
         "y": 0,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "datasource": {
@@ -371,9 +587,9 @@
       "title": "Training Dataset Size",
       "type": "stat",
       "gridPos": {
-        "x": 20,
+        "x": 21,
         "y": 0,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "targets": [
@@ -393,7 +609,7 @@
         "textMode": "auto",
         "colorMode": "value",
         "graphMode": "none",
-        "noValue": "\u2014"
+        "noValue": "—"
       },
       "fieldConfig": {
         "defaults": {
@@ -714,7 +930,7 @@
     {
       "id": 11,
       "type": "timeseries",
-      "title": "Final Val Accuracy \u2014 All Encoders",
+      "title": "Final Val Accuracy — All Encoders",
       "description": "Tracks model_final_val_accuracy per encoder after each completed training run.",
       "gridPos": {
         "x": 18,
@@ -852,18 +1068,27 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(predict_requests_total{endpoint=\"/predict-text\"}[2m])",
+          "expr": "rate(predict_requests_total{endpoint=\"/predict-text\"}[5m])",
           "legendFormat": "text"
         },
         {
           "refId": "B",
-          "expr": "rate(predict_requests_total{endpoint=\"/predict-image\"}[2m])",
+          "expr": "rate(predict_requests_total{endpoint=\"/predict-image\"}[5m])",
           "legendFormat": "image"
         },
         {
           "refId": "C",
-          "expr": "rate(predict_requests_total{endpoint=\"/predict-multimodal\"}[2m])",
+          "expr": "rate(predict_requests_total{endpoint=\"/predict-multimodal\"}[5m])",
           "legendFormat": "multimodal"
+        },
+        {
+          "expr": "rate(predict_requests_total{endpoint=\"/predict-ensemble\"}[5m])",
+          "legendFormat": "/predict-ensemble",
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
         }
       ],
       "fieldConfig": {
@@ -902,17 +1127,17 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.50, sum(rate(predict_request_latency_seconds_bucket[2m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(predict_request_latency_seconds_bucket[5m])) by (le))",
           "legendFormat": "P50"
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.90, sum(rate(predict_request_latency_seconds_bucket[2m])) by (le))",
+          "expr": "histogram_quantile(0.90, sum(rate(predict_request_latency_seconds_bucket[5m])) by (le))",
           "legendFormat": "P90"
         },
         {
           "refId": "C",
-          "expr": "histogram_quantile(0.99, sum(rate(predict_request_latency_seconds_bucket[2m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(predict_request_latency_seconds_bucket[5m])) by (le))",
           "legendFormat": "P99"
         }
       ],
@@ -1013,17 +1238,17 @@
         {
           "refId": "A",
           "expr": "histogram_quantile(0.10, sum(rate(prediction_confidence_bucket[5m])) by (le))",
-          "legendFormat": "P10 \u00e2\u20ac\u201c low tail"
+          "legendFormat": "P10 â€“ low tail"
         },
         {
           "refId": "B",
           "expr": "histogram_quantile(0.50, sum(rate(prediction_confidence_bucket[5m])) by (le))",
-          "legendFormat": "P50 \u00e2\u20ac\u201c median"
+          "legendFormat": "P50 â€“ median"
         },
         {
           "refId": "C",
           "expr": "histogram_quantile(0.90, sum(rate(prediction_confidence_bucket[5m])) by (le))",
-          "legendFormat": "P90 \u00e2\u20ac\u201c high tail"
+          "legendFormat": "P90 â€“ high tail"
         }
       ],
       "fieldConfig": {
@@ -1057,7 +1282,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "P50 \u00e2\u20ac\u201c median"
+              "options": "P50 â€“ median"
             },
             "properties": [
               {
@@ -1072,7 +1297,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "P10 \u00e2\u20ac\u201c low tail"
+              "options": "P10 â€“ low tail"
             },
             "properties": [
               {
@@ -1087,7 +1312,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "P90 \u00e2\u20ac\u201c high tail"
+              "options": "P90 â€“ high tail"
             },
             "properties": [
               {
@@ -1115,7 +1340,7 @@
       "id": 17,
       "type": "timeseries",
       "title": "Prediction Entropy Over Time (uncertainty indicator)",
-      "description": "Shannon entropy of the softmax distribution. High entropy (>2.5 nats) means the model is uncertain \u00e2\u20ac\u201d a rise signals possible concept drift. Max entropy for 27 classes \u00e2\u2030\u02c6 3.3 nats.",
+      "description": "Shannon entropy of the softmax distribution. High entropy (>2.5 nats) means the model is uncertain â€” a rise signals possible concept drift. Max entropy for 27 classes â‰ˆ 3.3 nats.",
       "gridPos": {
         "x": 12,
         "y": 27,
@@ -1296,7 +1521,7 @@
       "id": 29,
       "type": "timeseries",
       "title": "Final Val Accuracy by Encoder (training history)",
-      "description": "model_final_val_accuracy labeled by encoder \u2014 shows the accuracy achieved after each completed training run for CV, CLIP, and MiniLM independently.",
+      "description": "model_final_val_accuracy labeled by encoder — shows the accuracy achieved after each completed training run for CV, CLIP, and MiniLM independently.",
       "gridPos": {
         "x": 0,
         "y": 53,
@@ -1578,7 +1803,7 @@
           "titleSize": 20,
           "valueSize": 20
         },
-        "noValue": "\u2014"
+        "noValue": "—"
       }
     },
     {
@@ -1598,7 +1823,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(predict_requests_total{status=~\"5..\"}[2m]) / rate(predict_requests_total[2m])",
+          "expr": "rate(predict_requests_total{status=~\"5..\"}[2m]) / (rate(predict_requests_total[2m]) + 0.001) or vector(0)",
           "legendFormat": "5xx error rate"
         }
       ],
@@ -1643,88 +1868,193 @@
       "id": 50,
       "type": "row",
       "title": "Final Val Accuracy — All Encoders",
-      "gridPos": { "x": 0, "y": 70, "w": 24, "h": 1 },
+      "gridPos": {
+        "x": 0,
+        "y": 70,
+        "w": 24,
+        "h": 1
+      },
       "collapsed": false
     },
     {
       "id": 51,
       "type": "stat",
       "title": "CV (TF-IDF+OCR)",
-      "gridPos": { "x": 0, "y": 71, "w": 6, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "refId": "A", "expr": "model_final_val_accuracy{encoder=\"countvectorizer\"}", "legendFormat": "CV" }],
+      "gridPos": {
+        "x": 0,
+        "y": 71,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "model_final_val_accuracy{encoder=\"countvectorizer\"}",
+          "legendFormat": "CV"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit", "min": 0, "max": 1,
-          "thresholds": { "mode": "absolute", "steps": [
-            { "color": "red", "value": null },
-            { "color": "orange", "value": 0.6 },
-            { "color": "yellow", "value": 0.75 },
-            { "color": "green", "value": 0.80 }
-          ]}
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6
+              },
+              {
+                "color": "yellow",
+                "value": 0.75
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
         }
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "auto" }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
     },
     {
       "id": 52,
       "type": "stat",
       "title": "CLIP ViT-B/32",
-      "gridPos": { "x": 6, "y": 71, "w": 6, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "refId": "A", "expr": "model_final_val_accuracy{encoder=\"clip\"}", "legendFormat": "CLIP" }],
+      "gridPos": {
+        "x": 6,
+        "y": 71,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "model_final_val_accuracy{encoder=\"clip\"}",
+          "legendFormat": "CLIP"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit", "min": 0, "max": 1,
-          "thresholds": { "mode": "absolute", "steps": [
-            { "color": "red", "value": null },
-            { "color": "orange", "value": 0.6 },
-            { "color": "yellow", "value": 0.75 },
-            { "color": "green", "value": 0.82 }
-          ]}
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6
+              },
+              {
+                "color": "yellow",
+                "value": 0.75
+              },
+              {
+                "color": "green",
+                "value": 0.82
+              }
+            ]
+          }
         }
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "auto" }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
     },
     {
       "id": 53,
       "type": "stat",
       "title": "MiniLM-L12-v2",
-      "gridPos": { "x": 12, "y": 71, "w": 6, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "refId": "A", "expr": "model_final_val_accuracy{encoder=\"minilm\"}", "legendFormat": "MiniLM" }],
+      "gridPos": {
+        "x": 12,
+        "y": 71,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "model_final_val_accuracy{encoder=\"minilm\"}",
+          "legendFormat": "MiniLM"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit", "min": 0, "max": 1,
-          "thresholds": { "mode": "absolute", "steps": [
-            { "color": "red", "value": null },
-            { "color": "orange", "value": 0.6 },
-            { "color": "yellow", "value": 0.75 },
-            { "color": "green", "value": 0.78 }
-          ]}
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6
+              },
+              {
+                "color": "yellow",
+                "value": 0.75
+              },
+              {
+                "color": "green",
+                "value": 0.78
+              }
+            ]
+          }
         }
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "auto" }
-    },
-    {
-      "id": 54,
-      "type": "stat",
-      "title": "mpnet-base-v2",
-      "gridPos": { "x": 18, "y": 71, "w": 6, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "refId": "A", "expr": "model_final_val_accuracy{encoder=\"mpnet\"}", "legendFormat": "mpnet" }],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit", "min": 0, "max": 1,
-          "thresholds": { "mode": "absolute", "steps": [
-            { "color": "red", "value": null },
-            { "color": "orange", "value": 0.6 },
-            { "color": "yellow", "value": 0.75 },
-            { "color": "green", "value": 0.78 }
-          ]}
-        }
-      },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "auto" }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
     }
   ]
 }

@@ -76,6 +76,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import IncrementalPCA
 from sklearn.feature_extraction.text import TfidfVectorizer
 import base64
+import time
 import cv2
 from pydantic import BaseModel
 from services.drift_monitor import record_prediction, trigger_report, buffer_size, reference_exists
@@ -84,6 +85,13 @@ from mlflow.tracking import MlflowClient
 
 # --- FastAPI app ---
 app = FastAPI(title="Prediction API", version="1.0")
+
+@app.middleware("http")
+async def _record_latency(request, call_next):
+    _t0 = time.time()
+    response = await call_next(request)
+    REQUEST_LATENCY.labels(endpoint=request.url.path).observe(time.time() - _t0)
+    return response
 
 # === Text cleaning + spaCy lemmatization (mirrors train-api/services/preprocess_text.py) ===
 # The CV/TF-IDF vectorizer's vocabulary was built from mojibake-fixed, HTML-cleaned,

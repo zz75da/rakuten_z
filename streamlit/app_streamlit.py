@@ -190,7 +190,35 @@ def predict_single(description, uploaded_image, token, encoder="cv"):
                 with st.expander("Probabilities per class"):
                     st.write(result["probs"])
             if uploaded_image:
-                st.image(uploaded_image, caption=uploaded_image.name, use_column_width=True)
+                gradcam_enc = encoder if encoder != "ensemble" else "clip"
+                try:
+                    with st.spinner("Generating GradCAM heatmap…"):
+                        gc_resp = requests.post(
+                            f"{PREDICT_API_URL}/gradcam",
+                            json={
+                                "image_base64": payload["image_base64"],
+                                "model": gradcam_enc,
+                                "target_class": result.get("pred_class"),
+                            },
+                            headers=headers,
+                            timeout=30,
+                        )
+                    if gc_resp.status_code == 200:
+                        gc_data = gc_resp.json()
+                        heatmap_bytes = base64.b64decode(gc_data["heatmap_base64"])
+                        col_orig, col_hm = st.columns(2)
+                        with col_orig:
+                            st.image(uploaded_image, caption="Image originale", use_column_width=True)
+                        with col_hm:
+                            st.image(
+                                heatmap_bytes,
+                                caption=f"GradCAM ({gradcam_enc.upper()}) — {gc_data.get('predicted_label', '')}",
+                                use_column_width=True,
+                            )
+                    else:
+                        st.image(uploaded_image, caption=uploaded_image.name, use_column_width=True)
+                except Exception:
+                    st.image(uploaded_image, caption=uploaded_image.name, use_column_width=True)
         else:
             st.error(f"API Error: {resp.text}")
     except Exception as e:
