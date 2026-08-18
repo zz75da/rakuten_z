@@ -1,0 +1,61 @@
+# predict-api/Dockerfile.render
+#
+# Render-only variant of predict-api/Dockerfile.
+#
+# docker-compose builds predict-api with build context "./predict-api" and has
+# no access to the repo-root dvc.yaml / dvc.lock / .dvc — locally, model
+# artifacts reach the container via a host bind mount (./data/artifacts) that
+# the developer populates beforehand with `dvc pull`. Render has no bind
+# mounts, so this image is built with the repo root as its context instead,
+# so it can carry dvc.lock + .dvc/config and pull artifacts itself via
+# Render's Pre-Deploy Command:
+#
+#   dvc pull data/artifacts/text_vectorizer.pkl data/artifacts/pca_text.pkl \
+#     data/artifacts/pca_image.pkl data/artifacts/label_encoder.pkl \
+#     data/artifacts/neural_network_model.keras \
+#     data/artifacts/neural_network_model_minilm.keras \
+#     data/artifacts/neural_network_model_mpnet.keras \
+#     data/artifacts/neural_network_model_clip.keras
+#
+# Render dashboard settings for this service:
+#   Docker Build Context Directory: .
+#   Dockerfile Path:                predict-api/Dockerfile.render
+#   Docker Command:                 uvicorn app:app --host 0.0.0.0 --port $PORT
+#   Health Check Path:              /health
+
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl libglib2.0-0 libsm6 libxrender1 libxext6 libgl1 \
+    libjemalloc2 tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng \
+    && JEMALLOC=$(find /usr/lib -name 'libjemalloc.so.2' 2>/dev/null | head -1) \
+    && [ -n "$JEMALLOC" ] && ln -sf "$JEMALLOC" /usr/local/lib/libjemalloc.so.2 || true \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY predict-api/requirements.txt ./requirements.txt
+
+# Pre-install CPU-only torch so sentence-transformers doesn't pull CUDA wheels
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+# dvc[s3] — CLI only, used by Render's Pre-Deploy Command to fetch model
+# artifacts from the DagsHub S3 remote at container start (not a runtime import)
+RUN pip install --no-cache-dir "dvc[s3]"
+
+# spaCy models for CV/TF-IDF text preprocessing — must match train-api's
+# preprocess_text.py (fr_core_news_sm primary, en_core_web_sm fallback)
+RUN python -m spacy download fr_core_news_sm && \
+    python -m spacy download en_core_web_sm
+
+COPY predict-api/ .
+
+# DVC metadata needed for `dvc pull` — the actual model files stay out of the
+# image and are pulled at deploy time via Render's Pre-Deploy Command
+COPY dvc.yaml dvc.lock ./
+COPY .dvc/config ./.dvc/config
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5003"]
