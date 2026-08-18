@@ -14,6 +14,7 @@ Built with FastAPI microservices, Apache Airflow DAG v7, MLflow / DagsHub, and a
 
 ## Table of Contents
 
+- [Streamlit Interface](#streamlit-interface)
 - [Model Overview](#model-overview)
 - [Architecture](#architecture)
 - [Services](#services)
@@ -26,6 +27,85 @@ Built with FastAPI microservices, Apache Airflow DAG v7, MLflow / DagsHub, and a
 - [Environment Variables](#environment-variables)
 - [Scalability & Kubernetes (proof of concept)](#scalability--kubernetes-proof-of-concept)
 - [Troubleshooting](#troubleshooting)
+
+---
+
+## Streamlit Interface
+
+<table>
+<tr>
+<td width="50%">
+
+**Project Overview**
+Live-updating summary — model accuracies per encoder, docker-compose service map, and a French-language walkthrough of the full pipeline.
+
+<img src="docs/screenshots/overview.jpg" width="100%">
+
+</td>
+<td width="50%">
+
+**Infrastructure & Monitoring**
+14 docker-compose services at a glance, plus the Prometheus metric names exposed by `predict-api` and `train-api`.
+
+<img src="docs/screenshots/infrastructure.jpg" width="100%">
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**Predictions — Single & Batch**
+Upload a description + image for single prediction, or a CSV + image folder for streamed batch inference, with a choice of the 4 encoders or the weighted ensemble.
+
+<img src="docs/screenshots/predictions.jpg" width="100%">
+
+</td>
+<td width="50%">
+
+**Single Prediction — Per-Model Breakdown & GradCAM**
+Ensemble result with each encoder's individual vote/confidence/weight, plus a CLIP GradCAM heatmap over the uploaded image.
+
+<img src="docs/screenshots/single_prediction.png" width="100%">
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**Batch Prediction Results**
+Streamed predictions over a CSV, with per-row thumbnail, predicted category/code, and confidence — exportable as JSONL.
+
+<img src="docs/screenshots/batch_prediction.png" width="100%">
+
+</td>
+<td width="50%">
+
+**Drift Reports**
+Evidently AI report browser — buffer status, reference dataset state, and on-demand report generation from Streamlit.
+
+<img src="docs/screenshots/drift_reports.jpg" width="100%">
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**Evidently Drift Report Detail**
+Dataset drift summary and per-column distributions from a generated Evidently HTML report.
+
+<img src="docs/screenshots/drift_report_detail.png" width="100%">
+
+</td>
+<td width="50%">
+
+**Grafana Dashboard**
+Per-encoder validation accuracy, prediction confidence/entropy, and service health — auto-provisioned alongside the stack.
+
+<img src="docs/screenshots/grafana.png" width="100%">
+
+</td>
+</tr>
+</table>
 
 ---
 
